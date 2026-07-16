@@ -22,15 +22,15 @@ The system will consist of five core components:
 
 ### Web Portal
 
-The web portal will provide a visual task board with columns representing task states and priorities. It will include a board view for tasks, an agents view showing which agent is working on which task, and a projects view for creating, updating, and removing projects. The interface will be labeled "ATQ - your 100x engineer tool".
+The web portal will provide a visual task board with columns representing action buckets and priorities. The board will support configurable columns so users can decide which action columns to show or hide, and each column can filter which underlying workflow statuses are visible inside it. It will include a board view for tasks, an agents view showing which agent is working on which task, and a projects view for creating, updating, and removing projects. The interface will be labeled "ATQ - your 100x engineer tool".
 
 #### Recommended web view features
 
 The web experience should be centered around a fast, local-first task management dashboard that lets a user supervise work without leaving the browser.
 
 1. Task board view
-   - User actions: create a task, open a task detail panel, change task priority, move a task between workflow columns, filter by project or status, search by title or branch, and refresh the board. User can drag tasks in the same column to reorder by priority. Drag between columns is not allowed; users must use the task detail panel to change status. Users can also filter by agent, tool, or model to see which agents are working on which tasks.
-   - What the user sees: a Kanban-style board with columns for each workflow state, task cards showing title, priority, branch, current status, and the agent currently working on it, plus badges for planning or review requirements.
+   - User actions: create a task, open a task detail panel, change task priority, move a task between action-based columns, configure which columns are visible, and filter by project, status, agent, tool, or model. Users can search by title or branch and refresh the board. Dragging tasks within a column reorders by priority; moving between columns is not allowed.
+   - What the user sees: a Kanban-style board with columns for Backlog, In progress, Need review, Merged, and Completed. Each column groups tasks by the next action required from the user or the agent, and can optionally show only selected workflow statuses for that bucket. Task cards show title, priority, branch, current status, and the agent currently working on it, plus badges for planning or review requirements.
    - Overall design: a desktop-first layout with a left sidebar for projects, a top bar for search and filters, and a central board that feels like a calm command center rather than a heavy ticketing system.
 
 2. Task detail drawer
@@ -49,7 +49,8 @@ The web experience should be centered around a fast, local-first task management
    - Overall design: a timeline-style feed that complements the board and helps the user understand what happened and when.
 
 5. Visual and interaction guidelines
-   - Use clear status colors for New, Planning, Ready, Coding, Code review requested, Reviewing, Approved, Merged, Complete, and Canceled.
+   - Use clear action-based columns labeled Backlog, In progress, Need review, Merged, and Completed.
+   - Provide board settings so users can decide which columns to show or hide and choose which workflow statuses are visible inside each column. This allows the board to be tailored for backlog triage, execution, review, or completion workflows.
    - Keep the interface lightweight and fast, with keyboard-friendly navigation and minimal click depth for common actions.
    - Show important state transitions with explicit confirmation dialogs for actions such as canceling a task, approving code, or completing a merged task.
    - Use compact empty states and helpful hints so the first-time user understands how to create a task, assign work, and monitor progress.
