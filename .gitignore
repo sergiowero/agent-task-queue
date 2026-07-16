@@ -12,6 +12,19 @@ lerna-debug.log*
 # package-json
 package-json.lock
 
+# OpenSpec
+.openspec/
+.openspec.yaml
+
+# Agent workspace folders
+.claude/
+.codex/
+.opencode/
+.junie/
+
+.github/
+
+
 # bun deploy file
 node_modules.bun
 
