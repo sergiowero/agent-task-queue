@@ -1,0 +1,427 @@
+import {
+  createTask, getTasks, getTaskById, updateTask, deleteTask,
+  getAgents,
+  createProject, getProjects, deleteProject,
+  addActivityEvent, getActivityEvents,
+  TaskStatus, Task,
+} from "@atq/shared";
+
+const PORT = parseInt(process.env.PORT || "3000", 10);
+
+// ─── SSE Connections ──────────────────────────────────────────────────
+
+const sseClients = new Set<ReadableStreamDefaultController>();
+let sseKeepAlive: Timer | null = null;
+
+function broadcastSSE(event: string, data: unknown) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const controller of sseClients) {
+    try {
+      controller.enqueue(new TextEncoder().encode(payload));
+    } catch {
+      sseClients.delete(controller);
+    }
+  }
+}
+
+function startKeepAlive() {
+  if (sseKeepAlive) return;
+  sseKeepAlive = setInterval(() => {
+    if (sseClients.size === 0) {
+      if (sseKeepAlive) clearInterval(sseKeepAlive);
+      sseKeepAlive = null;
+      return;
+    }
+    const payload = new TextEncoder().encode(": keepalive\n\n");
+    for (const controller of sseClients) {
+      try {
+        controller.enqueue(payload);
+      } catch {
+        sseClients.delete(controller);
+      }
+    }
+  }, 30_000);
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+function corsHeaders(): HeadersInit {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders() },
+  });
+}
+
+function errorResponse(message: string, status = 400): Response {
+  return jsonResponse({ error: message }, status);
+}
+
+async function parseBody(req: Request): Promise<any> {
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
+}
+
+function getTaskIdFromUrl(url: string): string | null {
+  const match = url.match(/\/api\/tasks\/([a-f0-9-]+)/);
+  return match ? match[1] : null;
+}
+
+function getSubAction(pathname: string): string | null {
+  const match = pathname.match(/\/api\/tasks\/[a-f0-9-]+\/(.+)/);
+  return match ? match[1] : null;
+}
+
+// ─── Workflow Helpers ─────────────────────────────────────────────────
+
+const CANCELED_CANT_CANCEL = new Set([TaskStatus.Canceled, TaskStatus.Complete]);
+
+function recordHistory(task: Task, newStatus: TaskStatus): Task {
+  const now = new Date().toISOString();
+  const history = [
+    ...task.history,
+    { pre_status: task.status, new_status: newStatus, timestamp: now },
+  ];
+  return updateTask(task.id, { status: newStatus, history })!;
+}
+
+function addConversation(task: Task, authorName: string, message: string): Task {
+  const now = new Date().toISOString();
+  const conversation = [
+    ...task.conversation,
+    { authorName, timestamp: now, message },
+  ];
+  return updateTask(task.id, { conversation })!;
+}
+
+function addActivity(taskId: string, eventType: string, actor: string, details?: string) {
+  addActivityEvent({ eventType, taskId, actor, details });
+}
+
+// ─── Server ───────────────────────────────────────────────────────────
+
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+
+    // ── SSE ──────────────────────────────────────────────────────────
+    if (url.pathname === "/api/events" && req.method === "GET") {
+      const stream = new ReadableStream({
+        start(controller) {
+          sseClients.add(controller);
+          startKeepAlive();
+          req.signal?.addEventListener("abort", () => {
+            sseClients.delete(controller);
+            controller.close();
+          });
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          ...corsHeaders(),
+        },
+      });
+    }
+
+    // ── Agents (read-only) ───────────────────────────────────────────
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      const role = url.searchParams.get("role") ?? undefined;
+      const tool = url.searchParams.get("tool") ?? undefined;
+      return jsonResponse(getAgents({ role, tool }));
+    }
+
+    // ── Projects ─────────────────────────────────────────────────────
+    if (url.pathname === "/api/projects") {
+      if (req.method === "GET") return jsonResponse(getProjects());
+      if (req.method === "POST") {
+        const body = await parseBody(req);
+        if (!body?.name || !body?.displayName || !body?.workingDirectory) {
+          return errorResponse("name, displayName, workingDirectory are required");
+        }
+        try {
+          const project = createProject(body);
+          return jsonResponse(project, 201);
+        } catch (e: any) {
+          return errorResponse(e.message ?? "failed to create project");
+        }
+      }
+    }
+
+    if (url.pathname.startsWith("/api/projects/") && req.method === "DELETE") {
+      const id = url.pathname.split("/").pop()!;
+      const deleted = deleteProject(id);
+      if (!deleted) return errorResponse("not found", 404);
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+
+    // ── Activity ─────────────────────────────────────────────────────
+    if (url.pathname === "/api/activity" && req.method === "GET") {
+      const taskId = url.searchParams.get("taskId") ?? undefined;
+      const agentId = url.searchParams.get("agentId") ?? undefined;
+      const from = url.searchParams.get("from") ?? undefined;
+      const to = url.searchParams.get("to") ?? undefined;
+      const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!) : undefined;
+      return jsonResponse(getActivityEvents({ taskId, agentId, from, to, limit }));
+    }
+
+    // ── Tasks CRUD ───────────────────────────────────────────────────
+    if (url.pathname === "/api/tasks") {
+      if (req.method === "GET") {
+        const projectId = url.searchParams.get("projectId") ?? undefined;
+        return jsonResponse(getTasks(projectId));
+      }
+      if (req.method === "POST") {
+        const body = await parseBody(req);
+        if (!body?.title) return errorResponse("title is required");
+        const task = createTask(body);
+        addActivity(task.id, "task_created", "user");
+        broadcastSSE("task_created", task);
+        return jsonResponse(task, 201);
+      }
+    }
+
+    // ── Task sub-actions (before generic :id match) ──────────────────
+    const taskId = getTaskIdFromUrl(url.pathname);
+    if (taskId && req.method === "POST") {
+      const subAction = getSubAction(url.pathname);
+      const task = getTaskById(taskId);
+      if (!task) return errorResponse("not found", 404);
+
+      let updated: Task | null = null;
+      const body = await parseBody(req);
+
+      switch (subAction) {
+        // ── Submit plan ────────────────────────────────────────────
+        case "submit-plan": {
+          if (task.status !== TaskStatus.Planning) {
+            return errorResponse("task must be in Planning status");
+          }
+          updated = recordHistory(task, TaskStatus.WaitingPlanReview);
+          if (body?.message) {
+            updated = addConversation(updated!, body.authorName ?? "agent", body.message);
+          }
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addActivity(taskId, "plan_submitted", body?.authorName ?? "agent");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Submit code ────────────────────────────────────────────
+        case "submit-code": {
+          if (task.status !== TaskStatus.Coding) {
+            return errorResponse("task must be in Coding status");
+          }
+          updated = recordHistory(task, TaskStatus.WaitingCodeReview);
+          if (body?.message) {
+            updated = addConversation(updated!, body.authorName ?? "agent", body.message);
+          }
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addActivity(taskId, "code_submitted", body?.authorName ?? "agent");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Submit review ──────────────────────────────────────────
+        case "submit-review": {
+          if (task.status !== TaskStatus.Reviewing) {
+            return errorResponse("task must be in Reviewing status");
+          }
+          updated = recordHistory(task, TaskStatus.WaitingCodeReview);
+          if (body?.message) {
+            updated = addConversation(updated!, body.authorName ?? "agent", body.message);
+          }
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addActivity(taskId, "review_submitted", body?.authorName ?? "agent");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Submit merge ───────────────────────────────────────────
+        case "submit-merge": {
+          if (task.status !== TaskStatus.Merging) {
+            return errorResponse("task must be in Merging status");
+          }
+          if (!body?.branch || !body?.commit || !body?.authors) {
+            return errorResponse("branch, commit, and authors are required");
+          }
+          const mergeDetails = [
+            `Branch: ${body.branch}`,
+            `Commit: ${body.commit}`,
+            `Authors: ${body.authors}`,
+            body.worktree ? `Worktree: ${body.worktree}` : null,
+            body.message ? `Message: ${body.message}` : null,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          updated = recordHistory(task, TaskStatus.Merged);
+          updated = addConversation(updated!, body.authorName ?? "agent", `Merge submitted. ${mergeDetails}`);
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addActivity(taskId, "merge_submitted", body.authorName ?? "agent");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Approve plan ───────────────────────────────────────────
+        case "approve-plan": {
+          if (task.status !== TaskStatus.WaitingPlanReview) {
+            return errorResponse("task must be in Waiting Plan Review status");
+          }
+          updated = recordHistory(task, TaskStatus.Ready);
+          addConversation(updated!, "user", "Plan approved.");
+          addActivity(taskId, "plan_approved", "user");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Request plan changes ───────────────────────────────────
+        case "request-plan-changes": {
+          if (task.status !== TaskStatus.WaitingPlanReview) {
+            return errorResponse("task must be in Waiting Plan Review status");
+          }
+          updated = recordHistory(task, TaskStatus.PlanChangesRequested);
+          if (body?.message) {
+            updated = addConversation(updated!, "user", body.message);
+          } else {
+            updated = addConversation(updated!, "user", "Plan changes requested.");
+          }
+          addActivity(taskId, "plan_changes_requested", "user", body?.message);
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Approve code ───────────────────────────────────────────
+        case "approve-code": {
+          if (task.status !== TaskStatus.WaitingCodeReview) {
+            return errorResponse("task must be in Waiting Code Review status");
+          }
+          updated = recordHistory(task, TaskStatus.Approved);
+          addConversation(updated!, "user", "Code approved.");
+          addActivity(taskId, "code_approved", "user");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Request code changes ───────────────────────────────────
+        case "request-code-changes": {
+          if (task.status !== TaskStatus.WaitingCodeReview) {
+            return errorResponse("task must be in Waiting Code Review status");
+          }
+          updated = recordHistory(task, TaskStatus.ChangesRequested);
+          if (body?.message) {
+            updated = addConversation(updated!, "user", body.message);
+          } else {
+            updated = addConversation(updated!, "user", "Code changes requested.");
+          }
+          addActivity(taskId, "code_changes_requested", "user", body?.message);
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Request AI review ──────────────────────────────────────
+        case "request-ai-review": {
+          if (task.status !== TaskStatus.WaitingCodeReview) {
+            return errorResponse("task must be in Waiting Code Review status");
+          }
+          updated = recordHistory(task, TaskStatus.CodeReviewRequested);
+          addConversation(updated!, "user", "AI code review requested.");
+          addActivity(taskId, "ai_review_requested", "user");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Confirm completion ─────────────────────────────────────
+        case "confirm-completion": {
+          if (task.status !== TaskStatus.Merged) {
+            return errorResponse("task must be in Merged status");
+          }
+          updated = recordHistory(task, TaskStatus.Complete);
+          addConversation(updated!, "user", "Task completed.");
+          addActivity(taskId, "task_completed", "user");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Cancel ─────────────────────────────────────────────────
+        case "cancel": {
+          if (CANCELED_CANT_CANCEL.has(task.status)) {
+            return errorResponse("task cannot be canceled in its current status");
+          }
+          updated = recordHistory(task, TaskStatus.Canceled);
+          addConversation(updated!, "user", "Task canceled.");
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addActivity(taskId, "task_canceled", "user");
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        // ── Unblock ────────────────────────────────────────────────
+        case "unblock": {
+          const unblockMap: Partial<Record<TaskStatus, TaskStatus>> = {
+            [TaskStatus.Planning]: TaskStatus.PlanChangesRequested,
+            [TaskStatus.Coding]: TaskStatus.ChangesRequested,
+            [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
+          };
+          const target = unblockMap[task.status];
+          if (!target) {
+            return errorResponse("task cannot be unblocked in its current status");
+          }
+          updated = recordHistory(task, target);
+          updated = updateTask(updated!.id, { assignedAgent: null });
+          addConversation(updated!, "user", `Task unblocked. Reverted to ${target}.`);
+          addActivity(taskId, "task_unblocked", "user", `Reverted to ${target}`);
+          broadcastSSE("task_updated", updated);
+          break;
+        }
+
+        default:
+          return errorResponse("unknown action", 404);
+      }
+
+      if (updated) return jsonResponse(updated);
+    }
+
+    // ── Task GET / PUT / DELETE by ID ────────────────────────────────
+    if (taskId) {
+      if (req.method === "GET") {
+        const task = getTaskById(taskId);
+        if (!task) return errorResponse("not found", 404);
+        return jsonResponse(task);
+      }
+      if (req.method === "PUT") {
+        const body = await parseBody(req);
+        if (!body) return errorResponse("invalid request body");
+        const task = updateTask(taskId, body);
+        if (!task) return errorResponse("not found", 404);
+        broadcastSSE("task_updated", task);
+        return jsonResponse(task);
+      }
+      if (req.method === "DELETE") {
+        const deleted = deleteTask(taskId);
+        if (!deleted) return errorResponse("not found", 404);
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      }
+    }
+
+    return errorResponse("not found", 404);
+  },
+});
+
+console.log(`ATQ Web Server running on http://localhost:${server.port}`);

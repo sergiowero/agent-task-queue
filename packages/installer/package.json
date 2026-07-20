@@ -1,0 +1,14 @@
+{
+  "name": "@atq/installer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "install:bin": "src/install-bin.ts",
+    "install:skills": "src/install-skills.ts"
+  },
+  "scripts": {
+    "install:bin": "bun run src/install-bin.ts",
+    "install:skills": "bun run src/install-skills.ts"
+  }
+}

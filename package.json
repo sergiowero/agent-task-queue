@@ -1,0 +1,15 @@
+{
+  "name": "agent-task-queue",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "web": "bun run packages/web/src/index.ts",
+    "web:ui": "bun run --cwd packages/web-ui dev",
+    "cli": "bun run packages/cli/src/index.ts",
+    "install:bin": "bun run packages/installer/src/install-bin.ts",
+    "install:skills": "bun run packages/installer/src/install-skills.ts"
+  }
+}
