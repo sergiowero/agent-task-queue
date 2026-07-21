@@ -11,7 +11,7 @@ describe("getNextClaimableTask", () => {
     priority?: number;
     assignedAgent?: any;
   }) {
-    const task = createTask({ title: data.title });
+    const task = createTask({ title: data.title, description: "test", projectId: "test-project" });
     const updated = updateTask(task.id, {
       status: data.status,
       priority: data.priority ?? 0,
@@ -35,16 +35,16 @@ describe("getNextClaimableTask", () => {
 
   it("returns null when no tasks match statuses", () => {
     createTestTask({ title: "task1", status: TaskStatus.Coding });
-    const result = getNextClaimableTask([TaskStatus.New]);
+    const result = getNextClaimableTask([TaskStatus.PlanRequested]);
     expect(result).toBeNull();
   });
 
   it("returns the highest priority task", () => {
-    createTestTask({ title: "low", status: TaskStatus.Ready, priority: 10 });
-    createTestTask({ title: "high", status: TaskStatus.Ready, priority: 100 });
-    createTestTask({ title: "mid", status: TaskStatus.Ready, priority: 50 });
+    createTestTask({ title: "low", status: TaskStatus.ReadyForCode, priority: 10 });
+    createTestTask({ title: "high", status: TaskStatus.ReadyForCode, priority: 100 });
+    createTestTask({ title: "mid", status: TaskStatus.ReadyForCode, priority: 50 });
 
-    const result = getNextClaimableTask([TaskStatus.Ready]);
+    const result = getNextClaimableTask([TaskStatus.ReadyForCode]);
     expect(result).not.toBeNull();
     expect(result!.title).toBe("high");
     expect(result!.priority).toBe(100);
@@ -53,33 +53,33 @@ describe("getNextClaimableTask", () => {
   it("skips claimed tasks", () => {
     createTestTask({
       title: "claimed",
-      status: TaskStatus.Ready,
+      status: TaskStatus.ReadyForCode,
       priority: 100,
       assignedAgent: { name: "agent-1", tool: "test", model: "gpt-4" },
     });
-    createTestTask({ title: "unclaimed", status: TaskStatus.Ready, priority: 50 });
+    createTestTask({ title: "unclaimed", status: TaskStatus.ReadyForCode, priority: 50 });
 
-    const result = getNextClaimableTask([TaskStatus.Ready]);
+    const result = getNextClaimableTask([TaskStatus.ReadyForCode]);
     expect(result).not.toBeNull();
     expect(result!.title).toBe("unclaimed");
   });
 
   it("uses created_at as tiebreaker for same priority", async () => {
-    const first = createTestTask({ title: "first", status: TaskStatus.Ready, priority: 100 });
+    const first = createTestTask({ title: "first", status: TaskStatus.ReadyForCode, priority: 100 });
     // Small delay to ensure different created_at
     await Bun.sleep(10);
-    const second = createTestTask({ title: "second", status: TaskStatus.Ready, priority: 100 });
+    const second = createTestTask({ title: "second", status: TaskStatus.ReadyForCode, priority: 100 });
 
-    const result = getNextClaimableTask([TaskStatus.Ready]);
+    const result = getNextClaimableTask([TaskStatus.ReadyForCode]);
     expect(result).not.toBeNull();
     expect(result!.title).toBe("first");
   });
 
   it("filters by multiple statuses", () => {
-    createTestTask({ title: "new-task", status: TaskStatus.New, priority: 10 });
+    createTestTask({ title: "new-task", status: TaskStatus.PlanRequested, priority: 10 });
     createTestTask({ title: "changes-requested", status: TaskStatus.ChangesRequested, priority: 100 });
 
-    const result = getNextClaimableTask([TaskStatus.New, TaskStatus.ChangesRequested]);
+    const result = getNextClaimableTask([TaskStatus.PlanRequested, TaskStatus.ChangesRequested]);
     expect(result).not.toBeNull();
     expect(result!.title).toBe("changes-requested");
   });
@@ -87,16 +87,16 @@ describe("getNextClaimableTask", () => {
   it("returns null when all matching tasks are claimed", () => {
     createTestTask({
       title: "claimed1",
-      status: TaskStatus.Ready,
+      status: TaskStatus.ReadyForCode,
       assignedAgent: { name: "agent-1", tool: "test", model: "gpt-4" },
     });
     createTestTask({
       title: "claimed2",
-      status: TaskStatus.Ready,
+      status: TaskStatus.ReadyForCode,
       assignedAgent: { name: "agent-2", tool: "test", model: "gpt-4" },
     });
 
-    const result = getNextClaimableTask([TaskStatus.Ready]);
+    const result = getNextClaimableTask([TaskStatus.ReadyForCode]);
     expect(result).toBeNull();
   });
 });

@@ -5,7 +5,7 @@ CRUD operations for managing projects in the ATQ system.
 ## Requirements
 
 ### Requirement: Project creation
-The system SHALL allow users to create new projects.
+The system SHALL allow users to create new projects. The default example displayName for a project SHALL be "AgentQ".
 
 #### Scenario: Create project with name and directory
 - **WHEN** user provides a project name, display name, and working directory

@@ -21,8 +21,8 @@ export function AgentsPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-gray-200 bg-white flex items-center px-4 gap-4 shrink-0">
-        <h2 className="font-semibold text-gray-900">Agents</h2>
+      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
+        <h2 className="font-semibold text-text">Agents</h2>
         <div className="flex-1" />
         <select
           className="border border-gray-300 rounded px-2 py-1.5 text-sm"

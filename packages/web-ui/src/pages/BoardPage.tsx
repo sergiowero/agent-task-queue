@@ -8,7 +8,7 @@ import { TaskDrawer } from "../components/TaskDrawer";
 import { CreateTaskModal } from "../components/CreateTaskModal";
 
 const COLUMNS = [
-  { key: "pending", label: "Pending", statuses: ["new", "ready", "plan_changes_requested", "code_review_requested", "changes_requested", "approved"] },
+  { key: "pending", label: "Pending", statuses: ["plan_requested", "ready for code", "plan_changes_requested", "code_review_requested", "changes_requested", "approved"] },
   { key: "in-progress", label: "In Progress", statuses: ["planning", "coding", "reviewing", "merging"] },
   { key: "need-review", label: "Need Review", statuses: ["waiting_plan_review", "waiting_code_review"] },
   { key: "done", label: "Done", statuses: ["complete", "merged"] },
@@ -22,7 +22,7 @@ const COLUMN_COLORS: Record<string, string> = {
 };
 
 export function BoardPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const projectId = searchParams.get("projectId") ?? undefined;
   const taskIdFromUrl = window.location.pathname.match(/\/tasks\/(.+)/)?.[1];
   const queryClient = useQueryClient();
@@ -33,6 +33,11 @@ export function BoardPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.getProjects,
+  });
 
   const { data: tasks = [], refetch } = useQuery({
     queryKey: ["tasks", projectId],
@@ -70,15 +75,15 @@ export function BoardPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top Bar */}
-      <div className="h-14 border-b border-gray-200 bg-white flex items-center px-4 gap-4 shrink-0">
+      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
         <input
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm w-64"
+          className="border border-border bg-surface-secondary text-text placeholder:text-text-muted rounded px-3 py-1.5 text-sm w-64"
           placeholder="Search tasks..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <select
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          className="border border-border bg-surface-secondary text-text rounded px-2 py-1.5 text-sm"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -88,7 +93,7 @@ export function BoardPage() {
           ))}
         </select>
         <select
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          className="border border-border bg-surface-secondary text-text rounded px-2 py-1.5 text-sm"
           value={agentFilter}
           onChange={(e) => setAgentFilter(e.target.value)}
         >
@@ -97,29 +102,30 @@ export function BoardPage() {
             <option key={a} value={a}>{a}</option>
           ))}
         </select>
-        <div className="flex-1" />
-        <button
-          onClick={() => refetch()}
-          className="text-gray-500 hover:text-gray-700 text-sm"
+        <select
+          className="border border-border bg-surface-secondary text-text rounded px-2 py-1.5 text-sm"
+          value={projectId ?? ""}
+          onChange={(e) => {
+            const params = new URLSearchParams(searchParams);
+            if (e.target.value) {
+              params.set("projectId", e.target.value);
+            } else {
+              params.delete("projectId");
+            }
+            setSearchParams(params);
+          }}
         >
-          Refresh
-        </button>
+          <option value="">All projects</option>
+          {projects.map((p: any) => (
+            <option key={p.id} value={p.id}>{p.displayName}</option>
+          ))}
+        </select>
+        <div className="flex-1" />
         <button
           onClick={() => setShowCreateModal(true)}
           className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-500"
         >
           New Task
-        </button>
-        <button
-          onClick={() => {
-            const settings = prompt("Hidden columns (comma-separated: pending,in-progress,need-review,done):", [...hiddenColumns].join(","));
-            if (settings !== null) {
-              setHiddenColumns(new Set(settings.split(",").map(s => s.trim()).filter(Boolean)));
-            }
-          }}
-          className="text-gray-500 hover:text-gray-700 text-sm"
-        >
-          Settings
         </button>
       </div>
 

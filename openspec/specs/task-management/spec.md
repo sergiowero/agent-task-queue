@@ -5,15 +5,19 @@ Core CRUD operations for creating, reading, updating, and deleting tasks.
 ## Requirements
 
 ### Requirement: Create task
-The system SHALL allow users to create new tasks with a title and description.
+The system SHALL allow users to create new tasks with a title, description, and project. Project and description are mandatory fields.
 
-#### Scenario: Create task with title
-- **WHEN** user provides a task title
-- **THEN** system creates a new task with the provided title and returns the task object with generated ID
+#### Scenario: Create task with all required fields
+- **WHEN** user provides a task title, description, and project ID
+- **THEN** system creates a new task with the provided fields, sets status to PlanRequested, and returns the task object with generated ID
 
-#### Scenario: Create task with title and description
-- **WHEN** user provides a task title and description
-- **THEN** system creates a new task with both fields and returns the complete task object
+#### Scenario: Create task without project
+- **WHEN** user provides a task title but no project ID
+- **THEN** system returns a 400 error indicating project is required
+
+#### Scenario: Create task without description
+- **WHEN** user provides a task title and project ID but no description
+- **THEN** system returns a 400 error indicating description is required
 
 ### Requirement: List tasks
 The system SHALL allow users to retrieve a list of all tasks.

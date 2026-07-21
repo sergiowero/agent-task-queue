@@ -64,6 +64,8 @@ export const api = {
   getProjects: () => request<any[]>("/projects"),
   createProject: (data: any) =>
     request<any>("/projects", { method: "POST", body: JSON.stringify(data) }),
+  updateProject: (id: string, data: any) =>
+    request<any>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: "DELETE" }),
 

@@ -63,7 +63,7 @@ function initSchema(): void {
       real_branch TEXT,
       requires_plan INTEGER DEFAULT 0,
       merge_branch TEXT DEFAULT 'develop',
-      status TEXT NOT NULL DEFAULT 'new',
+      status TEXT NOT NULL DEFAULT 'plan_requested',
       assigned_agent_id TEXT,
       conversation TEXT DEFAULT '[]',
       history TEXT DEFAULT '[]',
@@ -94,6 +94,12 @@ function initSchema(): void {
   if (!columnNames.includes("worktree_path")) {
     d.exec("ALTER TABLE tasks ADD COLUMN worktree_path TEXT");
   }
+
+  // Migrate 'new' status to 'plan_requested'
+  d.exec("UPDATE tasks SET status = 'plan_requested' WHERE status = 'new'");
+
+  // Migrate 'ready' status to 'ready for code'
+  d.exec("UPDATE tasks SET status = 'ready for code' WHERE status = 'ready'");
 }
 
 function rowToTask(row: any): Task {
@@ -159,31 +165,31 @@ function rowToActivity(row: any): ActivityEvent {
 
 export function createTask(data: {
   title: string;
-  description?: string;
+  description: string;
   acceptanceCriteria?: string[];
   priority?: number;
   recommendedBranch?: string;
   requiresPlan?: boolean;
   mergeBranch?: string;
-  projectId?: string;
+  projectId: string;
 }): Task {
   const now = new Date().toISOString();
   const task: Task = {
     id: randomUUID(),
     title: data.title,
-    description: data.description ?? null,
+    description: data.description,
     acceptanceCriteria: data.acceptanceCriteria ?? [],
     priority: data.priority ?? 0,
     recommendedBranch: data.recommendedBranch ?? "",
     realBranch: null,
     requiresPlan: data.requiresPlan ?? false,
     mergeBranch: data.mergeBranch ?? "develop",
-    status: data.requiresPlan ? TaskStatus.New : TaskStatus.Ready,
+    status: data.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode,
     assignedAgent: null,
     conversation: [],
     history: [],
     contexts: [],
-    projectId: data.projectId ?? null,
+    projectId: data.projectId,
     worktreePath: null,
     createdAt: now,
     updatedAt: now,
@@ -386,6 +392,32 @@ export function getProjectByTaskId(taskId: string): Project | null {
 export function deleteProject(id: string): boolean {
   const result = getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
   return result.changes > 0;
+}
+
+export function updateProject(
+  id: string,
+  data: {
+    name?: string;
+    displayName?: string;
+    workingDirectory?: string;
+  }
+): Project | null {
+  const existing = getProjectById(id);
+  if (!existing) return null;
+
+  const now = new Date().toISOString();
+  const updated = {
+    name: data.name ?? existing.name,
+    displayName: data.displayName ?? existing.displayName,
+    workingDirectory: data.workingDirectory ?? existing.workingDirectory,
+  };
+
+  const stmt = getDb().prepare(
+    "UPDATE projects SET name = ?, display_name = ?, working_directory = ?, updated_at = ? WHERE id = ?"
+  );
+  stmt.run(updated.name, updated.displayName, updated.workingDirectory, now, id);
+
+  return getProjectById(id)!;
 }
 
 // ─── Activity ─────────────────────────────────────────────────────────

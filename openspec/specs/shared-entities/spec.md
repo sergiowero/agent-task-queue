@@ -24,11 +24,15 @@ The system SHALL define a Task entity with the following fields: id, title, desc
 - **THEN** the contexts field is an empty array
 
 ### Requirement: Task status enum
-The system SHALL define a TaskStatus enum with the following values: New, Planning, WaitingPlanReview, PlanChangesRequested, Ready, Coding, WaitingCodeReview, CodeReviewRequested, Reviewing, ChangesRequested, Approved, Merging, Merged, Complete, Canceled.
+The system SHALL define a TaskStatus enum with the following values: PlanRequested, Planning, WaitingPlanReview, PlanChangesRequested, ReadyForCode, Coding, WaitingCodeReview, CodeReviewRequested, Reviewing, ChangesRequested, Approved, Merging, Merged, Complete, Canceled.
 
 #### Scenario: Valid status transitions
 - **WHEN** a task status is updated
 - **THEN** the new status is one of the defined TaskStatus values and the transition follows the workflow rules
+
+#### Scenario: PlanRequested is the initial status
+- **WHEN** a new task is created
+- **THEN** its status is set to PlanRequested
 
 ### Requirement: Database schema
 The system SHALL provide a SQLite schema for persisting tasks, agents, and projects.
@@ -45,7 +49,7 @@ CREATE TABLE tasks (
   real_branch TEXT,
   requires_plan INTEGER DEFAULT 0,
   merge_branch TEXT DEFAULT 'develop',
-  status TEXT NOT NULL DEFAULT 'new',
+  status TEXT NOT NULL DEFAULT 'plan_requested',
   assigned_agent_id TEXT,
   conversation TEXT DEFAULT '[]',
   history TEXT DEFAULT '[]',

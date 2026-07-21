@@ -106,7 +106,7 @@ The system SHALL provide a right-side drawer that opens over the board when a ta
 
 #### Scenario: User approves plan from drawer
 - **WHEN** user clicks "Approve Plan" while task is in Waiting Plan Review status
-- **THEN** system transitions the task to Ready and adds a system message to the conversation
+- **THEN** system transitions the task to Ready for Code and adds a system message to the conversation
 
 #### Scenario: User requests plan changes from drawer
 - **WHEN** user clicks "Request Plan Changes" while task is in Waiting Plan Review status
@@ -134,7 +134,23 @@ The system SHALL provide a right-side drawer that opens over the board when a ta
 
 #### Scenario: User creates task from board
 - **WHEN** user clicks the "New Task" button
-- **THEN** system opens a task creation form with fields for title, description, acceptance criteria, priority, branch, and planning requirement toggle
+- **THEN** system opens a task creation form with fields for title (required), description (required), project (required dropdown), acceptance criteria, priority, branch, merge branch, and planning requirement toggle
+
+#### Scenario: User cannot create task without project
+- **WHEN** user clicks "Create" without selecting a project
+- **THEN** the create button is disabled and the form is not submitted
+
+#### Scenario: User cannot create task without description
+- **WHEN** user clicks "Create" without entering a description
+- **THEN** the create button is disabled and the form is not submitted
+
+#### Scenario: User cannot create task without title
+- **WHEN** user clicks "Create" without entering a title
+- **THEN** the create button is disabled and the form is not submitted
+
+#### Scenario: Merge branch defaults to develop
+- **WHEN** user opens the task creation form
+- **THEN** the merge branch field is pre-filled with "develop" and can be edited
 
 #### Scenario: User edits task metadata from drawer
 - **WHEN** user edits a field in the Summary tab and saves
@@ -145,7 +161,7 @@ The system SHALL map workflow statuses to board columns according to a fixed map
 
 #### Scenario: Pending column groups correct statuses
 - **WHEN** tasks are grouped into the Pending column
-- **THEN** tasks with status New, Ready, Plan Changes Requested, Code Review Requested, Changes Requested, or Approved are displayed
+- **THEN** tasks with status PlanRequested, Ready for Code, Plan Changes Requested, Code Review Requested, Changes Requested, or Approved are displayed
 
 #### Scenario: In Progress column groups correct statuses
 - **WHEN** tasks are grouped into the In Progress column
@@ -186,11 +202,11 @@ The system SHALL display a global activity stream of task events.
 - **THEN** system narrows the events to match the filter criteria
 
 ### Requirement: Desktop-first layout
-The system SHALL provide a desktop-optimized layout with a left sidebar, top bar, and central content area.
+The system SHALL provide a desktop-optimized layout with a left sidebar, top bar, and central content area. The sidebar heading SHALL display "AgentQ" as the product name, with the tagline "your 100x engineer tool" below it.
 
 #### Scenario: Left sidebar shows project list
 - **WHEN** user views the application
-- **THEN** system displays a left sidebar with a list of projects and a way to create new projects
+- **THEN** system displays a left sidebar with the product name "AgentQ", tagline "your 100x engineer tool", a list of projects, and a way to create new projects
 
 #### Scenario: Top bar shows search and filters
 - **WHEN** user views the application

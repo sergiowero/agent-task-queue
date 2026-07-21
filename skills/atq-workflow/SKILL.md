@@ -105,7 +105,7 @@ atq submit-merge <taskId> --json -b <branch> -c <commit> --authors <authors> [-m
 |-------------|-------|--------|
 | `new` | Planning | Write implementation plan |
 | `plan_changes_requested` | Planning | Revise plan based on feedback |
-| `ready` | Coding | Implement the code |
+| `ready for code` | Coding | Implement the code |
 | `changes_requested` | Coding | Fix issues from review |
 | `approved` | Merging | Merge the code |
 | `code_review_requested` | Reviewing | Review submitted code |

@@ -12,15 +12,6 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api/events": {
-        target: "http://localhost:3000",
-        changeOrigin: true,
-        headers: {
-          Accept: "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      },
       "/api": {
         target: "http://localhost:3000",
         changeOrigin: true,

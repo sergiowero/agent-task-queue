@@ -1,7 +1,7 @@
 import {
   createTask, getTasks, getTaskById, updateTask, deleteTask,
   getAgents,
-  createProject, getProjects, deleteProject,
+  createProject, getProjects, getProjectById, updateProject, deleteProject,
   addActivityEvent, getActivityEvents,
   TaskStatus, Task,
 } from "@atq/shared";
@@ -136,6 +136,7 @@ const server = Bun.serve({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
           ...corsHeaders(),
         },
       });
@@ -165,11 +166,20 @@ const server = Bun.serve({
       }
     }
 
-    if (url.pathname.startsWith("/api/projects/") && req.method === "DELETE") {
+    if (url.pathname.startsWith("/api/projects/")) {
       const id = url.pathname.split("/").pop()!;
-      const deleted = deleteProject(id);
-      if (!deleted) return errorResponse("not found", 404);
-      return new Response(null, { status: 204, headers: corsHeaders() });
+      if (req.method === "PUT") {
+        const body = await parseBody(req);
+        if (!body) return errorResponse("invalid request body");
+        const project = updateProject(id, body);
+        if (!project) return errorResponse("not found", 404);
+        return jsonResponse(project);
+      }
+      if (req.method === "DELETE") {
+        const deleted = deleteProject(id);
+        if (!deleted) return errorResponse("not found", 404);
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      }
     }
 
     // ── Activity ─────────────────────────────────────────────────────
@@ -191,6 +201,8 @@ const server = Bun.serve({
       if (req.method === "POST") {
         const body = await parseBody(req);
         if (!body?.title) return errorResponse("title is required");
+        if (!body?.description) return errorResponse("description is required");
+        if (!body?.projectId) return errorResponse("projectId is required");
         const task = createTask(body);
         addActivity(task.id, "task_created", "user");
         broadcastSSE("task_created", task);
@@ -284,7 +296,7 @@ const server = Bun.serve({
           if (task.status !== TaskStatus.WaitingPlanReview) {
             return errorResponse("task must be in Waiting Plan Review status");
           }
-          updated = recordHistory(task, TaskStatus.Ready);
+          updated = recordHistory(task, TaskStatus.ReadyForCode);
           addConversation(updated!, "user", "Plan approved.");
           addActivity(taskId, "plan_approved", "user");
           broadcastSSE("task_updated", updated);

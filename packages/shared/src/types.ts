@@ -1,9 +1,9 @@
 export enum TaskStatus {
-  New = "new",
+  PlanRequested = "plan_requested",
   Planning = "planning",
   WaitingPlanReview = "waiting_plan_review",
   PlanChangesRequested = "plan_changes_requested",
-  Ready = "ready",
+  ReadyForCode = "ready for code",
   Coding = "coding",
   WaitingCodeReview = "waiting_code_review",
   CodeReviewRequested = "code_review_requested",

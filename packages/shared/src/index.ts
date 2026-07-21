@@ -24,6 +24,7 @@ export {
   getProjects,
   getProjectById,
   getProjectByTaskId,
+  updateProject,
   deleteProject,
   addActivityEvent,
   getActivityEvents,

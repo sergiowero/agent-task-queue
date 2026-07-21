@@ -23,8 +23,8 @@ program
 // ─── Role-to-status mapping ────────────────────────────────────────────
 
 const ROLE_STATUSES: Record<string, TaskStatus[]> = {
-  planner: [TaskStatus.New, TaskStatus.PlanChangesRequested],
-  implementer: [TaskStatus.Ready, TaskStatus.ChangesRequested, TaskStatus.Approved],
+  planner: [TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested],
+  implementer: [TaskStatus.ReadyForCode, TaskStatus.ChangesRequested, TaskStatus.Approved],
   reviewer: [TaskStatus.CodeReviewRequested],
 };
 
@@ -49,12 +49,12 @@ function getClaimableStatuses(role: string): TaskStatus[] {
 
 function getClaimTransition(status: TaskStatus, role: string): TaskStatus | null {
   if (role === "planner") {
-    if (status === TaskStatus.New || status === TaskStatus.PlanChangesRequested) {
+    if (status === TaskStatus.PlanRequested || status === TaskStatus.PlanChangesRequested) {
       return TaskStatus.Planning;
     }
   }
   if (role === "implementer") {
-    if (status === TaskStatus.Ready || status === TaskStatus.ChangesRequested) {
+    if (status === TaskStatus.ReadyForCode || status === TaskStatus.ChangesRequested) {
       return TaskStatus.Coding;
     }
     if (status === TaskStatus.Approved) {
@@ -74,12 +74,12 @@ function getClaimTransition(status: TaskStatus, role: string): TaskStatus | null
 
 function getEffectiveRole(status: TaskStatus, compoundRole: string): string {
   if (COMPOUND_ROLES[compoundRole]?.includes("planner")) {
-    if (status === TaskStatus.New || status === TaskStatus.PlanChangesRequested) {
+    if (status === TaskStatus.PlanRequested || status === TaskStatus.PlanChangesRequested) {
       return "planner";
     }
   }
   if (COMPOUND_ROLES[compoundRole]?.includes("implementer")) {
-    if (status === TaskStatus.Ready || status === TaskStatus.ChangesRequested || status === TaskStatus.Approved) {
+    if (status === TaskStatus.ReadyForCode || status === TaskStatus.ChangesRequested || status === TaskStatus.Approved) {
       return "implementer";
     }
   }
@@ -142,12 +142,16 @@ function printTask(task: {
   recommendedBranch: string;
   mergeBranch: string;
   acceptanceCriteria: string[];
+  project?: { id: string; name: string; displayName: string; workingDirectory: string } | null;
   createdAt: string;
   updatedAt: string;
 }) {
   console.log(`  ID:                 ${task.id}`);
   console.log(`  Title:              ${task.title}`);
   console.log(`  Description:        ${task.description || "(none)"}`);
+  if (task.project) {
+    console.log(`  Project:            ${task.project.displayName} (${task.project.name})`);
+  }
   console.log(`  Status:             ${task.status}`);
   console.log(`  Priority:           ${task.priority}`);
   console.log(`  Recommended Branch: ${task.recommendedBranch || "(none)"}`);
@@ -171,7 +175,11 @@ program
   .action((options: { json?: boolean }) => {
     const tasks = getTasks();
     if (options.json) {
-      jsonOutput({ success: true, tasks }, true);
+      const tasksWithProjects = tasks.map((task) => {
+        const project = task.projectId ? getProjectByTaskId(task.id) : null;
+        return { ...task, project };
+      });
+      jsonOutput({ success: true, tasks: tasksWithProjects }, true);
       return;
     }
     if (tasks.length === 0) {
@@ -179,8 +187,10 @@ program
       return;
     }
     for (const task of tasks) {
+      const project = task.projectId ? getProjectByTaskId(task.id) : null;
+      const projectLabel = project ? ` [${project.displayName}]` : "";
       console.log(
-        `[${task.id.slice(0, 8)}] ${task.title} (${task.status}) P${task.priority}`
+        `[${task.id.slice(0, 8)}] ${task.title}${projectLabel} (${task.status}) P${task.priority}`
       );
     }
   });
@@ -188,6 +198,7 @@ program
 program
   .command("create <title>")
   .description("Create a new task")
+  .requiredOption("--project <id>", "Project ID (required)")
   .option("-d, --description <text>", "Task description")
   .option("-p, --priority <number>", "Priority (default: 0)", "0")
   .option("-b, --branch <name>", "Recommended branch name")
@@ -197,6 +208,7 @@ program
   .action((
     title: string,
     options: {
+      project: string;
       description?: string;
       priority?: string;
       branch?: string;
@@ -207,18 +219,21 @@ program
   ) => {
     const task = createTask({
       title,
-      description: options.description,
+      description: options.description || "",
       priority: parseInt(options.priority || "0", 10),
       recommendedBranch: options.branch || "",
       requiresPlan: options.requiresPlan || false,
       mergeBranch: options.mergeBranch || "develop",
+      projectId: options.project,
     });
     if (options.json) {
-      jsonOutput({ success: true, task }, true);
+      const project = getProjectByTaskId(task.id);
+      jsonOutput({ success: true, task: { ...task, project } }, true);
       return;
     }
+    const project = getProjectByTaskId(task.id);
     console.log("Task created:");
-    printTask(task);
+    printTask({ ...task, project });
   });
 
 program
@@ -230,11 +245,12 @@ program
     if (!task) {
       jsonError("Task not found.", options.json);
     }
+    const project = task!.projectId ? getProjectByTaskId(task!.id) : null;
     if (options.json) {
-      jsonOutput({ success: true, task }, true);
+      jsonOutput({ success: true, task: { ...task!, project } }, true);
       return;
     }
-    printTask(task!);
+    printTask({ ...task!, project });
   });
 
 // ─── Claim command ─────────────────────────────────────────────────────
@@ -314,7 +330,8 @@ program
       }
 
       console.log("\nTask claimed successfully!\n");
-      printTask(updated!);
+      const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+      printTask({ ...updated!, project });
     }
   );
 
@@ -354,7 +371,8 @@ program
     }
 
     console.log("Plan submitted. Task moved to Waiting Plan Review.");
-    printTask(updated!);
+    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+    printTask({ ...updated!, project });
   });
 
 program
@@ -395,7 +413,8 @@ program
     }
 
     console.log("Code submitted. Task moved to Waiting Code Review.");
-    printTask(updated!);
+    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+    printTask({ ...updated!, project });
   });
 
 program
@@ -432,7 +451,8 @@ program
     }
 
     console.log("Review submitted. Task moved to Waiting Code Review.");
-    printTask(updated!);
+    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+    printTask({ ...updated!, project });
   });
 
 program
@@ -493,7 +513,8 @@ program
       }
 
       console.log("Merge submitted. Task moved to Merged.");
-      printTask(updated!);
+      const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+      printTask({ ...updated!, project });
     }
   );
 

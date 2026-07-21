@@ -1,4 +1,4 @@
-# Agent Task Queue
+# AgentQ
 
 ATQ is a local tool designed to act as a "100x engineer" assistant for managing coding-agent work across multiple projects.
 
@@ -58,7 +58,7 @@ The web experience should be centered around a fast, local-first task management
 
 6. Board column mapping (hardcoded)
    The board columns map workflow states to action buckets as follows:
-   - **Pending**: New, Ready, Plan Changes Requested, Code review requested, Changes Requested, Approved
+   - **Pending**: New, Ready for Code, Plan Changes Requested, Code review requested, Changes Requested, Approved
    - **In Progress**: Planning, Coding, Reviewing, Merging
    - **Need Review**: Waiting Plan Review, Waiting Code Review
    - **Done**: Complete, Merged
@@ -78,13 +78,13 @@ The CLI should be built as a practical command layer for coding agents, with sim
 
 2. Task creation
    - Agent actions: create a new task with title, description, acceptance criteria, priority, recommended branch, requires-plan flag, and merge branch.
-   - What the agent sees: confirmation of task creation with the new task's ID and initial status (New if requiresPlan, Ready otherwise).
+    - What the agent sees: confirmation of task creation with the new task's ID and initial status (New if requiresPlan, Ready for Code otherwise).
    - Overall design: a command like `atq create <title>` with optional flags for all other fields.
 
 3. Task claiming
    - Agent actions: claim the highest-priority eligible task via `atq claim` with agent identity arguments (name, version, model, role, session-id).
    - What the agent sees: the claimed task's full details and confirmation of the new status.
-   - Overall design: the CLI automatically selects the highest-priority unclaimed task based on the agent's role, creates or updates the agent record, transitions the task to the appropriate working state, and outputs structured task details. Role-to-status mappings are: planner (New, Plan Changes Requested), implementer (Ready, Changes Requested, Approved), reviewer (Code Review Requested), senior (all), architect (planner + reviewer).
+   - Overall design: the CLI automatically selects the highest-priority unclaimed task based on the agent's role, creates or updates the agent record, transitions the task to the appropriate working state, and outputs structured task details. Role-to-status mappings are: planner (PlanRequested, Plan Changes Requested), implementer (Ready for Code, Changes Requested, Approved), reviewer (Code Review Requested), senior (all), architect (planner + reviewer).
 
 4. Task progress updates and handoff
    - Agent actions: submit a plan, submit code, submit review, and submit merge. All these actions add a conversation entry with the agent's context and progress notes.
@@ -119,7 +119,7 @@ Example:
 {
   "id": "uuid",
   "name": "atq",
-  "displayName": "Agent Task Queue",
+  "displayName": "AgentQ",
   "workingDirectory": "/users/boss/atq_repo",
   "created_at": "2026-07-09T12:00:00.000Z",
   "updated_at": "2026-07-09T12:00:00.000Z"
@@ -183,7 +183,7 @@ Example:
   "realBranch": "feature/task-queue-cli",
   "requiresPlan": true,
   "mergeBranch": "develop",
-  "status": "new",
+  "status": "plan_requested",
   "conversation": [
     {
       "authorName": "user",
@@ -198,7 +198,7 @@ Example:
   ],
   "history": [
     {
-      "pre_status": "new",
+      "pre_status": "plan_requested",
       "new_status": "in-progress",
       "timestamp": "2026-07-09T12:06:00.000Z"
     }
@@ -270,10 +270,10 @@ The task lifecycle uses the following states and transitions. Each state represe
 
 - **New** – Initial state after task creation only when `requiresPlan` is true. The task is pending assignment. (Flows to **Planning**, **Canceled**)
 - **Planning** – Entered from **New**. An agent is actively developing an implementation plan. (Flows to **Waiting Plan Review**, **Plan Changes Requested**, **Canceled**)
-- **Waiting Plan Review** – Entered from **Planning** when a plan is submitted for review. Awaits user feedback. (Flows to **Ready**, **Plan Changes Requested**, **Canceled**)
+- **Waiting Plan Review** – Entered from **Planning** when a plan is submitted for review. Awaits user feedback. (Flows to **Ready for Code**, **Plan Changes Requested**, **Canceled**)
 - **Plan Changes Requested** – Entered from **Waiting Plan Review** when reviewers request modifications to the plan. The agent must revise and resubmit. (Returns to **Planning** or flows to **Canceled**)
-- **Ready** – Initial state after task creation only when `requiresPlan` is false, or Entered from **Waiting Plan Review** when the plan is approved. (Flows to **Coding**, **Canceled**)
-- **Coding** – Entered from **Ready**, or from **Changes Requested**. An agent is actively implementing the task. (Flows to **Waiting Code Review**, **Changes Requested**, **Canceled**)
+- **Ready for Code** – Initial state after task creation only when `requiresPlan` is false, or Entered from **Waiting Plan Review** when the plan is approved. (Flows to **Coding**, **Canceled**)
+- **Coding** – Entered from **Ready for Code**, or from **Changes Requested**. An agent is actively implementing the task. (Flows to **Waiting Code Review**, **Changes Requested**, **Canceled**)
 - **Waiting Code Review** – Entered from **Coding** when code is submitted for review. It is also the state that a user can use to request an on-demand AI review. (Flows to **Code review requested**, **Approved**, **Changes Requested**, **Canceled**)
 - **Code review requested** – Entered from **Waiting Code Review** when the user explicitly requests an on-demand AI review from the web UI. This state indicates that review is pending assignment. (Flows to **Reviewing**, **Canceled**)
 - **Reviewing** – Entered from **Code review requested** when an agent claims the task for review. The task remains in this state while the agent performs the review and adds the review result to the conversation. (Flows back to **Waiting Code Review**, **Canceled**)
@@ -287,13 +287,13 @@ The task lifecycle uses the following states and transitions. Each state represe
 Notes:
 - "Changes Requested" and "Plan Changes Requested" are feedback loops. They return to Coding and Planning respectively, allowing agents to iterate on work.
 - Each state transition must record a timestamp and create a corresponding entry in the task's history for audit and tracking purposes.
-- requiresPlan: is immutable and cannot be changed after task creation. It determines whether the task starts in the Planning or Ready state.
+- requiresPlan: is immutable and cannot be changed after task creation. It determines whether the task starts in the Planning or Ready for Code state.
 
 ### User actions
 
 The following user actions drive the workflow transitions described above:
 
-- **Approve plan** – Moves a task from **Waiting Plan Review** to **Ready**.
+- **Approve plan** – Moves a task from **Waiting Plan Review** to **Ready for Code**.
 - **Request plan changes** – Moves a task from **Waiting Plan Review** to **Plan Changes Requested**.
 - **Cancel task** – Moves a task from any active state to **Canceled**.
 - **Approve code** – Moves a task from **Waiting Code Review** to **Approved**.
@@ -310,7 +310,7 @@ The following agent actions drive the workflow transitions described above:
 - **Submit review** – Moves a task from **Reviewing** back to **Waiting Code Review**. The review result is appended to the conversation, and the task is no longer considered to be in review.
 - **Submit merge** – Moves a task from **Merging** to **Merged**.
 - **Claim task** – An agent can take a task in different conditions like:
-  - From **Ready** to **Coding**. The agent is now responsible for implementing the task. 
+  - From **Ready for Code** to **Coding**. The agent is now responsible for implementing the task. 
   - From **New** to **Planning**, if the task requires planning, the agent can claim it.
   - From **Changes Requested** to **Coding**, if the task is in a feedback loop and requires further implementation.
   - From **Plan Changes Requested** to **Planning**, if the task is in a feedback loop and requires further planning.
@@ -331,7 +331,7 @@ Note:
 Example 1: A task that requires planning and an on-demand AI review. (requiresPlan = true)
 - **Task Creation**: A user creates a new task with `requiresPlan` set to true. The task starts in the **New** state.
 - **Agent Claims Task**: An agent claims the task, moving it to the **Planning** state. The agent develops an implementation plan and submits it (adding the plan to the conversation), transitioning the task to **Waiting Plan Review**.
-- **User Reviews Plan**: A user reviews the plan and approves it, moving the task to **Ready**. 
+- **User Reviews Plan**: A user reviews the plan and approves it, moving the task to **Ready for Code**. 
 - **Agent Claims Task**: The agent then claims the task for coding, transitioning it to **Coding**.
 - **Agent Submits Code**: The agent completes the implementation and submits the code, moving the task to **Waiting Code Review**. 
 - **User Requests AI Review**: The user presses the web UI button to request an on-demand AI review, moving the task to **Code review requested**.
@@ -350,7 +350,7 @@ There are three primary roles, planners, implementers, and reviewers. Each role 
 Responsible for creating implementation plans for tasks that require planning. Planners can claim tasks in the **New** or **Plan Changes Requested** states and submit plans for review.
 
 ### Implementer
-Responsible for coding and implementing tasks. Implementers can claim tasks in the **Ready** or **Changes Requested** states and submit code for review.
+Responsible for coding and implementing tasks. Implementers can claim tasks in the **Ready for Code** or **Changes Requested** states and submit code for review.
 
 ### Reviewer
 Responsible for reviewing submitted code. Reviewers can claim tasks in the **Code review requested** state; once they claim one, the task moves to **Reviewing**. They can only submit reviews, and agents are not allowed to approve or request changes directly. Reviewers can provide feedback that moves the task back to **Waiting Code Review** with the review result captured in the conversation.

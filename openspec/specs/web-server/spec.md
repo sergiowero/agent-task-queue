@@ -53,7 +53,7 @@ The system SHALL provide REST API endpoints for task management, project managem
 
 #### Scenario: POST /api/tasks/:id/approve-plan
 - **WHEN** client sends POST request to /api/tasks/:id/approve-plan
-- **THEN** system transitions task to Ready and returns 200
+- **THEN** system transitions task to Ready for Code and returns 200
 
 #### Scenario: POST /api/tasks/:id/request-plan-changes
 - **WHEN** client sends POST request to /api/tasks/:id/request-plan-changes with feedback

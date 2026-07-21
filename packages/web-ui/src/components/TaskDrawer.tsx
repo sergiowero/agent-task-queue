@@ -9,7 +9,7 @@ interface TaskDrawerProps {
 }
 
 const ACTIVE_STATUSES = new Set([
-  "new", "ready", "planning", "waiting_plan_review", "plan_changes_requested",
+  "plan_requested", "ready for code", "planning", "waiting_plan_review", "plan_changes_requested",
   "coding", "waiting_code_review", "code_review_requested", "reviewing",
   "changes_requested", "approved", "merging",
 ]);

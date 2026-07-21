@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { Badge } from "./Badge";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
-  new: "default",
+  plan_requested: "default",
   ready: "info",
   planning: "purple",
   coding: "info",
@@ -123,10 +123,6 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
         <Badge variant={STATUS_VARIANTS[task.status] ?? "default"}>
           {task.status.replace(/_/g, " ")}
         </Badge>
-
-        {task.requiresPlan && (
-          <Badge variant="purple">Plan</Badge>
-        )}
 
         {task.assignedAgent && (
           <span className="text-xs text-text-muted truncate">

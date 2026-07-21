@@ -5,11 +5,11 @@ All state transitions for user actions and agent actions in the ATQ task workflo
 ## Requirements
 
 ### Requirement: User approve plan
-The system SHALL allow users to approve a plan, transitioning the task from Waiting Plan Review to Ready.
+The system SHALL allow users to approve a plan, transitioning the task from Waiting Plan Review to Ready for Code.
 
 #### Scenario: Approve plan
 - **WHEN** user approves a task in Waiting Plan Review status
-- **THEN** system transitions the task to Ready and records the transition in history
+- **THEN** system transitions the task to Ready for Code and records the transition in history
 
 ### Requirement: User request plan changes
 The system SHALL allow users to request plan changes, transitioning the task from Waiting Plan Review to Plan Changes Requested.
@@ -71,24 +71,24 @@ The system SHALL allow users to unblock tasks stuck in Planning, Coding, or Revi
 ### Requirement: Agent claim task
 The system SHALL automatically assign tasks to agents based on role eligibility and priority via the CLI. The CLI is the exclusive interface for claiming.
 
-#### Scenario: Planner claims highest priority New task
+#### Scenario: Planner claims highest priority PlanRequested task
 - **WHEN** a planner agent claims via CLI
-- **THEN** system finds the highest-priority unclaimed task in New status, transitions it to Planning, and assigns the agent
+- **THEN** system finds the highest-priority unclaimed task in PlanRequested status, transitions it to Planning, and assigns the agent
 
 #### Scenario: Planner claims highest priority Plan Changes Requested task
-- **WHEN** a planner agent claims via CLI and no New tasks are available
+- **WHEN** a planner agent claims via CLI and no PlanRequested tasks are available
 - **THEN** system finds the highest-priority unclaimed task in Plan Changes Requested status, transitions it to Planning, and assigns the agent
 
-#### Scenario: Implementer claims highest priority Ready task
+#### Scenario: Implementer claims highest priority Ready for Code task
 - **WHEN** an implementer agent claims via CLI
-- **THEN** system finds the highest-priority unclaimed task in Ready status, transitions it to Coding, and assigns the agent
+- **THEN** system finds the highest-priority unclaimed task in Ready for Code status, transitions it to Coding, and assigns the agent
 
 #### Scenario: Implementer claims highest priority Changes Requested task
-- **WHEN** an implementer agent claims via CLI and no Ready tasks are available
+- **WHEN** an implementer agent claims via CLI and no Ready for Code tasks are available
 - **THEN** system finds the highest-priority unclaimed task in Changes Requested status, transitions it to Coding, and assigns the agent
 
 #### Scenario: Implementer claims highest priority Approved task
-- **WHEN** an implementer agent claims via CLI and no Ready or Changes Requested tasks are available
+- **WHEN** an implementer agent claims via CLI and no Ready for Code or Changes Requested tasks are available
 - **THEN** system finds the highest-priority unclaimed task in Approved status, transitions it to Merging, and assigns the agent
 
 #### Scenario: Reviewer claims highest priority Code Review Requested task
