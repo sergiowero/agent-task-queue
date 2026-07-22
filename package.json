@@ -6,8 +6,8 @@
     "packages/*"
   ],
   "scripts": {
-    "web": "bun run packages/web/src/index.ts",
-    "web:ui": "bun run --cwd packages/web-ui dev",
+    "start": "bun run --cwd packages/web-ui build && bun run packages/web/src/index.ts",
+    "dev": "bun run packages/web/src/index.ts --dev",
     "cli": "bun run packages/cli/src/index.ts",
     "install:bin": "bun run packages/installer/src/install-bin.ts",
     "install:skills": "bun run packages/installer/src/install-skills.ts"

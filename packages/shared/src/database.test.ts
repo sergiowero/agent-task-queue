@@ -1,9 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { createTask, getNextClaimableTask, updateTask, deleteTask } from "./database.js";
+import { describe, it, expect, beforeAll, afterEach } from "bun:test";
+import { createTask, getNextClaimableTask, updateTask, deleteTask, createProject, deleteProject } from "./database.js";
 import { TaskStatus } from "./types.js";
 
 describe("getNextClaimableTask", () => {
   const createdTaskIds: string[] = [];
+  const testProjectId = "test-project";
+
+  beforeAll(() => {
+    createProject({ id: testProjectId, displayName: "Test Project", workingDirectory: "/tmp/test" });
+  });
 
   function createTestTask(data: {
     title: string;
@@ -11,7 +16,7 @@ describe("getNextClaimableTask", () => {
     priority?: number;
     assignedAgent?: any;
   }) {
-    const task = createTask({ title: data.title, description: "test", projectId: "test-project" });
+    const task = createTask({ title: data.title, description: "test", projectId: testProjectId });
     const updated = updateTask(task.id, {
       status: data.status,
       priority: data.priority ?? 0,

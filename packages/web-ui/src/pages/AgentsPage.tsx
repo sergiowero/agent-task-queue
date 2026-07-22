@@ -25,7 +25,7 @@ export function AgentsPage() {
         <h2 className="font-semibold text-text">Agents</h2>
         <div className="flex-1" />
         <select
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          className="border border-border bg-surface-secondary text-text rounded px-2 py-1.5 text-sm"
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
         >
@@ -35,7 +35,7 @@ export function AgentsPage() {
           ))}
         </select>
         <select
-          className="border border-gray-300 rounded px-2 py-1.5 text-sm"
+          className="border border-border bg-surface-secondary text-text rounded px-2 py-1.5 text-sm"
           value={toolFilter}
           onChange={(e) => setToolFilter(e.target.value)}
         >
@@ -47,13 +47,13 @@ export function AgentsPage() {
       </div>
 
       <div className="flex-1 overflow-auto p-4">
-        {isLoading && <p className="text-gray-400 text-sm">Loading...</p>}
+        {isLoading && <p className="text-text-muted text-sm">Loading...</p>}
         {!isLoading && agents.length === 0 && (
-          <p className="text-gray-400 text-sm">No agents registered yet. Agents register when they claim a task via the CLI.</p>
+          <p className="text-text-muted text-sm">No agents registered yet. Agents register when they claim a task via the CLI.</p>
         )}
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-gray-500 border-b border-gray-200">
+            <tr className="text-left text-text-secondary border-b border-border">
               <th className="pb-2 font-medium">Name</th>
               <th className="pb-2 font-medium">Tool</th>
               <th className="pb-2 font-medium">Model</th>
@@ -66,16 +66,16 @@ export function AgentsPage() {
             {agents.map((agent: any) => (
               <tr
                 key={agent.id}
-                className={`border-b border-gray-100 ${isRecent(agent.lastSeen) ? "bg-green-50" : "bg-gray-50/50"}`}
+                className={`border-b border-border ${isRecent(agent.lastSeen) ? "bg-green-50/50 dark:bg-green-900/20" : "bg-surface-secondary"}`}
               >
-                <td className="py-2.5 font-medium text-gray-900">{agent.toolName}</td>
-                <td className="py-2.5 text-gray-700">{agent.toolName}</td>
-                <td className="py-2.5 text-gray-700 font-mono text-xs">{agent.model}</td>
+                <td className="py-2.5 font-medium text-text">{agent.toolName}</td>
+                <td className="py-2.5 text-text-secondary">{agent.toolName}</td>
+                <td className="py-2.5 text-text-secondary font-mono text-xs">{agent.model}</td>
                 <td className="py-2.5">
-                  <span className="text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">{agent.role}</span>
+                  <span className="text-xs bg-surface-secondary text-text-secondary px-1.5 py-0.5 rounded">{agent.role}</span>
                 </td>
-                <td className="py-2.5 text-gray-500 text-xs font-mono">{agent.sessionId.slice(0, 8)}</td>
-                <td className="py-2.5 text-gray-500 text-xs">
+                <td className="py-2.5 text-text-muted text-xs font-mono">{agent.sessionId.slice(0, 8)}</td>
+                <td className="py-2.5 text-text-muted text-xs">
                   {agent.lastSeen ? new Date(agent.lastSeen).toLocaleString() : "—"}
                 </td>
               </tr>

@@ -7,13 +7,15 @@ import { Button } from "../components/Button";
 
 function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
+  const [id, setId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState("");
   const dirInputRef = useRef<HTMLInputElement>(null);
 
+  const sanitizeId = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
   const mutation = useMutation({
-    mutationFn: () => api.createProject({ name, displayName, workingDirectory }),
+    mutationFn: () => api.createProject({ id, displayName, workingDirectory }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       onClose();
@@ -31,7 +33,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
     e.target.value = "";
   };
 
-  const canCreate = name && displayName && workingDirectory && !mutation.isPending;
+  const canCreate = id && displayName && workingDirectory && !mutation.isPending;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">
@@ -39,12 +41,14 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         <h2 className="text-lg font-semibold mb-4 text-text">New Project</h2>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-text mb-1">Name *</label>
+            <label className="block text-sm font-medium text-text mb-1">ID *</label>
             <input
-              className="w-full border border-border bg-surface-secondary text-text rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              className="w-full border border-border bg-surface-secondary text-text rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary font-mono"
+              placeholder="lowercase-alphanumeric"
+              value={id}
+              onChange={(e) => setId(sanitizeId(e.target.value))}
+              pattern="[a-z0-9]+"
+              title="Lowercase alphanumeric characters only, no spaces"
             />
           </div>
           <div>

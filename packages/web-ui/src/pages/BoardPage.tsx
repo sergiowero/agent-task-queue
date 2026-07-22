@@ -1,10 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useSSE } from "../hooks/useSSE";
 import { TaskCard } from "../components/TaskCard";
-import { TaskDrawer } from "../components/TaskDrawer";
 import { CreateTaskModal } from "../components/CreateTaskModal";
 
 const COLUMNS = [
@@ -23,13 +22,12 @@ const COLUMN_COLORS: Record<string, string> = {
 
 export function BoardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const projectId = searchParams.get("projectId") ?? undefined;
-  const taskIdFromUrl = window.location.pathname.match(/\/tasks\/(.+)/)?.[1];
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(taskIdFromUrl ?? null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
@@ -139,17 +137,12 @@ export function BoardPage() {
             </div>
             <div className="flex-1 overflow-y-auto space-y-2 px-1">
               {(grouped[col.key] ?? []).map((task: any) => (
-                <TaskCard key={task.id} task={task} onClick={() => setSelectedTaskId(task.id)} />
+                <TaskCard key={task.id} task={task} onClick={() => navigate(`/tasks/${task.id}/details`)} />
               ))}
             </div>
           </div>
         ))}
       </div>
-
-      {/* Task Drawer */}
-      {selectedTaskId && (
-        <TaskDrawer taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} />
-      )}
 
       {/* Create Modal */}
       {showCreateModal && (

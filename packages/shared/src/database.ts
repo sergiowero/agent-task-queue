@@ -10,7 +10,7 @@ import {
   ActivityEvent,
 } from "./types.js";
 
-const DB_PATH = process.env.ATQ_DB_PATH || "atq.db";
+const DB_PATH = process.env.AGENTQ_DB_PATH || "agentq.db";
 
 let db: Database | null = null;
 
@@ -30,7 +30,6 @@ function initSchema(): void {
   d.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
       display_name TEXT NOT NULL,
       working_directory TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -69,6 +68,7 @@ function initSchema(): void {
       history TEXT DEFAULT '[]',
       contexts TEXT DEFAULT '[]',
       project_id TEXT,
+      worktree_path TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -86,20 +86,6 @@ function initSchema(): void {
       FOREIGN KEY (task_id) REFERENCES tasks(id)
     );
   `);
-
-  // Migrations for existing databases
-  const columns = d.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
-  const columnNames = columns.map((c) => c.name);
-
-  if (!columnNames.includes("worktree_path")) {
-    d.exec("ALTER TABLE tasks ADD COLUMN worktree_path TEXT");
-  }
-
-  // Migrate 'new' status to 'plan_requested'
-  d.exec("UPDATE tasks SET status = 'plan_requested' WHERE status = 'new'");
-
-  // Migrate 'ready' status to 'ready for code'
-  d.exec("UPDATE tasks SET status = 'ready for code' WHERE status = 'ready'");
 }
 
 function rowToTask(row: any): Task {
@@ -142,7 +128,6 @@ function rowToAgent(row: any): Agent {
 function rowToProject(row: any): Project {
   return {
     id: row.id,
-    name: row.name,
     displayName: row.display_name,
     workingDirectory: row.working_directory,
     createdAt: row.created_at,
@@ -359,18 +344,17 @@ export function updateAgentLastSeen(id: string): void {
 // ─── Projects ─────────────────────────────────────────────────────────
 
 export function createProject(data: {
-  name: string;
+  id: string;
   displayName: string;
   workingDirectory: string;
 }): Project {
   const now = new Date().toISOString();
-  const id = randomUUID();
   const stmt = getDb().prepare(
-    "INSERT INTO projects (id, name, display_name, working_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO projects (id, display_name, working_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
   );
-  stmt.run(id, data.name, data.displayName, data.workingDirectory, now, now);
+  stmt.run(data.id, data.displayName, data.workingDirectory, now, now);
 
-  return getProjectById(id)!;
+  return getProjectById(data.id)!;
 }
 
 export function getProjects(): Project[] {
@@ -397,7 +381,6 @@ export function deleteProject(id: string): boolean {
 export function updateProject(
   id: string,
   data: {
-    name?: string;
     displayName?: string;
     workingDirectory?: string;
   }
@@ -407,15 +390,14 @@ export function updateProject(
 
   const now = new Date().toISOString();
   const updated = {
-    name: data.name ?? existing.name,
     displayName: data.displayName ?? existing.displayName,
     workingDirectory: data.workingDirectory ?? existing.workingDirectory,
   };
 
   const stmt = getDb().prepare(
-    "UPDATE projects SET name = ?, display_name = ?, working_directory = ?, updated_at = ? WHERE id = ?"
+    "UPDATE projects SET display_name = ?, working_directory = ?, updated_at = ? WHERE id = ?"
   );
-  stmt.run(updated.name, updated.displayName, updated.workingDirectory, now, id);
+  stmt.run(updated.displayName, updated.workingDirectory, now, id);
 
   return getProjectById(id)!;
 }

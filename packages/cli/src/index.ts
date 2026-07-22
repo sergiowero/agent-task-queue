@@ -11,13 +11,13 @@ import {
   getProjectByTaskId,
   TaskStatus,
   Task,
-} from "@atq/shared";
+} from "@agentq/shared";
 
 const program = new Command();
 
 program
-  .name("atq")
-  .description("Agent Task Queue CLI")
+  .name("agentq")
+  .description("AgentQ CLI")
   .version("0.1.0");
 
 // ─── Role-to-status mapping ────────────────────────────────────────────
@@ -150,7 +150,7 @@ function printTask(task: {
   console.log(`  Title:              ${task.title}`);
   console.log(`  Description:        ${task.description || "(none)"}`);
   if (task.project) {
-    console.log(`  Project:            ${task.project.displayName} (${task.project.name})`);
+    console.log(`  Project:            ${task.project.displayName} (${task.project.id})`);
   }
   console.log(`  Status:             ${task.status}`);
   console.log(`  Priority:           ${task.priority}`);
@@ -390,6 +390,9 @@ program
     if (task!.status !== TaskStatus.Coding) {
       jsonError("Task must be in Coding status.", options.json);
     }
+    if (!options.worktree) {
+      jsonError("Worktree path is required. Use --worktree <path>.", options.json);
+    }
 
     const previousStatus = task!.status;
     let updated = recordHistory(task!, TaskStatus.WaitingCodeReview);
@@ -398,7 +401,7 @@ program
     }
     updated = updateTask(updated!.id, {
       assignedAgent: null,
-      worktreePath: options.worktree ?? undefined,
+      worktreePath: options.worktree,
     });
 
     if (options.json) {

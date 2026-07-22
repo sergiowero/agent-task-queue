@@ -1,16 +1,16 @@
 {
-  "name": "@atq/cli",
+  "name": "@agentq/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "task-queue": "src/index.ts"
+    "agentq": "src/index.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
-    "@atq/shared": "workspace:*",
+    "@agentq/shared": "workspace:*",
     "commander": "^12.0.0"
   }
 }

@@ -33,11 +33,20 @@ function ActivityIcon() {
   );
 }
 
+function ToolsIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.384 3.18A1.125 1.125 0 014.5 17.29V6.71a1.125 1.125 0 011.536-1.06l5.384 3.18m0 0l5.384-3.18A1.125 1.125 0 0118.375 6.71v10.58a1.125 1.125 0 01-1.536 1.06l-5.384-3.18m0-7.26v7.26" />
+    </svg>
+  );
+}
+
 const NAV_ITEMS = [
   { to: "/board", label: "Board", icon: BoardIcon },
   { to: "/projects", label: "Projects", icon: ProjectsIcon },
   { to: "/agents", label: "Agents", icon: AgentsIcon },
   { to: "/activity", label: "Activity", icon: ActivityIcon },
+  { to: "/tools", label: "Tools", icon: ToolsIcon },
 ];
 
 export function Layout() {

@@ -1,5 +1,5 @@
 {
-  "name": "@atq/installer",
+  "name": "@agentq/installer",
   "version": "0.1.0",
   "private": true,
   "type": "module",

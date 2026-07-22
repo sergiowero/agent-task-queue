@@ -73,6 +73,26 @@ with tasks of equal priority ordered by creation date ascending (oldest first).
 - **WHEN** user selects a project filter in the top bar
 - **THEN** system shows only tasks belonging to that project across all columns
 
+#### Scenario: Project filter dropdown displays all projects
+- **WHEN** the board view renders
+- **THEN** the top bar shows a project filter dropdown populated with all available projects plus an "All projects" option
+
+#### Scenario: Project filter shows current selection from URL
+- **WHEN** the board is loaded with a `projectId` search param
+- **THEN** the project filter dropdown reflects the corresponding project as selected
+
+#### Scenario: Selecting a project filters the board
+- **WHEN** user selects a project from the dropdown
+- **THEN** the URL updates with the `projectId` search param and the board shows only tasks belonging to that project
+
+#### Scenario: Selecting All projects clears the filter
+- **WHEN** user selects "All projects" from the dropdown
+- **THEN** the `projectId` search param is removed and the board shows all tasks
+
+#### Scenario: Project filter dropdown is styled consistently
+- **WHEN** the project filter dropdown is rendered
+- **THEN** it uses the same visual styling as the status and agent filter dropdowns
+
 #### Scenario: Filter tasks by status, agent, tool, or model
 - **WHEN** user applies a filter for status, agent, tool, or model
 - **THEN** system narrows the visible task cards to match the filter criteria
@@ -202,15 +222,19 @@ The system SHALL display a global activity stream of task events.
 - **THEN** system narrows the events to match the filter criteria
 
 ### Requirement: Desktop-first layout
-The system SHALL provide a desktop-optimized layout with a left sidebar, top bar, and central content area. The sidebar heading SHALL display "AgentQ" as the product name, with the tagline "your 100x engineer tool" below it.
+The system SHALL provide a desktop-optimized layout with a left sidebar, top bar, and central content area. The layout SHALL use consistent spacing, depth, and color hierarchy from the design system.
 
 #### Scenario: Left sidebar shows project list
 - **WHEN** user views the application
-- **THEN** system displays a left sidebar with the product name "AgentQ", tagline "your 100x engineer tool", a list of projects, and a way to create new projects
+- **THEN** system displays a left sidebar with a list of projects and a way to create new projects, styled with theme surface color and subtle border
 
-#### Scenario: Top bar shows search and filters
+#### Scenario: Top bar shows search, filters, and theme toggle
 - **WHEN** user views the application
-- **THEN** system displays a top bar with search input and filter controls
+- **THEN** system displays a top bar with search input, filter controls, and a theme toggle button for light/dark mode switching
+
+#### Scenario: Sidebar uses theme colors
+- **WHEN** theme changes between light and dark
+- **THEN** sidebar background, border, and text colors update according to the active theme
 
 ### Requirement: Real-time board updates via SSE
 The system SHALL push live updates to the board without requiring manual refresh.

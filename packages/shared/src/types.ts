@@ -20,6 +20,7 @@ export interface ConversationEntry {
   authorName: string;
   timestamp: string;
   message: string;
+  messageType?: "user" | "agent" | "plan" | "code" | "review" | "merge" | "system";
 }
 
 export interface StatusHistoryEntry {
@@ -69,7 +70,6 @@ export interface Agent {
 
 export interface Project {
   id: string;
-  name: string;
   displayName: string;
   workingDirectory: string;
   createdAt: string;

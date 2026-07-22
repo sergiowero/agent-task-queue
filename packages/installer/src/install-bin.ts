@@ -4,53 +4,86 @@ import { join } from "path";
 import { homedir } from "os";
 
 const INSTALL_DIR = join(homedir(), ".local/bin");
-const INSTALL_PATH = join(INSTALL_DIR, "atq");
+const INSTALL_PATH = join(INSTALL_DIR, "agentq");
 const CLI_SOURCE = join(import.meta.dir, "../../cli/src/index.ts");
 
-async function installBinary() {
-  console.log("Building atq binary...");
+function log(icon: string, msg: string) {
+  console.log(`${icon} ${msg}`);
+}
 
-  // Build the binary
-  const buildResult = await $`bun build --compile ${CLI_SOURCE} --outfile /tmp/atq-binary`.quiet();
+async function installBinary() {
+  console.log("");
+  log("📦", "Installing AgentQ binary...\n");
+
+  // Step 1: Build the binary
+  log("🔨", "Building binary from source...");
+  const startTime = Date.now();
+  const buildResult = await $`bun build --compile ${CLI_SOURCE} --outfile /tmp/agentq-binary`.quiet();
 
   if (buildResult.exitCode !== 0) {
-    console.error("Build failed:", buildResult.stderr.toString());
+    log("❌", "Build failed!");
+    console.error(buildResult.stderr.toString());
     process.exit(1);
   }
 
-  // Create install directory if missing
+  const buildTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  log("✅", `Binary built successfully (${buildTime}s)`);
+
+  // Step 2: Create install directory if missing
   if (!existsSync(INSTALL_DIR)) {
-    console.log(`Creating ${INSTALL_DIR}...`);
+    log("📁", `Creating install directory: ${INSTALL_DIR}`);
     mkdirSync(INSTALL_DIR, { recursive: true });
+    log("✅", "Directory created");
+  } else {
+    log("📁", `Install directory exists: ${INSTALL_DIR}`);
   }
 
-  // Copy binary to install location
-  await $`cp /tmp/atq-binary ${INSTALL_PATH}`.quiet();
+  // Step 3: Copy binary to install location
+  log("📋", `Copying binary to ${INSTALL_PATH}...`);
+  await $`cp /tmp/agentq-binary ${INSTALL_PATH}`.quiet();
+  log("✅", "Binary copied");
 
-  // Make executable
+  // Step 4: Make executable
+  log("🔧", "Setting executable permissions...");
   await $`chmod 755 ${INSTALL_PATH}`.quiet();
+  log("✅", "Permissions set (755)");
 
-  // Clean up temp file
-  await $`rm -f /tmp/atq-binary`.quiet();
+  // Step 5: Clean up temp file
+  log("🧹", "Cleaning up temporary files...");
+  await $`rm -f /tmp/agentq-binary`.quiet();
+  log("✅", "Cleanup complete");
 
-  // Verify installation
+  // Step 6: Verify installation
+  log("🔍", "Verifying installation...");
   const versionResult = await $`${INSTALL_PATH} --version`.quiet();
   const version = versionResult.stdout.toString().trim();
 
-  console.log(`\n✓ atq installed to ${INSTALL_PATH}`);
-  console.log(`  Version: ${version}`);
-
-  // Check if in PATH
+  // Step 7: Check PATH
+  log("🔍", "Checking PATH configuration...");
   const pathCheck = await $`echo $PATH`.quiet();
   const pathDirs = pathCheck.stdout.toString().trim().split(":");
-  if (!pathDirs.includes(INSTALL_DIR)) {
-    console.log(`\n⚠ ${INSTALL_DIR} is not in your PATH.`);
-    console.log(`  Add this to your shell profile (~/.zshrc, ~/.bashrc, etc.):`);
-    console.log(`  export PATH="${INSTALL_DIR}:$PATH"`);
+  const inPath = pathDirs.includes(INSTALL_DIR);
+
+  // Summary
+  console.log("\n" + "─".repeat(50));
+  console.log("📦 INSTALLATION SUMMARY");
+  console.log("─".repeat(50));
+  console.log(`   ✅ Binary installed to: ${INSTALL_PATH}`);
+  console.log(`   ✅ Version: ${version}`);
+  console.log(`   ${inPath ? "✅" : "⚠️ "} PATH: ${inPath ? "configured" : "not in PATH"}`);
+  console.log("─".repeat(50));
+
+  if (!inPath) {
+    console.log("\n⚠️  Action required:");
+    console.log(`   Add this to your shell profile (~/.zshrc, ~/.bashrc, etc.):`);
+    console.log(`   export PATH="${INSTALL_DIR}:$PATH"\n`);
+  } else {
+    console.log("\n🎉 AgentQ is ready to use! Try: agentq --help\n");
   }
 }
 
 installBinary().catch((err) => {
-  console.error("Installation failed:", err);
+  log("❌", "Installation failed!");
+  console.error(err);
   process.exit(1);
 });

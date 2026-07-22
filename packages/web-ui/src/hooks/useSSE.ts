@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 type SSEEvent = { event: string; data: any };
 
-const SSE_URL = "http://localhost:3000/api/events";
+const SSE_URL = "/api/events";
 
 export function useSSE(onMessage: (event: SSEEvent) => void) {
   const onMessageRef = useRef(onMessage);

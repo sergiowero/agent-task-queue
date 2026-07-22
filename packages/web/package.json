@@ -1,5 +1,5 @@
 {
-  "name": "@atq/web",
+  "name": "@agentq/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,6 @@
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
-    "@atq/shared": "workspace:*"
+    "@agentq/shared": "workspace:*"
   }
 }

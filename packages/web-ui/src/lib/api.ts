@@ -80,4 +80,12 @@ export const api = {
     const qs = params.toString();
     return request<any[]>(`/activity${qs ? `?${qs}` : ""}`);
   },
+
+  // Tools
+  executeInstall: () =>
+    fetch(`${API_BASE}/tools/install/execute`, { method: "POST" }),
+  executeInstallSkills: () =>
+    fetch(`${API_BASE}/tools/install/skills`, { method: "POST" }),
+  getSkillFile: () =>
+    request<{ content: string }>("/tools/install/skill-file"),
 };

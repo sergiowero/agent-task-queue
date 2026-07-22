@@ -7,7 +7,6 @@ import { Input } from "./Input";
 interface EditProjectModalProps {
   project: {
     id: string;
-    name: string;
     displayName: string;
     workingDirectory: string;
   };
@@ -16,13 +15,12 @@ interface EditProjectModalProps {
 
 export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState(project.name);
   const [displayName, setDisplayName] = useState(project.displayName);
   const [workingDirectory, setWorkingDirectory] = useState(project.workingDirectory);
 
   const updateMutation = useMutation({
     mutationFn: () =>
-      api.updateProject(project.id, { name, displayName, workingDirectory }),
+      api.updateProject(project.id, { displayName, workingDirectory }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       onClose();
@@ -37,21 +35,13 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
     },
   });
 
-  const canSave = name && displayName && workingDirectory && !updateMutation.isPending;
+  const canSave = displayName && workingDirectory && !updateMutation.isPending;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-surface rounded-xl shadow-lg w-full max-w-lg p-6 transition-colors duration-300">
         <h2 className="text-lg font-semibold mb-4 text-text">Edit Project</h2>
         <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Name *</label>
-            <Input
-              placeholder="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
           <div>
             <label className="block text-sm font-medium text-text mb-1">Display Name *</label>
             <Input
