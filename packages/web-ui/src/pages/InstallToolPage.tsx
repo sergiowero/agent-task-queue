@@ -91,14 +91,13 @@ export function InstallToolPage() {
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-6">
-        {/* Binary Install */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-text">Binary</h3>
             <button
               onClick={() => bin.run(api.executeInstall)}
               disabled={bin.isRunning}
-              className="px-4 py-1.5 bg-primary text-white text-sm font-medium rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-4 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {bin.isRunning ? "Installing..." : "Install Binary"}
             </button>
@@ -116,14 +115,13 @@ export function InstallToolPage() {
           </pre>
         </div>
 
-        {/* Skills Install */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-text">Skills</h3>
             <button
               onClick={() => skills.run(api.executeInstallSkills)}
               disabled={skills.isRunning}
-              className="px-4 py-1.5 bg-primary text-white text-sm font-medium rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-4 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {skills.isRunning ? "Installing..." : "Install Skills"}
             </button>
@@ -141,13 +139,12 @@ export function InstallToolPage() {
           </pre>
         </div>
 
-        {/* Skill File */}
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-text">Skill File (Manual Install)</h3>
             <button
               onClick={handleCopy}
-              className="px-3 py-1 text-xs bg-surface-secondary border border-border rounded hover:bg-surface transition-colors text-text"
+              className="px-3 py-1 text-xs bg-surface-secondary border border-border rounded-lg hover:bg-surface transition-colors text-text"
             >
               {copied ? "Copied!" : "Copy to Clipboard"}
             </button>

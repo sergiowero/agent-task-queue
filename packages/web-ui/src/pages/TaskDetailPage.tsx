@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
+import { Skeleton } from "../components/Skeleton";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
   plan_requested: "default",
@@ -60,8 +61,18 @@ export function TaskDetailPage() {
 
   if (isLoading || !task) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-text-muted">Loading...</div>
+      <div className="flex-1 p-6 space-y-4">
+        <div className="flex items-center gap-3 mb-4">
+          <Skeleton className="h-4 w-24" />
+        </div>
+        <Skeleton className="h-8 w-2/3" />
+        <Skeleton className="h-4 w-1/3" />
+        <div className="grid grid-cols-2 gap-4 mt-6">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+        </div>
       </div>
     );
   }
@@ -69,7 +80,6 @@ export function TaskDetailPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto">
-        {/* Header */}
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="flex items-center gap-3 mb-3">
             <button
@@ -83,7 +93,7 @@ export function TaskDetailPage() {
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-semibold text-text">{task.title}</h1>
               <div className="flex items-center gap-2 mt-1">
-                <Badge variant={STATUS_VARIANTS[task.status] ?? "default"}>
+                <Badge variant={STATUS_VARIANTS[task.status] ?? "default"} dot>
                   {task.status.replace(/_/g, " ")}
                 </Badge>
                 {task.assignedAgent && (
@@ -94,7 +104,6 @@ export function TaskDetailPage() {
           </div>
         </div>
 
-        {/* Task Metadata */}
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
             <Field label="Description" value={task.description || "—"} />
@@ -106,7 +115,7 @@ export function TaskDetailPage() {
           </div>
           {task.acceptanceCriteria?.length > 0 && (
             <div className="mt-3">
-              <label className="text-xs font-medium text-text-muted uppercase">Acceptance Criteria</label>
+              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Acceptance Criteria</label>
               <ul className="mt-1 text-sm text-text-secondary list-disc list-inside space-y-0.5">
                 {task.acceptanceCriteria.map((c: string, i: number) => (
                   <li key={i}>{c}</li>
@@ -116,7 +125,6 @@ export function TaskDetailPage() {
           )}
         </div>
 
-        {/* Tabs: Conversation / History */}
         <div className="border-b border-border bg-surface">
           <div className="flex px-6">
             {(["conversation", "history"] as const).map((t) => (
@@ -133,12 +141,16 @@ export function TaskDetailPage() {
           </div>
         </div>
 
-        {/* Tab Content */}
         <div className="px-6 py-4">
           {tab === "conversation" && (
             <div className="space-y-3 max-w-3xl">
               {task.conversation?.length === 0 && (
-                <p className="text-sm text-text-muted">No messages yet.</p>
+                <div className="flex flex-col items-center justify-center py-12 text-text-muted">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <p className="text-sm">No messages yet.</p>
+                </div>
               )}
               {task.conversation?.map((entry: any, i: number) => (
                 <ConversationEntryCard key={i} entry={entry} />
@@ -149,7 +161,12 @@ export function TaskDetailPage() {
           {tab === "history" && (
             <div className="space-y-2 max-w-3xl">
               {task.history?.length === 0 && (
-                <p className="text-sm text-text-muted">No history yet.</p>
+                <div className="flex flex-col items-center justify-center py-12 text-text-muted">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-sm">No history yet.</p>
+                </div>
               )}
               {task.history?.map((h: any, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
@@ -163,12 +180,10 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {/* Feedback Input */}
       {(mutation as any)?.isPending && (
         <div className="px-6 py-2 text-sm text-primary border-t border-border">Processing...</div>
       )}
 
-      {/* Action Buttons */}
       {ACTIVE_STATUSES.has(task.status) && (
         <div className="border-t border-border bg-surface px-6 py-4 space-y-2 shrink-0">
           {task.status === "waiting_plan_review" && (
@@ -192,11 +207,11 @@ export function TaskDetailPage() {
             <Button onClick={() => doAction("confirmCompletion")} variant="primary">Confirm Complete</Button>
           )}
           {["planning", "coding", "reviewing"].includes(task.status) && (
-            <Button onClick={() => doAction("unblock")} variant="secondary">Unblock</Button>
+            <Button onClick={() => doAction("unblock")} variant="ghost">Unblock</Button>
           )}
           <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
           <input
-            className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-surface transition-all duration-150"
+            className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
             placeholder="Add feedback (optional)..."
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
@@ -210,7 +225,7 @@ export function TaskDetailPage() {
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <label className="text-xs font-medium text-text-muted uppercase">{label}</label>
+      <label className="text-xs font-medium text-text-muted uppercase tracking-wider">{label}</label>
       <div className={`text-sm text-text mt-0.5 ${mono ? "font-mono" : ""}`}>{value}</div>
     </div>
   );

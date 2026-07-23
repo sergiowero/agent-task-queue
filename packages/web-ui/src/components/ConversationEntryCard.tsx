@@ -61,8 +61,8 @@ export function ConversationEntryCard({ entry }: ConversationEntryCardProps) {
   const isSystem = type === "system";
 
   return (
-    <div className={`border-l-2 ${borderColor} pl-3 py-2 ${bgTint} rounded-r-lg ${isSystem ? "opacity-70 italic" : ""}`}>
-      <div className="flex items-baseline gap-2 flex-wrap">
+    <div className={`border-l-2 ${borderColor} pl-3 py-2 ${bgTint} rounded-r-lg ${isSystem ? "opacity-70 italic" : ""} animate-slide-up`}>
+      <div className="flex items-baseline gap-2 flex-wrap mb-1">
         <Badge variant={variant} size="sm">{label}</Badge>
         <span className="text-xs font-medium text-text-secondary">{entry.authorName}</span>
         <span className="text-xs text-text-muted">{new Date(entry.timestamp).toLocaleString()}</span>

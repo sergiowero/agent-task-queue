@@ -38,7 +38,7 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const canSave = displayName && workingDirectory && !updateMutation.isPending;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-surface rounded-xl shadow-lg w-full max-w-lg p-6 transition-colors duration-300">
         <h2 className="text-lg font-semibold mb-4 text-text">Edit Project</h2>
         <div className="space-y-3">

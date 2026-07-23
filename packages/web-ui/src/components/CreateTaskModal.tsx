@@ -5,6 +5,7 @@ import { Button } from "./Button";
 import { Input } from "./Input";
 import { Textarea } from "./Textarea";
 import { Toggle } from "./Toggle";
+import { Select } from "./Select";
 
 interface CreateTaskModalProps {
   projectId?: string;
@@ -48,14 +49,13 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const canCreate = title && description && selectedProjectId && !mutation.isPending;
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
       <div className="bg-surface rounded-xl shadow-lg w-full max-w-lg p-6 transition-colors duration-300">
         <h2 className="text-lg font-semibold mb-4 text-text">New Task</h2>
         <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-text mb-1">Project *</label>
-            <select
-              className="border border-border bg-surface-secondary text-text rounded px-3 py-2 text-sm w-full"
+            <Select
               value={selectedProjectId}
               onChange={(e) => setSelectedProjectId(e.target.value)}
             >
@@ -63,7 +63,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
               {projects.map((p: any) => (
                 <option key={p.id} value={p.id}>{p.displayName}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="block text-sm font-medium text-text mb-1">Title *</label>

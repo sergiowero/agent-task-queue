@@ -3,23 +3,43 @@ export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+      },
       colors: {
         surface: {
           DEFAULT: "var(--color-surface)",
           secondary: "var(--color-surface-secondary)",
+          tertiary: "var(--color-surface-tertiary)",
         },
         primary: {
           DEFAULT: "var(--color-primary)",
           hover: "var(--color-primary-hover)",
           ring: "var(--color-primary-ring)",
+          subtle: "var(--color-primary-subtle)",
         },
         danger: {
           DEFAULT: "var(--color-danger)",
           hover: "var(--color-danger-hover)",
+          ring: "var(--color-danger-ring)",
+          subtle: "var(--color-danger-subtle)",
         },
-        success: "var(--color-success)",
-        warning: "var(--color-warning)",
-        border: "var(--color-border)",
+        success: {
+          DEFAULT: "var(--color-success)",
+          subtle: "var(--color-success-subtle)",
+        },
+        warning: {
+          DEFAULT: "var(--color-warning)",
+          subtle: "var(--color-warning-subtle)",
+        },
+        accent: {
+          DEFAULT: "var(--color-accent)",
+          subtle: "var(--color-accent-subtle)",
+        },
+        border: {
+          DEFAULT: "var(--color-border)",
+          light: "var(--color-border-light)",
+        },
         text: {
           DEFAULT: "var(--color-text)",
           secondary: "var(--color-text-secondary)",
@@ -30,6 +50,7 @@ export default {
         sm: "var(--shadow-sm)",
         md: "var(--shadow-md)",
         lg: "var(--shadow-lg)",
+        xl: "var(--shadow-xl)",
       },
       transitionProperty: {
         theme: "background-color, color, border-color, box-shadow",
@@ -42,6 +63,9 @@ export default {
       },
       transitionTimingFunction: {
         "theme-ease": "ease-in-out",
+      },
+      animation: {
+        "slide-up": "slideUp 300ms ease-out",
       },
     },
   },

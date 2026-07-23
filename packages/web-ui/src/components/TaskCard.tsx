@@ -21,6 +21,13 @@ const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "dange
   approved: "success",
 };
 
+const PRIORITY_COLORS: Record<number, string> = {
+  0: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800",
+  1: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800",
+  2: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
+  3: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-200 dark:border-gray-700",
+};
+
 interface TaskCardProps {
   task: any;
   onClick: () => void;
@@ -85,10 +92,10 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
   return (
     <div
       onClick={handleCardClick}
-      className="bg-surface rounded-xl border border-border p-3 cursor-pointer hover:shadow-md hover:border-primary/30 transition-all duration-150"
+      className="bg-surface rounded-xl border border-border p-3 cursor-pointer hover:shadow-md hover:border-primary/30 hover:-translate-y-0.5 transition-all duration-150"
     >
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <h4 className="text-sm font-medium text-text line-clamp-2">{task.title}</h4>
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <h4 className="text-sm font-semibold text-text line-clamp-2 leading-snug">{task.title}</h4>
         {editing ? (
           <span onMouseDown={stopProp} onClick={stopProp} className="shrink-0">
             <input
@@ -99,14 +106,14 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
               onBlur={savePriority}
               onKeyDown={handleKeyDown}
               disabled={saving}
-              className="w-16 text-xs border border-primary rounded-lg px-1.5 py-0.5 text-right bg-surface text-text focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-surface transition-all duration-150"
+              className="w-16 text-xs border border-primary rounded-lg px-1.5 py-0.5 text-right bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
               autoFocus
             />
           </span>
         ) : (
           <span
             onClick={startEditing}
-            className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all duration-150 ${saving ? "opacity-50" : ""} bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400`}
+            className={`text-xs px-1.5 py-0.5 rounded shrink-0 cursor-pointer border font-medium hover:ring-2 hover:ring-primary/30 transition-all duration-150 ${saving ? "opacity-50" : ""} ${PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS[3]}`}
           >
             {saving ? "..." : `P${editValue}`}
           </span>
@@ -120,7 +127,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
       )}
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        <Badge variant={STATUS_VARIANTS[task.status] ?? "default"}>
+        <Badge variant={STATUS_VARIANTS[task.status] ?? "default"} dot>
           {task.status.replace(/_/g, " ")}
         </Badge>
 
