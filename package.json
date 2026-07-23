@@ -10,6 +10,7 @@
     "dev": "bun run packages/web/src/index.ts --dev",
     "cli": "bun run packages/cli/src/index.ts",
     "install:bin": "bun run packages/installer/src/install-bin.ts",
-    "install:skills": "bun run packages/installer/src/install-skills.ts"
+    "install:skills": "bun run packages/installer/src/install-skills.ts",
+    "install:agents": "bun run packages/installer/src/install-agents.ts"
   }
 }

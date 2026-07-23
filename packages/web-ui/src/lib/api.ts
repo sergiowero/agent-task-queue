@@ -50,6 +50,8 @@ export const api = {
     request<any>(`/tasks/${id}/cancel`, { method: "POST" }),
   unblock: (id: string) =>
     request<any>(`/tasks/${id}/unblock`, { method: "POST" }),
+  addComment: (id: string, data: any) =>
+    request<any>(`/tasks/${id}/add-comment`, { method: "POST", body: JSON.stringify(data) }),
 
   // Agents
   getAgents: (filters?: { role?: string; tool?: string }) => {

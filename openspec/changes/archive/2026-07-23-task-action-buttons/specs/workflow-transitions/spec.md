@@ -1,8 +1,4 @@
-# Workflow Transitions
-
-Server-side workflow and state machine for task status transitions.
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Canceled tasks reject agent submissions
 The system SHALL reject agent submissions (submit-plan, submit-code, submit-review, submit-merge) when the task status is Canceled. The agent SHALL receive a clear error message.

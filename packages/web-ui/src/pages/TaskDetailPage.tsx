@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
+import { MarkdownRenderer } from "../components/MarkdownRenderer";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
   plan_requested: "default",
@@ -23,18 +24,17 @@ const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "dange
   approved: "success",
 };
 
-const ACTIVE_STATUSES = new Set([
-  "plan_requested", "ready for code", "planning", "waiting_plan_review", "plan_changes_requested",
-  "coding", "waiting_code_review", "code_review_requested", "reviewing",
-  "changes_requested", "approved", "merging",
+const COMMENTABLE_STATUSES = new Set([
+  "planning", "coding", "ready for code", "reviewing", "merged", "complete",
 ]);
 
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"conversation" | "history">("conversation");
+  const [tab, setTab] = useState<"description" | "conversation" | "context" | "history">("description");
   const [feedback, setFeedback] = useState("");
+  const [conversationInput, setConversationInput] = useState("");
 
   const { data: task, isLoading } = useQuery({
     queryKey: ["task", id],
@@ -53,10 +53,39 @@ export function TaskDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["task", id] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setFeedback("");
+      setConversationInput("");
     },
   });
 
   const doAction = (action: string, data?: any) => mutation.mutate({ action, data });
+
+  function handleInlineAction() {
+    const status = task?.status;
+    if (!status || !conversationInput.trim()) return;
+
+    if (status === "waiting_plan_review") {
+      doAction("requestPlanChanges", { message: conversationInput });
+    } else if (status === "waiting_code_review") {
+      doAction("requestCodeChanges", { message: conversationInput });
+    } else if (COMMENTABLE_STATUSES.has(status)) {
+      doAction("addComment", { message: conversationInput, authorName: "user" });
+    }
+  }
+
+  function getInlineButtonLabel(): string {
+    const status = task?.status;
+    if (status === "waiting_plan_review") return "Request Plan Changes";
+    if (status === "waiting_code_review") return "Request Changes";
+    return "Add Comment";
+  }
+
+  function isInlineButtonVisible(): boolean {
+    const status = task?.status;
+    if (!status) return false;
+    if (status === "waiting_plan_review") return true;
+    if (status === "waiting_code_review") return true;
+    return COMMENTABLE_STATUSES.has(status);
+  }
 
   if (isLoading || !task) {
     return (
@@ -97,7 +126,6 @@ export function TaskDetailPage() {
         {/* Task Metadata */}
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-            <Field label="Description" value={task.description || "—"} />
             <Field label="Priority" value={String(task.priority)} />
             <Field label="Branch" value={task.recommendedBranch || "—"} mono />
             <Field label="Merge Target" value={task.mergeBranch} mono />
@@ -116,10 +144,10 @@ export function TaskDetailPage() {
           )}
         </div>
 
-        {/* Tabs: Conversation / History */}
+        {/* Tabs: Description / Conversation / Context / History */}
         <div className="border-b border-border bg-surface">
           <div className="flex px-6">
-            {(["conversation", "history"] as const).map((t) => (
+            {(["description", "conversation", "context", "history"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -135,6 +163,15 @@ export function TaskDetailPage() {
 
         {/* Tab Content */}
         <div className="px-6 py-4">
+          {tab === "description" && (
+            <div className="max-w-3xl">
+              {task.description ? (
+                <MarkdownRenderer content={task.description} />
+              ) : (
+                <p className="text-sm text-text-muted">No description.</p>
+              )}
+            </div>
+          )}
           {tab === "conversation" && (
             <div className="space-y-3 max-w-3xl">
               {task.conversation?.length === 0 && (
@@ -143,9 +180,42 @@ export function TaskDetailPage() {
               {task.conversation?.map((entry: any, i: number) => (
                 <ConversationEntryCard key={i} entry={entry} />
               ))}
+              {isInlineButtonVisible() && (
+                <div className="sticky bottom-0 pt-3 pb-1 bg-surface flex gap-2">
+                  <input
+                    className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-surface text-text focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-surface transition-all duration-150"
+                    placeholder="Type a message..."
+                    value={conversationInput}
+                    onChange={(e) => setConversationInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleInlineAction(); }}
+                  />
+                  <Button
+                    onClick={handleInlineAction}
+                    variant={task.status === "waiting_code_review" ? "danger" : "primary"}
+                    disabled={!conversationInput.trim() || (mutation as any)?.isPending}
+                  >
+                    {getInlineButtonLabel()}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
+          {tab === "context" && (
+            <div className="space-y-3 max-w-3xl">
+              {(!task.contexts || task.contexts.length === 0) && (
+                <p className="text-sm text-text-muted">No context entries recorded.</p>
+              )}
+              {task.contexts?.map((entry: string, i: number) => (
+                <div key={i} className="border-l-4 border-blue-500 bg-surface pl-4 py-3 pr-4 rounded-r-lg shadow-sm">
+                  <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold mr-2">
+                    #{i + 1}
+                  </span>
+                  <span className="text-sm text-text">{entry}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {tab === "history" && (
             <div className="space-y-2 max-w-3xl">
               {task.history?.length === 0 && (
@@ -163,46 +233,31 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {/* Feedback Input */}
+      {/* Processing indicator */}
       {(mutation as any)?.isPending && (
         <div className="px-6 py-2 text-sm text-primary border-t border-border">Processing...</div>
       )}
 
       {/* Action Buttons */}
-      {ACTIVE_STATUSES.has(task.status) && (
-        <div className="border-t border-border bg-surface px-6 py-4 space-y-2 shrink-0">
-          {task.status === "waiting_plan_review" && (
-            <div className="flex gap-2">
-              <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
-              <Button onClick={() => doAction("requestPlanChanges", { message: feedback || "Plan changes requested." })} variant="secondary">
-                Request Changes
-              </Button>
-            </div>
-          )}
-          {task.status === "waiting_code_review" && (
-            <div className="flex gap-2">
-              <Button onClick={() => doAction("approveCode")} variant="primary">Approve Code</Button>
-              <Button onClick={() => doAction("requestCodeChanges", { message: feedback || "Code changes requested." })} variant="secondary">
-                Request Changes
-              </Button>
-              <Button onClick={() => doAction("requestAiReview")} variant="secondary">AI Review</Button>
-            </div>
-          )}
-          {task.status === "merged" && (
-            <Button onClick={() => doAction("confirmCompletion")} variant="primary">Confirm Complete</Button>
-          )}
-          {["planning", "coding", "reviewing"].includes(task.status) && (
-            <Button onClick={() => doAction("unblock")} variant="secondary">Unblock</Button>
-          )}
+      <div className="border-t border-border bg-surface px-6 py-4 space-y-2 shrink-0">
+        {task.status === "waiting_plan_review" && (
+          <div className="flex gap-2">
+            <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
+          </div>
+        )}
+        {task.status === "waiting_code_review" && (
+          <div className="flex gap-2">
+            <Button onClick={() => doAction("approveCode")} variant="primary">Approve</Button>
+            <Button onClick={() => doAction("requestAiReview")} variant="secondary">Request AI Review</Button>
+          </div>
+        )}
+        {task.status === "merged" && (
+          <Button onClick={() => doAction("confirmCompletion")} variant="primary">Complete</Button>
+        )}
+        {!["canceled", "complete", "merged"].includes(task.status) && (
           <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
-          <input
-            className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-surface transition-all duration-150"
-            placeholder="Add feedback (optional)..."
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

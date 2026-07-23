@@ -211,7 +211,7 @@ function getSubAction(pathname: string): string | null {
 
 // ─── Workflow Helpers ─────────────────────────────────────────────────
 
-const CANCELED_CANT_CANCEL = new Set([TaskStatus.Canceled, TaskStatus.Complete]);
+const CANCELED_CANT_CANCEL = new Set([TaskStatus.Canceled, TaskStatus.Complete, TaskStatus.Merged]);
 
 function recordHistory(task: Task, newStatus: TaskStatus): Task {
   const now = new Date().toISOString();
@@ -358,6 +358,9 @@ async function main() {
         switch (subAction) {
           // ── Submit plan ────────────────────────────────────────────
           case "submit-plan": {
+            if (task.status === TaskStatus.Canceled) {
+              return errorResponse("Task is canceled and cannot accept submissions.");
+            }
             if (task.status !== TaskStatus.Planning) {
               return errorResponse("task must be in Planning status");
             }
@@ -373,6 +376,9 @@ async function main() {
 
           // ── Submit code ────────────────────────────────────────────
           case "submit-code": {
+            if (task.status === TaskStatus.Canceled) {
+              return errorResponse("Task is canceled and cannot accept submissions.");
+            }
             if (task.status !== TaskStatus.Coding) {
               return errorResponse("task must be in Coding status");
             }
@@ -388,6 +394,9 @@ async function main() {
 
           // ── Submit review ──────────────────────────────────────────
           case "submit-review": {
+            if (task.status === TaskStatus.Canceled) {
+              return errorResponse("Task is canceled and cannot accept submissions.");
+            }
             if (task.status !== TaskStatus.Reviewing) {
               return errorResponse("task must be in Reviewing status");
             }
@@ -403,6 +412,9 @@ async function main() {
 
           // ── Submit merge ───────────────────────────────────────────
           case "submit-merge": {
+            if (task.status === TaskStatus.Canceled) {
+              return errorResponse("Task is canceled and cannot accept submissions.");
+            }
             if (task.status !== TaskStatus.Merging) {
               return errorResponse("task must be in Merging status");
             }
@@ -515,6 +527,17 @@ async function main() {
             addConversation(updated!, "user", "Task canceled.", "user");
             updated = updateTask(updated!.id, { assignedAgent: null });
             addActivity(taskId, "task_canceled", "user");
+            broadcastSSE("task_updated", updated);
+            break;
+          }
+
+          // ── Add comment ────────────────────────────────────────────
+          case "add-comment": {
+            if (!body?.message) {
+              return errorResponse("message is required");
+            }
+            updated = addConversation(task, body.authorName ?? "user", body.message, "user");
+            addActivity(taskId, "comment_added", body.authorName ?? "user", body.message);
             broadcastSSE("task_updated", updated);
             break;
           }

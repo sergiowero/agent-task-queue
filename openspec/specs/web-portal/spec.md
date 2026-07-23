@@ -106,47 +106,75 @@ with tasks of equal priority ordered by creation date ascending (oldest first).
 - **THEN** system fetches the latest task data and re-renders the board
 
 ### Requirement: Task detail drawer
-The system SHALL provide a right-side drawer that opens over the board when a task card is selected.
+The system SHALL render task details in a full-page view at `/tasks/:id/details` with action buttons and a conversation input inside the Conversation tab.
 
 #### Scenario: Open task detail
 - **WHEN** user clicks a task card on the board
-- **THEN** system opens a right-side drawer showing the full task details with tabs for Summary, Conversation, and History
+- **THEN** system navigates to `/tasks/:id/details` showing the full task details with tabs for Summary, Conversation, and History
 
 #### Scenario: Summary tab shows task metadata
-- **WHEN** user views the Summary tab in the task drawer
+- **WHEN** user views the Summary tab on the task detail page
 - **THEN** system displays title, description, acceptance criteria, priority, recommended branch, real branch, merge target, assigned agent, status, and status history
 
 #### Scenario: Conversation tab shows messages
-- **WHEN** user views the Conversation tab in the task drawer
+- **WHEN** user views the Conversation tab on the task detail page
 - **THEN** system displays a chronological thread of messages with author name, timestamp, and message content
 
 #### Scenario: History tab shows state transitions
-- **WHEN** user views the History tab in the task drawer
+- **WHEN** user views the History tab on the task detail page
 - **THEN** system displays a timeline of status transitions with previous status, new status, and timestamp
 
-#### Scenario: User approves plan from drawer
-- **WHEN** user clicks "Approve Plan" while task is in Waiting Plan Review status
-- **THEN** system transitions the task to Ready for Code and adds a system message to the conversation
+#### Scenario: Conversation tab has text input and inline buttons
+- **WHEN** user views the Conversation tab on the task detail page
+- **THEN** system displays a sticky footer at the bottom of the tab with a text input and a context-sensitive action button
 
-#### Scenario: User requests plan changes from drawer
-- **WHEN** user clicks "Request Plan Changes" while task is in Waiting Plan Review status
-- **THEN** system transitions the task to Plan Changes Requested and prompts user for feedback text
+#### Scenario: Cancel button always visible
+- **WHEN** user views any task on the detail page
+- **THEN** "Cancel Task" button is always shown at the bottom of the page
+- **WHEN** user clicks Cancel
+- **THEN** system transitions the task to Canceled, clears the assigned agent, and adds a conversation entry
 
-#### Scenario: User approves code from drawer
-- **WHEN** user clicks "Approve Code" while task is in Waiting Code Review status
-- **THEN** system transitions the task to Approved and adds a system message to the conversation
+#### Scenario: Request Plan Changes button in conversation tab
+- **WHEN** task status is Waiting Plan Review
+- **THEN** conversation tab shows "Request Plan Changes" button to the right of the text input
+- **WHEN** user clicks it
+- **THEN** system adds the input text to conversation and transitions to Plan Changes Requested
 
-#### Scenario: User requests code changes from drawer
-- **WHEN** user clicks "Request Code Changes" while task is in Waiting Code Review status
-- **THEN** system transitions the task to Changes Requested and prompts user for feedback text
+#### Scenario: Request Changes button in conversation tab
+- **WHEN** task status is Waiting Code Review
+- **THEN** conversation tab shows "Request Changes" button to the right of the text input
+- **WHEN** user clicks it
+- **THEN** system adds the input text to conversation and transitions to Changes Requested
 
-#### Scenario: User requests AI review from drawer
-- **WHEN** user clicks "Request AI Review" while task is in Waiting Code Review status
-- **THEN** system transitions the task to Code Review Requested and adds a system message to the conversation
+#### Scenario: Add Comment button in conversation tab
+- **WHEN** task status is Planning, Coding, Ready for Code, Reviewing, Merged, or Complete
+- **THEN** conversation tab shows "Add Comment" button to the right of the text input
+- **WHEN** user clicks it
+- **THEN** system adds the input text as a plain user message to conversation with no status change
 
-#### Scenario: User cancels task from drawer
-- **WHEN** user clicks "Cancel Task" and confirms the action
-- **THEN** system transitions the task to Canceled and adds a system message to the conversation
+#### Scenario: Approve Plan button in action bar
+- **WHEN** task status is Waiting Plan Review
+- **THEN** bottom action bar shows "Approve Plan" button
+- **WHEN** user clicks it
+- **THEN** system transitions the task to Ready for Code and adds a conversation entry
+
+#### Scenario: Approve button in action bar
+- **WHEN** task status is Waiting Code Review
+- **THEN** bottom action bar shows "Approve" button in green
+- **WHEN** user clicks it
+- **THEN** system transitions the task to Approved and adds a conversation entry
+
+#### Scenario: Request AI Review button in action bar
+- **WHEN** task status is Waiting Code Review
+- **THEN** bottom action bar shows "Request AI Review" button in blue
+- **WHEN** user clicks it
+- **THEN** system transitions the task to Code Review Requested and adds a conversation entry
+
+#### Scenario: Complete button in action bar
+- **WHEN** task status is Merged
+- **THEN** bottom action bar shows "Complete" button
+- **WHEN** user clicks it
+- **THEN** system transitions the task to Complete
 
 #### Scenario: User unblocks stuck task from drawer
 - **WHEN** user clicks "Unblock" next to the cancel button while task is in Planning, Coding, or Reviewing status

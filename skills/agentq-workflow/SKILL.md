@@ -20,6 +20,8 @@ metadata:
 
 Use only `agentq claim` and `agentq submit-*` commands. Always pass `--json` flag.
 
+Include `--context "<short summary of current state, findings, or blockers>"` on every `agentq claim` and `agentq submit-*` so the next agent has context.
+
 ### Claim a Task
 
 ```bash
@@ -30,6 +32,7 @@ agentq claim \
   -r <role> \
   -s <sessionId> \
   [--host <host>] \
+  [--context "<summary>"] \
   --json
 ```
 
@@ -69,25 +72,25 @@ agentq claim \
 ### Submit Plan
 
 ```bash
-agentq submit-plan <taskId> --json -m "<markdown message>"
+agentq submit-plan <taskId> --json -m "<markdown message>" [--context "<summary>"]
 ```
 
 ### Submit Code
 
 ```bash
-agentq submit-code <taskId> --json -m "<markdown message>" --worktree /tmp/agentq-{taskId}
+agentq submit-code <taskId> --json -m "<markdown message>" --worktree /tmp/agentq-{taskId} [--context "<summary>"]
 ```
 
 ### Submit Review
 
 ```bash
-agentq submit-review <taskId> --json -m "<markdown message>"
+agentq submit-review <taskId> --json -m "<markdown message>" [--context "<summary>"]
 ```
 
 ### Submit Merge
 
 ```bash
-agentq submit-merge <taskId> --json -b <branch> -c <commit> --authors <authors> [-m "<message>"]
+agentq submit-merge <taskId> --json -b <branch> -c <commit> --authors <authors> [-m "<message>"] [--context "<summary>"]
 ```
 
 ## Protocol
@@ -217,6 +220,7 @@ The workflow is: claim → work → submit → repeat. The agent decides based o
 
 ## Guardrails
 
+- **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq claim`, `agentq submit-*`)
 - **DO NOT** use `agentq list` or `agentq get` - agents only use `claim` and `submit-*`
 - **DO NOT** manage state or generate session IDs
 - **DO NOT** retry indefinitely on empty queue

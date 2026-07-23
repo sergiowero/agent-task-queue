@@ -8,6 +8,7 @@ import {
   getNextClaimableTask,
   createAgent,
   updateAgentLastSeen,
+  getProjects,
   getProjectByTaskId,
   TaskStatus,
   Task,
@@ -142,6 +143,7 @@ function printTask(task: {
   recommendedBranch: string;
   mergeBranch: string;
   acceptanceCriteria: string[];
+  contexts: string[];
   project?: { id: string; name: string; displayName: string; workingDirectory: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -160,6 +162,12 @@ function printTask(task: {
     console.log(`  Acceptance Criteria:`);
     for (const criterion of task.acceptanceCriteria) {
       console.log(`    - ${criterion}`);
+    }
+  }
+  if (task.contexts.length > 0) {
+    console.log(`  Context:`);
+    for (let i = 0; i < task.contexts.length; i++) {
+      console.log(`    #${i + 1}: ${task.contexts[i]}`);
     }
   }
   console.log(`  Created:            ${task.createdAt}`);
@@ -196,14 +204,34 @@ program
   });
 
 program
+  .command("projects")
+  .description("List all projects")
+  .option("--json", "Output as JSON")
+  .action((options: { json?: boolean }) => {
+    const projects = getProjects();
+    if (options.json) {
+      jsonOutput({ success: true, projects }, true);
+      return;
+    }
+    if (projects.length === 0) {
+      console.log("No projects found.");
+      return;
+    }
+    for (const project of projects) {
+      console.log(`[${project.id}] ${project.displayName} — ${project.workingDirectory}`);
+    }
+  });
+
+program
   .command("create <title>")
   .description("Create a new task")
   .requiredOption("--project <id>", "Project ID (required)")
-  .option("-d, --description <text>", "Task description")
+  .requiredOption("-d, --description <text>", "Task description")
   .option("-p, --priority <number>", "Priority (default: 0)", "0")
   .option("-b, --branch <name>", "Recommended branch name")
   .option("--requires-plan", "Task requires planning")
   .option("--merge-branch <branch>", "Target merge branch (default: develop)", "develop")
+  .option("--context <text>", "Initial context entry")
   .option("--json", "Output as JSON")
   .action((
     title: string,
@@ -214,17 +242,19 @@ program
       branch?: string;
       requiresPlan?: boolean;
       mergeBranch?: string;
+      context?: string;
       json?: boolean;
     }
   ) => {
     const task = createTask({
       title,
-      description: options.description || "",
+      description: options.description,
       priority: parseInt(options.priority || "0", 10),
       recommendedBranch: options.branch || "",
       requiresPlan: options.requiresPlan || false,
       mergeBranch: options.mergeBranch || "develop",
       projectId: options.project,
+      contexts: options.context ? [options.context] : [],
     });
     if (options.json) {
       const project = getProjectByTaskId(task.id);
@@ -264,6 +294,7 @@ program
   .requiredOption("-r, --role <role>", "Agent role (planner, implementer, reviewer, senior, architect)")
   .requiredOption("-s, --session-id <sessionId>", "Session ID")
   .option("--host <host>", "Host path")
+  .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action(
     (options: {
@@ -273,6 +304,7 @@ program
       role: string;
       sessionId: string;
       host?: string;
+      context?: string;
       json?: boolean;
     }) => {
       const { name, version, model, role, sessionId, host, json } = options;
@@ -313,6 +345,12 @@ program
       // Add conversation entry
       updated = addConversation(updated!, agent.id, `Claimed task. Transitioning to ${newStatus}.`);
 
+      if (options.context) {
+        updated = updateTask(updated!.id, {
+          contexts: [...(updated!.contexts || []), options.context],
+        })!;
+      }
+
       if (json) {
         const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
         jsonOutput({
@@ -342,8 +380,9 @@ program
   .description("Submit a plan for a claimed task")
   .option("-m, --message <message>", "Plan message")
   .option("-a, --author <author>", "Author name", "agent")
+  .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
-  .action((taskId: string, options: { message?: string; author?: string; json?: boolean }) => {
+  .action((taskId: string, options: { message?: string; author?: string; context?: string; json?: boolean }) => {
     const task = getTaskById(taskId);
     if (!task) {
       jsonError("Task not found.", options.json);
@@ -356,6 +395,11 @@ program
     let updated = recordHistory(task!, TaskStatus.WaitingPlanReview);
     if (options.message) {
       updated = addConversation(updated!, options.author ?? "agent", options.message);
+    }
+    if (options.context) {
+      updated = updateTask(updated!.id, {
+        contexts: [...(updated!.contexts || []), options.context],
+      })!;
     }
     updated = updateTask(updated!.id, { assignedAgent: null });
 
@@ -381,8 +425,9 @@ program
   .option("-m, --message <message>", "Code summary")
   .option("-a, --author <author>", "Author name", "agent")
   .option("-w, --worktree <path>", "Worktree path to store on task")
+  .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
-  .action((taskId: string, options: { message?: string; author?: string; worktree?: string; json?: boolean }) => {
+  .action((taskId: string, options: { message?: string; author?: string; worktree?: string; context?: string; json?: boolean }) => {
     const task = getTaskById(taskId);
     if (!task) {
       jsonError("Task not found.", options.json);
@@ -398,6 +443,11 @@ program
     let updated = recordHistory(task!, TaskStatus.WaitingCodeReview);
     if (options.message) {
       updated = addConversation(updated!, options.author ?? "agent", options.message);
+    }
+    if (options.context) {
+      updated = updateTask(updated!.id, {
+        contexts: [...(updated!.contexts || []), options.context],
+      })!;
     }
     updated = updateTask(updated!.id, {
       assignedAgent: null,
@@ -425,8 +475,9 @@ program
   .description("Submit a review for a claimed task")
   .option("-m, --message <message>", "Review findings")
   .option("-a, --author <author>", "Author name", "agent")
+  .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
-  .action((taskId: string, options: { message?: string; author?: string; json?: boolean }) => {
+  .action((taskId: string, options: { message?: string; author?: string; context?: string; json?: boolean }) => {
     const task = getTaskById(taskId);
     if (!task) {
       jsonError("Task not found.", options.json);
@@ -439,6 +490,11 @@ program
     let updated = recordHistory(task!, TaskStatus.WaitingCodeReview);
     if (options.message) {
       updated = addConversation(updated!, options.author ?? "agent", options.message);
+    }
+    if (options.context) {
+      updated = updateTask(updated!.id, {
+        contexts: [...(updated!.contexts || []), options.context],
+      })!;
     }
     updated = updateTask(updated!.id, { assignedAgent: null });
 
@@ -467,6 +523,7 @@ program
   .option("-w, --worktree <worktree>", "Worktree path (optional)")
   .option("-m, --message <message>", "Additional merge message")
   .option("-a, --author <author>", "Author name", "agent")
+  .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action(
     (
@@ -478,6 +535,7 @@ program
         worktree?: string;
         message?: string;
         author?: string;
+        context?: string;
         json?: boolean;
       }
     ) => {
@@ -502,6 +560,11 @@ program
       const previousStatus = task!.status;
       let updated = recordHistory(task!, TaskStatus.Merged);
       updated = addConversation(updated!, options.author ?? "agent", `Merge submitted. ${mergeDetails}`);
+      if (options.context) {
+        updated = updateTask(updated!.id, {
+          contexts: [...(updated!.contexts || []), options.context],
+        })!;
+      }
       updated = updateTask(updated!.id, { assignedAgent: null });
 
       if (options.json) {

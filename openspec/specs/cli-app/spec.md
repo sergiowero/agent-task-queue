@@ -2,8 +2,10 @@
 
 Command-line interface for managing tasks via terminal.
 
-## Requirements
+## Purpose
 
+Provide a command-line interface for agents and users to create, list, claim, and manage AgentQ tasks.
+## Requirements
 ### Requirement: Task list command
 The system SHALL provide a CLI command to list all tasks.
 
@@ -12,18 +14,22 @@ The system SHALL provide a CLI command to list all tasks.
 - **THEN** system displays a formatted list of all tasks with IDs, titles, and statuses
 
 ### Requirement: Task create command
-The system SHALL provide a CLI command to create a new task. The `--project` flag is mandatory.
+The system SHALL provide a CLI command to create a new task. The `--project` and `--description` flags are mandatory.
 
 #### Scenario: Create task with all required fields
-- **WHEN** user runs `atq create "My Task" --project <project-id> --description "Task details"`
+- **WHEN** user runs `agentq create "My Task" --project <project-id> --description "Task details"`
 - **THEN** system creates a new task with all provided fields and displays the created task details including project name and displayName
 
 #### Scenario: Create task without project
-- **WHEN** user runs `atq create "My Task"` without `--project`
+- **WHEN** user runs `agentq create "My Task"` without `--project`
 - **THEN** system returns an error indicating `--project` is required
 
+#### Scenario: Create task without description
+- **WHEN** user runs `agentq create "My Task" --project <project-id>` without `--description`
+- **THEN** system returns an error indicating `--description` is required
+
 #### Scenario: Create task with merge branch
-- **WHEN** user runs `atq create "My Task" --project <project-id> --description "Details" --merge-branch main`
+- **WHEN** user runs `agentq create "My Task" --project <project-id> --description "Details" --merge-branch main`
 - **THEN** system creates a task with merge_branch set to "main"
 
 ### Requirement: Task output includes project details
@@ -97,3 +103,15 @@ The system SHALL provide a CLI command `atq submit-merge` that submits a merge f
 #### Scenario: Submit merge with worktree
 - **WHEN** user runs `atq submit-merge <task-id> --branch feature/x --commit abc123 --worktree /tmp/ohxeng-123 --authors "agent-1"`
 - **THEN** system records the worktree path along with branch, commit, and authors in the conversation entry
+
+### Requirement: Project list command
+The system SHALL provide a CLI command to list all registered projects.
+
+#### Scenario: List projects
+- **WHEN** user runs `agentq projects`
+- **THEN** system displays a formatted list of all projects with IDs, display names, and working directories
+
+#### Scenario: List projects as JSON
+- **WHEN** user runs `agentq projects --json`
+- **THEN** system outputs JSON array with id, displayName, workingDirectory for each project
+
