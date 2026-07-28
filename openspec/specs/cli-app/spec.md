@@ -80,11 +80,11 @@ The system SHALL provide a CLI command `atq submit-plan` that submits a plan for
 - **THEN** system transitions the task from Planning to Waiting Plan Review, clears the assigned agent, and outputs confirmation
 
 ### Requirement: Task submit-code command
-The system SHALL provide a CLI command `atq submit-code` that submits code for a claimed task.
+The system SHALL provide a CLI command `atq submit-code` that submits code for a claimed task. The `--worktree` flag SHALL be required via Commander's `.requiredOption()`.
 
 #### Scenario: Submit code for a task
-- **WHEN** user runs `atq submit-code <task-id> --message "Code summary"`
-- **THEN** system transitions the task from Coding to Waiting Code Review, clears the assigned agent, and outputs confirmation
+- **WHEN** user runs `atq submit-code <task-id> --message "Code summary" --worktree /tmp/worktree`
+- **THEN** system transitions the task from Coding to Waiting Code Review, clears the assigned agent, stores the worktree path, and outputs confirmation
 
 ### Requirement: Task submit-review command
 The system SHALL provide a CLI command `atq submit-review` that submits a review for a claimed task.
@@ -114,4 +114,77 @@ The system SHALL provide a CLI command to list all registered projects.
 #### Scenario: List projects as JSON
 - **WHEN** user runs `agentq projects --json`
 - **THEN** system outputs JSON array with id, displayName, workingDirectory for each project
+
+### Requirement: Required option enforcement
+Options that are required SHALL use Commander's `.requiredOption()` method.
+
+#### Scenario: submit-code worktree is required
+- **WHEN** user runs `atq submit-code <task-id>` without `--worktree`
+- **THEN** Commander outputs "error: required option '-w, --worktree <path>' not specified" before the action runs
+
+### Requirement: Typed command options
+All CLI command action handlers SHALL use typed interfaces for options instead of inline `any` types.
+
+#### Scenario: Options are typed
+- **WHEN** a CLI command action is defined
+- **THEN** the options parameter has a named TypeScript interface with typed fields
+
+### Requirement: JSON error output to stderr
+When `--json` is active and an error occurs, the error JSON SHALL be written to stderr.
+
+#### Scenario: JSON error on stderr
+- **WHEN** a command with `--json` encounters an error
+- **THEN** the error JSON `{ "success": false, "error": "..." }` is written to stderr and process exits with code 1
+
+### Requirement: Claim command accepts --context
+The `atq claim` command SHALL accept an optional `--context <text>` flag. When provided, the context string is appended to the task's `contexts` array.
+
+#### Scenario: Claim with context
+- **WHEN** user runs `atq claim -n agent-1 -v 1.0 -m gpt-4 -r planner -s abc123 --context "Starting planning"`
+- **THEN** the context entry "Starting planning" is appended to the task's contexts array
+
+#### Scenario: Claim without context
+- **WHEN** user runs `atq claim -n agent-1 -v 1.0 -m gpt-4 -r planner -s abc123` without `--context`
+- **THEN** the contexts array is unchanged
+
+### Requirement: Submit commands accept --context
+The `atq submit-plan`, `atq submit-code`, `atq submit-review`, and `atq submit-merge` commands SHALL accept an optional `--context <text>` flag. When provided, the context string is appended to the task's `contexts` array alongside the conversation entry.
+
+#### Scenario: Submit plan with context
+- **WHEN** user runs `atq submit-plan <task-id> --message "Plan details" --context "Found existing auth module, will reuse"`
+- **THEN** the context entry is appended, and the conversation entry is created as before
+
+#### Scenario: Submit code with context
+- **WHEN** user runs `atq submit-code <task-id> --message "Done" --worktree /tmp/x --context "Tests passing, one flaky test noted"`
+- **THEN** the context entry is appended
+
+#### Scenario: Submit review with context
+- **WHEN** user runs `atq submit-review <task-id> --message "LGTM" --context "Minor nits on naming, otherwise solid"`
+- **THEN** the context entry is appended
+
+#### Scenario: Submit merge with context
+- **WHEN** user runs `atq submit-merge <task-id> -b feat/x -c abc123 --authors "bot" --context "Deployed to staging first"`
+- **THEN** the context entry is appended
+
+#### Scenario: Submit without context
+- **WHEN** user runs any submit command without `--context`
+- **THEN** the contexts array is unchanged
+
+### Requirement: Create command accepts --context
+The `agentq create` command SHALL accept an optional `--context <text>` flag to seed the initial context entry.
+
+#### Scenario: Create task with context
+- **WHEN** user runs `agentq create "My Task" --project <id> --description "Details" --context "Spike: evaluate approach"`
+- **THEN** the task is created with one context entry
+
+### Requirement: Task output includes contexts in printTask
+The `printTask` helper SHALL display context entries when non-empty.
+
+#### Scenario: printTask shows context entries
+- **WHEN** a task with context entries is printed via `printTask`
+- **THEN** the output includes a `Context:` section with numbered entries
+
+#### Scenario: printTask omits context when empty
+- **WHEN** a task with no context entries is printed
+- **THEN** no context section is shown
 

@@ -1,13 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { api } from "../lib/api";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
 import { MarkdownRenderer } from "../components/MarkdownRenderer";
+import { LoadingSkeleton } from "../components/LoadingSkeleton";
+import { DeleteTaskModal } from "../components/DeleteTaskModal";
+import type { Task } from "../lib/api";
 
-const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
+const STATUS_LABELS: Record<string, string> = {
+  plan_requested: "Plan Requested",
+  planning: "Planning",
+  ready_for_code: "Ready for Code",
+  coding: "Coding",
+  waiting_plan_review: "Waiting Plan Review",
+  waiting_code_review: "Waiting Code Review",
+  code_review_requested: "Code Review Requested",
+  reviewing: "Reviewing",
+  changes_requested: "Changes Requested",
+  plan_changes_requested: "Plan Changes Requested",
+  approved: "Approved",
+  merging: "Merging",
+  merged: "Merged",
+  complete: "Complete",
+  canceled: "Canceled",
+};
+
+const STATUS_VARIANTS: Record<
+  string,
+  "default" | "success" | "warning" | "danger" | "info" | "purple"
+> = {
   plan_requested: "default",
   planning: "purple",
   coding: "info",
@@ -25,22 +50,28 @@ const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "dange
 };
 
 const COMMENTABLE_STATUSES = new Set([
-  "planning", "coding", "ready for code", "reviewing", "merged", "complete",
+  "planning",
+  "coding",
+  "ready_for_code",
+  "reviewing",
+  "merged",
+  "complete",
 ]);
 
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"description" | "conversation" | "context" | "history">("description");
-  const [feedback, setFeedback] = useState("");
+  const [tab, setTab] = useState<"description" | "conversation" | "context" | "history">(
+    "description",
+  );
   const [conversationInput, setConversationInput] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const { data: task, isLoading } = useQuery({
     queryKey: ["task", id],
     queryFn: () => api.getTask(id!),
     enabled: !!id,
-    refetchInterval: 5000,
   });
 
   const mutation = useMutation({
@@ -49,11 +80,16 @@ export function TaskDetailPage() {
       if (!fn) throw new Error(`Unknown action: ${action}`);
       return data !== undefined ? fn(id, data) : fn(id);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["task", id] });
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      setFeedback("");
+    onSuccess: (result: Task) => {
+      queryClient.setQueryData(["task", id], result);
+      queryClient.setQueryData<Task[]>(["tasks"], (old) =>
+        old ? old.map((t) => (t.id === id ? { ...t, ...result } : t)) : undefined,
+      );
       setConversationInput("");
+      toast.success("Task updated");
+    },
+    onError: (e: Error) => {
+      toast.error(e.message);
     },
   });
 
@@ -89,8 +125,8 @@ export function TaskDetailPage() {
 
   if (isLoading || !task) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-text-muted">Loading...</div>
+      <div className="flex-1 p-6">
+        <LoadingSkeleton count={4} />
       </div>
     );
   }
@@ -98,7 +134,6 @@ export function TaskDetailPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto">
-        {/* Header */}
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="flex items-center gap-3 mb-3">
             <button
@@ -113,7 +148,7 @@ export function TaskDetailPage() {
               <h1 className="text-xl font-semibold text-text">{task.title}</h1>
               <div className="flex items-center gap-2 mt-1">
                 <Badge variant={STATUS_VARIANTS[task.status] ?? "default"}>
-                  {task.status.replace(/_/g, " ")}
+                  {STATUS_LABELS[task.status] ?? task.status.replace(/_/g, " ")}
                 </Badge>
                 {task.assignedAgent && (
                   <span className="text-sm text-text-muted">{task.assignedAgent.name}</span>
@@ -123,7 +158,6 @@ export function TaskDetailPage() {
           </div>
         </div>
 
-        {/* Task Metadata */}
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
             <Field label="Priority" value={String(task.priority)} />
@@ -134,9 +168,11 @@ export function TaskDetailPage() {
           </div>
           {task.acceptanceCriteria?.length > 0 && (
             <div className="mt-3">
-              <label className="text-xs font-medium text-text-muted uppercase">Acceptance Criteria</label>
+              <label className="text-xs font-medium text-text-muted uppercase">
+                Acceptance Criteria
+              </label>
               <ul className="mt-1 text-sm text-text-secondary list-disc list-inside space-y-0.5">
-                {task.acceptanceCriteria.map((c: string, i: number) => (
+                {task.acceptanceCriteria.map((c, i) => (
                   <li key={i}>{c}</li>
                 ))}
               </ul>
@@ -144,7 +180,6 @@ export function TaskDetailPage() {
           )}
         </div>
 
-        {/* Tabs: Description / Conversation / Context / History */}
         <div className="border-b border-border bg-surface">
           <div className="flex px-6">
             {(["description", "conversation", "context", "history"] as const).map((t) => (
@@ -152,7 +187,9 @@ export function TaskDetailPage() {
                 key={t}
                 onClick={() => setTab(t)}
                 className={`px-4 py-3 text-sm font-medium capitalize transition-colors duration-150 ${
-                  tab === t ? "text-primary border-b-2 border-primary" : "text-text-muted hover:text-text"
+                  tab === t
+                    ? "text-primary border-b-2 border-primary"
+                    : "text-text-muted hover:text-text"
                 }`}
               >
                 {t}
@@ -161,7 +198,6 @@ export function TaskDetailPage() {
           </div>
         </div>
 
-        {/* Tab Content */}
         <div className="px-6 py-4">
           {tab === "description" && (
             <div className="max-w-3xl">
@@ -174,11 +210,14 @@ export function TaskDetailPage() {
           )}
           {tab === "conversation" && (
             <div className="space-y-3 max-w-3xl">
-              {task.conversation?.length === 0 && (
+              {(task.conversation?.length ?? 0) === 0 && (
                 <p className="text-sm text-text-muted">No messages yet.</p>
               )}
-              {task.conversation?.map((entry: any, i: number) => (
-                <ConversationEntryCard key={i} entry={entry} />
+              {task.conversation?.map((entry) => (
+                <ConversationEntryCard
+                  key={`${entry.timestamp}-${entry.authorName}`}
+                  entry={entry}
+                />
               ))}
               {isInlineButtonVisible() && (
                 <div className="sticky bottom-0 pt-3 pb-1 bg-surface flex gap-2">
@@ -187,12 +226,14 @@ export function TaskDetailPage() {
                     placeholder="Type a message..."
                     value={conversationInput}
                     onChange={(e) => setConversationInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleInlineAction(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleInlineAction();
+                    }}
                   />
                   <Button
                     onClick={handleInlineAction}
                     variant={task.status === "waiting_code_review" ? "danger" : "primary"}
-                    disabled={!conversationInput.trim() || (mutation as any)?.isPending}
+                    disabled={!conversationInput.trim() || mutation.isPending}
                   >
                     {getInlineButtonLabel()}
                   </Button>
@@ -206,8 +247,11 @@ export function TaskDetailPage() {
               {(!task.contexts || task.contexts.length === 0) && (
                 <p className="text-sm text-text-muted">No context entries recorded.</p>
               )}
-              {task.contexts?.map((entry: string, i: number) => (
-                <div key={i} className="border-l-4 border-blue-500 bg-surface pl-4 py-3 pr-4 rounded-r-lg shadow-sm">
+              {task.contexts?.map((entry, i) => (
+                <div
+                  key={i}
+                  className="border-l-4 border-blue-500 bg-surface pl-4 py-3 pr-4 rounded-r-lg shadow-sm"
+                >
                   <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold mr-2">
                     #{i + 1}
                   </span>
@@ -218,14 +262,16 @@ export function TaskDetailPage() {
           )}
           {tab === "history" && (
             <div className="space-y-2 max-w-3xl">
-              {task.history?.length === 0 && (
+              {(task.history?.length ?? 0) === 0 && (
                 <p className="text-sm text-text-muted">No history yet.</p>
               )}
-              {task.history?.map((h: any, i: number) => (
+              {task.history?.map((h, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   <span className="text-text-muted">{new Date(h.timestamp).toLocaleString()}</span>
                   <span className="text-text-muted">&rarr;</span>
-                  <span className="font-medium text-text-secondary">{h.new_status.replace(/_/g, " ")}</span>
+                  <span className="font-medium text-text-secondary">
+                    {STATUS_LABELS[h.new_status] ?? h.new_status.replace(/_/g, " ")}
+                  </span>
                 </div>
               ))}
             </div>
@@ -233,31 +279,53 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {/* Processing indicator */}
-      {(mutation as any)?.isPending && (
+      {mutation.isPending && (
         <div className="px-6 py-2 text-sm text-primary border-t border-border">Processing...</div>
       )}
 
-      {/* Action Buttons */}
       <div className="border-t border-border bg-surface px-6 py-4 space-y-2 shrink-0">
         {task.status === "waiting_plan_review" && (
           <div className="flex gap-2">
-            <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
+            <Button onClick={() => doAction("approvePlan")} variant="primary">
+              Approve Plan
+            </Button>
           </div>
         )}
         {task.status === "waiting_code_review" && (
           <div className="flex gap-2">
-            <Button onClick={() => doAction("approveCode")} variant="primary">Approve</Button>
-            <Button onClick={() => doAction("requestAiReview")} variant="secondary">Request AI Review</Button>
+            <Button onClick={() => doAction("approveCode")} variant="primary">
+              Approve
+            </Button>
+            <Button onClick={() => doAction("requestAiReview")} variant="secondary">
+              Request AI Review
+            </Button>
           </div>
         )}
         {task.status === "merged" && (
-          <Button onClick={() => doAction("confirmCompletion")} variant="primary">Complete</Button>
+          <Button onClick={() => doAction("confirmCompletion")} variant="primary">
+            Complete
+          </Button>
         )}
         {!["canceled", "complete", "merged"].includes(task.status) && (
-          <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
+          <Button onClick={() => doAction("cancel")} variant="danger">
+            Cancel Task
+          </Button>
+        )}
+        <div className="flex-1" />
+        {!["coding", "waiting_code_review", "code_review_requested", "reviewing", "changes_requested", "approved", "merging", "merged", "complete", "canceled"].includes(task.status) && (
+          <Button variant="danger" onClick={() => setShowDeleteModal(true)}>
+            Delete Task
+          </Button>
         )}
       </div>
+
+      {showDeleteModal && (
+        <DeleteTaskModal
+          task={task}
+          onClose={() => setShowDeleteModal(false)}
+          onDeleted={() => navigate("/board")}
+        />
+      )}
     </div>
   );
 }

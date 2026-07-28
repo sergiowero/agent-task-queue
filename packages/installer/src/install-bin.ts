@@ -18,7 +18,8 @@ async function installBinary() {
   // Step 1: Build the binary
   log("🔨", "Building binary from source...");
   const startTime = Date.now();
-  const buildResult = await $`bun build --compile ${CLI_SOURCE} --outfile /tmp/agentq-binary`.quiet();
+  const buildResult =
+    await $`bun build --compile ${CLI_SOURCE} --outfile /tmp/agentq-binary`.quiet();
 
   if (buildResult.exitCode !== 0) {
     log("❌", "Build failed!");

@@ -10,7 +10,7 @@ export const TOOLS: Tool[] = [
   {
     id: "install",
     name: "Install AgentQ",
-    description: "Install the AgentQ CLI binary and distribute skills to your AI coding tools.",
+    description: "Instructions for installing the AgentQ CLI and workflow skills.",
     icon: "download",
     badge: "Experimental",
   },

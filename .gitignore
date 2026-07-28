@@ -23,9 +23,6 @@ package-json.lock
 .opencode/
 .junie/
 
-.github/
-
-
 # bun deploy file
 node_modules.bun
 

@@ -11,10 +11,12 @@ export function AgentsPage() {
   const [roleFilter, setRoleFilter] = useState("");
   const [toolFilter, setToolFilter] = useState("");
 
-  const { data: agents = [], isLoading } = useQuery({
+  const { data: agentsRes, isLoading } = useQuery({
     queryKey: ["agents", roleFilter, toolFilter],
     queryFn: () => api.getAgents({ role: roleFilter || undefined, tool: toolFilter || undefined }),
   });
+
+  const agents = agentsRes?.data ?? [];
 
   const roles = [...new Set(agents.map((a: any) => a.role))];
   const tools = [...new Set(agents.map((a: any) => a.toolName))];
@@ -31,7 +33,9 @@ export function AgentsPage() {
         >
           <option value="">All roles</option>
           {roles.map((r: any) => (
-            <option key={r} value={r}>{r}</option>
+            <option key={r} value={r}>
+              {r}
+            </option>
           ))}
         </select>
         <select
@@ -41,7 +45,9 @@ export function AgentsPage() {
         >
           <option value="">All tools</option>
           {tools.map((t: any) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>
+              {t}
+            </option>
           ))}
         </select>
       </div>
@@ -49,7 +55,9 @@ export function AgentsPage() {
       <div className="flex-1 overflow-auto p-4">
         {isLoading && <p className="text-text-muted text-sm">Loading...</p>}
         {!isLoading && agents.length === 0 && (
-          <p className="text-text-muted text-sm">No agents registered yet. Agents register when they claim a task via the CLI.</p>
+          <p className="text-text-muted text-sm">
+            No agents registered yet. Agents register when they claim a task via the CLI.
+          </p>
         )}
         <table className="w-full text-sm">
           <thead>
@@ -72,9 +80,13 @@ export function AgentsPage() {
                 <td className="py-2.5 text-text-secondary">{agent.toolName}</td>
                 <td className="py-2.5 text-text-secondary font-mono text-xs">{agent.model}</td>
                 <td className="py-2.5">
-                  <span className="text-xs bg-surface-secondary text-text-secondary px-1.5 py-0.5 rounded">{agent.role}</span>
+                  <span className="text-xs bg-surface-secondary text-text-secondary px-1.5 py-0.5 rounded">
+                    {agent.role}
+                  </span>
                 </td>
-                <td className="py-2.5 text-text-muted text-xs font-mono">{agent.sessionId.slice(0, 8)}</td>
+                <td className="py-2.5 text-text-muted text-xs font-mono">
+                  {agent.sessionId.slice(0, 8)}
+                </td>
                 <td className="py-2.5 text-text-muted text-xs">
                   {agent.lastSeen ? new Date(agent.lastSeen).toLocaleString() : "—"}
                 </td>

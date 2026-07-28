@@ -3,7 +3,7 @@ export enum TaskStatus {
   Planning = "planning",
   WaitingPlanReview = "waiting_plan_review",
   PlanChangesRequested = "plan_changes_requested",
-  ReadyForCode = "ready for code",
+  ReadyForCode = "ready_for_code",
   Coding = "coding",
   WaitingCodeReview = "waiting_code_review",
   CodeReviewRequested = "code_review_requested",
@@ -14,6 +14,11 @@ export enum TaskStatus {
   Merged = "merged",
   Complete = "complete",
   Canceled = "canceled",
+}
+
+export function normalizeStatus(status: string): TaskStatus {
+  if (status === "ready for code") return TaskStatus.ReadyForCode;
+  return status as TaskStatus;
 }
 
 export interface ConversationEntry {
@@ -54,6 +59,7 @@ export interface Task {
   worktreePath: string | null;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface Agent {
@@ -66,6 +72,7 @@ export interface Agent {
   host: string | null;
   startedAt: string | null;
   lastSeen: string | null;
+  deletedAt: string | null;
 }
 
 export interface Project {
@@ -74,6 +81,7 @@ export interface Project {
   workingDirectory: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 }
 
 export interface ActivityEvent {

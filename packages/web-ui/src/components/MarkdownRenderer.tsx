@@ -11,12 +11,9 @@ interface MarkdownRendererProps {
 export function MarkdownRenderer({ content, className = "" }: MarkdownRendererProps) {
   return (
     <div className={`markdown-content text-sm text-text ${className}`}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-      >
+      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
         {content}
-        </Markdown>
+      </Markdown>
     </div>
   );
 }

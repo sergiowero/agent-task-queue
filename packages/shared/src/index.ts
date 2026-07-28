@@ -1,5 +1,6 @@
 export {
   TaskStatus,
+  normalizeStatus,
   type Task,
   type ConversationEntry,
   type StatusHistoryEntry,
@@ -16,16 +17,76 @@ export {
   getNextClaimableTask,
   updateTask,
   deleteTask,
+  softDeleteTask,
   createAgent,
   getAgentById,
   getAgents,
+  getAllAgents,
   updateAgentLastSeen,
   createProject,
   getProjects,
+  getAllProjects,
   getProjectById,
   getProjectByTaskId,
   updateProject,
   deleteProject,
+  softDeleteProject,
   addActivityEvent,
   getActivityEvents,
+  getMigrationStatus,
+  rollbackMigration,
+  beginTransaction,
+  commitTransaction,
+  rollbackTransaction,
+  withTransaction,
+  getConversationEntries,
+  addConversationEntry,
+  getStatusHistory,
+  addStatusHistoryEntry,
 } from "./database.js";
+
+export {
+  getClaimableStatuses,
+  getClaimTransition,
+  getEffectiveRole,
+  recordHistory,
+  addConversation,
+  addActivity,
+  normalizeStatusInput,
+  ROLE_STATUSES,
+  COMPOUND_ROLES,
+  CANCELED_CANT_CANCEL,
+  CANT_DELETE_STATUSES,
+} from "./workflow.js";
+
+export {
+  createTaskSchema,
+  updateTaskSchema,
+  transitionTaskSchema,
+  createProjectSchema,
+  updateProjectSchema,
+  registerAgentSchema,
+  claimTaskSchema,
+  paginationSchema,
+  type CreateTaskInput,
+  type UpdateTaskInput,
+  type TransitionTaskInput,
+  type CreateProjectInput,
+  type UpdateProjectInput,
+  type RegisterAgentInput,
+  type ClaimTaskInput,
+  type PaginationInput,
+} from "./schemas.js";
+
+export {
+  paginate,
+  buildPaginationSql,
+  type PaginatedResponse,
+  type PaginationParams,
+} from "./pagination.js";
+
+export {
+  validateEnv,
+  getEnv,
+  type Env,
+} from "./env.js";

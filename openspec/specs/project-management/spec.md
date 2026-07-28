@@ -15,19 +15,23 @@ The system SHALL allow users to create new projects. The default example display
 - **WHEN** user attempts to create a project with a name that already exists
 - **THEN** system returns an error indicating the project name is already taken
 
-### Requirement: Project listing
-The system SHALL provide an endpoint to list all projects.
+### Requirement: Project listing with pagination
+The system SHALL provide an endpoint to list projects with pagination support.
 
-#### Scenario: List all projects
+#### Scenario: List all projects with pagination
 - **WHEN** client sends GET /api/projects
-- **THEN** system returns 200 with an array of project objects including id, name, displayName, workingDirectory, created_at, and updated_at
+- **THEN** system returns 200 with an array of active (non-deleted) project objects including id, displayName, workingDirectory, createdAt, and updatedAt
 
-### Requirement: Project deletion
-The system SHALL allow users to delete projects.
+### Requirement: Project deletion with soft delete
+The system SHALL soft-delete projects by setting `deleted_at`. A `?hard=true` query parameter SHALL perform actual deletion.
 
-#### Scenario: Delete existing project
+#### Scenario: Soft delete existing project
 - **WHEN** user sends DELETE /api/projects/:id with a valid ID
-- **THEN** system removes the project record and returns 204 No Content
+- **THEN** system sets deleted_at and returns 204 No Content
+
+#### Scenario: Hard delete existing project
+- **WHEN** user sends DELETE /api/projects/:id?hard=true with a valid ID
+- **THEN** system permanently removes the project record and returns 204 No Content
 
 #### Scenario: Delete non-existent project
 - **WHEN** user attempts to delete a project with an invalid ID

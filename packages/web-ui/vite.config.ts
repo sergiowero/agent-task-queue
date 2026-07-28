@@ -9,6 +9,17 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          "react-router": ["react-router-dom"],
+          "tanstack-query": ["@tanstack/react-query"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     hmr: {

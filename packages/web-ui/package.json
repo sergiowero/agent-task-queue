@@ -11,9 +11,11 @@
   "dependencies": {
     "@agentq/shared": "workspace:*",
     "@tanstack/react-query": "^5.80.6",
+    "focus-trap-react": "^12.0.3",
     "highlight.js": "^11.11.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-hot-toast": "^2.6.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.6.1",
     "rehype-highlight": "^7.0.2",

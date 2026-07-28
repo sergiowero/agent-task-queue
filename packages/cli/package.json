@@ -12,5 +12,8 @@
   "dependencies": {
     "@agentq/shared": "workspace:*",
     "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.14"
   }
 }

@@ -19,18 +19,21 @@ The system SHALL allow users to create new tasks with a title, description, and 
 - **WHEN** user provides a task title and project ID but no description
 - **THEN** system returns a 400 error indicating description is required
 
-### Requirement: List tasks
-The system SHALL allow users to retrieve a list of all tasks.
-Tasks SHALL be ordered by priority descending by default, with equal-priority
-tasks ordered by creation date ascending.
+### Requirement: List tasks with pagination
+The system SHALL allow users to retrieve a paginated list of tasks. The response SHALL include a `total` count and support `limit` (default 50) and `offset` query parameters.
+Tasks SHALL be ordered by priority descending by default, with equal-priority tasks ordered by creation date ascending.
 
-#### Scenario: List all tasks
-- **WHEN** user requests task list
-- **THEN** system returns tasks ordered by priority descending, with equal-priority tasks ordered by creation date ascending
+#### Scenario: List all tasks with pagination
+- **WHEN** user requests task list with `GET /api/tasks?limit=10&offset=0`
+- **THEN** system returns at most 10 tasks, plus a `total` field indicating the total count of matching tasks
 
 #### Scenario: List tasks sorted by priority
 - **WHEN** user requests task list
-- **THEN** higher priority tasks appear before lower priority tasks
+- **THEN** higher priority tasks appear before lower priority tasks, paginated
+
+#### Scenario: Default pagination values
+- **WHEN** user requests `GET /api/tasks` without pagination params
+- **THEN** system uses default limit=50, offset=0
 
 ### Requirement: Get task by ID
 The system SHALL allow users to retrieve a specific task by its ID.
@@ -54,12 +57,16 @@ The system SHALL allow users to update an existing task's title, description, or
 - **WHEN** user provides a valid task ID and new title/description
 - **THEN** system updates the task fields and returns the updated task object
 
-### Requirement: Delete task
-The system SHALL allow users to delete a task by its ID.
+### Requirement: Delete task with soft delete
+The system SHALL soft-delete a task by setting its `deleted_at` timestamp. A `?hard=true` query parameter SHALL perform actual deletion.
 
-#### Scenario: Delete existing task
-- **WHEN** user requests deletion of a valid task ID
-- **THEN** system removes the task and returns confirmation
+#### Scenario: Soft delete existing task
+- **WHEN** user requests DELETE /api/tasks/:id
+- **THEN** system sets deleted_at and returns 204 (row is preserved)
+
+#### Scenario: Hard delete existing task
+- **WHEN** user requests DELETE /api/tasks/:id?hard=true
+- **THEN** system permanently removes the task and returns 204
 
 #### Scenario: Delete non-existent task
 - **WHEN** user requests deletion of an invalid task ID
