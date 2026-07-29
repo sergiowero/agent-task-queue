@@ -31,9 +31,10 @@ const PRIORITY_COLORS: Record<number, string> = {
 interface TaskCardProps {
   task: any;
   onClick: () => void;
+  onEdit?: () => void;
 }
 
-export function TaskCard({ task, onClick }: TaskCardProps) {
+export function TaskCard({ task, onClick, onEdit }: TaskCardProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(String(task.priority));
   const [saving, setSaving] = useState(false);
@@ -96,28 +97,41 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
     >
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <h4 className="text-sm font-semibold text-text line-clamp-2 leading-snug">{task.title}</h4>
-        {editing ? (
-          <span onMouseDown={stopProp} onClick={stopProp} className="shrink-0">
-            <input
-              ref={inputRef}
-              type="number"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={savePriority}
-              onKeyDown={handleKeyDown}
-              disabled={saving}
-              className="w-16 text-xs border border-primary rounded-lg px-1.5 py-0.5 text-right bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
-              autoFocus
-            />
-          </span>
-        ) : (
-          <span
-            onClick={startEditing}
-            className={`text-xs px-1.5 py-0.5 rounded shrink-0 cursor-pointer border font-medium hover:ring-2 hover:ring-primary/30 transition-all duration-150 ${saving ? "opacity-50" : ""} ${PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS[3]}`}
-          >
-            {saving ? "..." : `P${editValue}`}
-          </span>
-        )}
+        <div className="flex items-center gap-1 shrink-0">
+          {onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="p-1 rounded text-text-muted hover:text-text hover:bg-surface-secondary transition-colors"
+              title="Edit task"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+          )}
+          {editing ? (
+            <span onMouseDown={stopProp} onClick={stopProp} className="shrink-0">
+              <input
+                ref={inputRef}
+                type="number"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={savePriority}
+                onKeyDown={handleKeyDown}
+                disabled={saving}
+                className="w-16 text-xs border border-primary rounded-lg px-1.5 py-0.5 text-right bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
+                autoFocus
+              />
+            </span>
+          ) : (
+            <span
+              onClick={startEditing}
+              className={`text-xs px-1.5 py-0.5 rounded shrink-0 cursor-pointer border font-medium hover:ring-2 hover:ring-primary/30 transition-all duration-150 ${saving ? "opacity-50" : ""} ${PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS[3]}`}
+            >
+              {saving ? "..." : `P${editValue}`}
+            </span>
+          )}
+        </div>
       </div>
 
       {task.recommendedBranch && (

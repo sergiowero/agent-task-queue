@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useSSE } from "../hooks/useSSE";
 import { TaskCard } from "../components/TaskCard";
 import { CreateTaskModal } from "../components/CreateTaskModal";
+import { EditTaskModal } from "../components/EditTaskModal";
 import { Skeleton } from "../components/Skeleton";
 
 const COLUMNS = [
@@ -30,6 +31,7 @@ export function BoardPage() {
   const [search, setSearch] = useState("");
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingTask, setEditingTask] = useState<any>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
 
@@ -158,7 +160,12 @@ export function BoardPage() {
               </div>
               <div className="flex-1 overflow-y-auto space-y-2 px-1">
                 {(grouped[col.key] ?? []).map((task: any) => (
-                  <TaskCard key={task.id} task={task} onClick={() => navigate(`/tasks/${task.id}/details`)} />
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onClick={() => navigate(`/tasks/${task.id}/details`)}
+                    onEdit={col.key === "pending" || col.key === "need-review" ? () => setEditingTask(task) : undefined}
+                  />
                 ))}
               </div>
             </div>
@@ -170,6 +177,14 @@ export function BoardPage() {
         <CreateTaskModal
           projectId={projectId}
           onClose={() => setShowCreateModal(false)}
+        />
+      )}
+
+      {editingTask && (
+        <EditTaskModal
+          task={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSaved={() => setEditingTask(null)}
         />
       )}
     </div>

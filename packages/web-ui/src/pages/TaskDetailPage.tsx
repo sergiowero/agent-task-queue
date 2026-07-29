@@ -28,7 +28,7 @@ const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "dange
 const ACTIVE_STATUSES = new Set([
   "plan_requested", "ready for code", "planning", "waiting_plan_review", "plan_changes_requested",
   "coding", "waiting_code_review", "code_review_requested", "reviewing",
-  "changes_requested", "approved", "merging",
+  "changes_requested", "approved", "merging", "merged",
 ]);
 
 export function TaskDetailPage() {
@@ -113,44 +113,98 @@ export function TaskDetailPage() {
             <Field label="Requires Plan" value={task.requiresPlan ? "Yes" : "No"} />
             <Field label="Worktree" value={task.worktreePath || "—"} mono />
           </div>
-          {task.description && (
-            <div className="mt-4">
-              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Description</label>
-              <div className="mt-1">
-                <MarkdownRenderer content={task.description} />
+          <div className="mt-6 space-y-4">
+            {task.description && (
+              <div className="rounded-lg border border-border p-4">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Description</h3>
+                <div className="mt-2 text-sm text-text">
+                  <MarkdownRenderer content={task.description} />
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="rounded-lg border border-border p-4">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Steer Details</h3>
+                {task.steerDetails ? (
+                  <p className="mt-2 text-sm text-text-secondary whitespace-pre-wrap">{task.steerDetails}</p>
+                ) : (
+                  <p className="mt-2 text-sm text-text-muted italic">Steer details not present</p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Guardrails</h3>
+                {task.guardrails?.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {task.guardrails.map((g: string, i: number) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
+                        <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold shrink-0">{i + 1}</span>
+                        <span className="pt-0.5">{g}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-text-muted italic">Guardrails not present</p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border p-4">
+                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Acceptance Criteria</h3>
+                {task.acceptanceCriteria?.length > 0 ? (
+                  <ul className="mt-2 space-y-1.5">
+                    {task.acceptanceCriteria.map((c: string, i: number) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
+                        <svg className="w-4 h-4 mt-0.5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="pt-0.5">{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-text-muted italic">Acceptance criteria not present</p>
+                )}
               </div>
             </div>
-          )}
-          {task.steerDetails && (
-            <div className="mt-3">
-              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Steer Details</label>
-              <p className="mt-1 text-sm text-text-secondary whitespace-pre-wrap">{task.steerDetails}</p>
-            </div>
-          )}
-          {task.guardrails?.length > 0 && (
-            <div className="mt-3">
-              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Guardrails</label>
-              <ul className="mt-1 space-y-1">
-                {task.guardrails.map((g: string, i: number) => (
-                  <li key={i} className="flex gap-2 text-sm text-text-secondary">
-                    <span className="mt-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-100 text-amber-700 text-xs font-bold shrink-0">{i + 1}</span>
-                    <span>{g}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {task.acceptanceCriteria?.length > 0 && (
-            <div className="mt-3">
-              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Acceptance Criteria</label>
-              <ul className="mt-1 text-sm text-text-secondary list-disc list-inside space-y-0.5">
-                {task.acceptanceCriteria.map((c: string, i: number) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          </div>
         </div>
+
+        {ACTIVE_STATUSES.has(task.status) && (
+          <div className="border-b border-border bg-surface px-6 py-4 space-y-2">
+            {task.status === "waiting_plan_review" && (
+              <div className="flex gap-2">
+                <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
+                <Button onClick={() => doAction("requestPlanChanges", { message: feedback || "Plan changes requested." })} variant="secondary">
+                  Request Changes
+                </Button>
+              </div>
+            )}
+            {task.status === "waiting_code_review" && (
+              <div className="flex gap-2">
+                <Button onClick={() => doAction("approveCode")} variant="primary">Approve Code</Button>
+                <Button onClick={() => doAction("requestCodeChanges", { message: feedback || "Code changes requested." })} variant="secondary">
+                  Request Changes
+                </Button>
+                <Button onClick={() => doAction("requestAiReview")} variant="secondary">AI Review</Button>
+              </div>
+            )}
+            {task.status === "merged" && (
+              <Button onClick={() => doAction("confirmCompletion")} variant="primary">Confirm Complete</Button>
+            )}
+            {["planning", "coding", "reviewing"].includes(task.status) && (
+              <Button onClick={() => doAction("unblock")} variant="ghost">Unblock</Button>
+            )}
+            <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
+            <input
+              className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
+              placeholder="Add feedback (optional)..."
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+            />
+          </div>
+        )}
+
+        {mutation.isPending && (
+          <div className="border-b border-border bg-surface px-6 py-2 text-sm text-primary">Processing...</div>
+        )}
 
         <div className="border-b border-border bg-surface">
           <div className="flex px-6">
@@ -179,7 +233,7 @@ export function TaskDetailPage() {
                   <p className="text-sm">No messages yet.</p>
                 </div>
               )}
-              {task.conversation?.map((entry: any, i: number) => (
+              {[...(task.conversation ?? [])].reverse().map((entry: any, i: number) => (
                 <ConversationEntryCard key={i} entry={entry} />
               ))}
             </div>
@@ -206,45 +260,6 @@ export function TaskDetailPage() {
           )}
         </div>
       </div>
-
-      {(mutation as any)?.isPending && (
-        <div className="px-6 py-2 text-sm text-primary border-t border-border">Processing...</div>
-      )}
-
-      {ACTIVE_STATUSES.has(task.status) && (
-        <div className="border-t border-border bg-surface px-6 py-4 space-y-2 shrink-0">
-          {task.status === "waiting_plan_review" && (
-            <div className="flex gap-2">
-              <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
-              <Button onClick={() => doAction("requestPlanChanges", { message: feedback || "Plan changes requested." })} variant="secondary">
-                Request Changes
-              </Button>
-            </div>
-          )}
-          {task.status === "waiting_code_review" && (
-            <div className="flex gap-2">
-              <Button onClick={() => doAction("approveCode")} variant="primary">Approve Code</Button>
-              <Button onClick={() => doAction("requestCodeChanges", { message: feedback || "Code changes requested." })} variant="secondary">
-                Request Changes
-              </Button>
-              <Button onClick={() => doAction("requestAiReview")} variant="secondary">AI Review</Button>
-            </div>
-          )}
-          {task.status === "merged" && (
-            <Button onClick={() => doAction("confirmCompletion")} variant="primary">Confirm Complete</Button>
-          )}
-          {["planning", "coding", "reviewing"].includes(task.status) && (
-            <Button onClick={() => doAction("unblock")} variant="ghost">Unblock</Button>
-          )}
-          <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
-          <input
-            className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
-            placeholder="Add feedback (optional)..."
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
-        </div>
-      )}
     </div>
   );
 }
