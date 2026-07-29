@@ -38,10 +38,11 @@ export function BoardPage() {
     queryFn: api.getProjects,
   });
 
-  const { data: tasks = [], isLoading } = useQuery({
+  const { data: tasksRes, isLoading } = useQuery({
     queryKey: ["tasks", projectId],
     queryFn: () => api.getTasks(projectId),
   });
+  const tasks = tasksRes?.data ?? [];
 
   useSSE(useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["tasks"] });

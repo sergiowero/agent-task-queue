@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
+import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { Skeleton } from "../components/Skeleton";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
@@ -106,13 +107,39 @@ export function TaskDetailPage() {
 
         <div className="border-b border-border bg-surface px-6 py-4">
           <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-            <Field label="Description" value={task.description || "—"} />
             <Field label="Priority" value={String(task.priority)} />
             <Field label="Branch" value={task.recommendedBranch || "—"} mono />
             <Field label="Merge Target" value={task.mergeBranch} mono />
             <Field label="Requires Plan" value={task.requiresPlan ? "Yes" : "No"} />
             <Field label="Worktree" value={task.worktreePath || "—"} mono />
           </div>
+          {task.description && (
+            <div className="mt-4">
+              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Description</label>
+              <div className="mt-1">
+                <MarkdownRenderer content={task.description} />
+              </div>
+            </div>
+          )}
+          {task.steerDetails && (
+            <div className="mt-3">
+              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Steer Details</label>
+              <p className="mt-1 text-sm text-text-secondary whitespace-pre-wrap">{task.steerDetails}</p>
+            </div>
+          )}
+          {task.guardrails?.length > 0 && (
+            <div className="mt-3">
+              <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Guardrails</label>
+              <ul className="mt-1 space-y-1">
+                {task.guardrails.map((g: string, i: number) => (
+                  <li key={i} className="flex gap-2 text-sm text-text-secondary">
+                    <span className="mt-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-100 text-amber-700 text-xs font-bold shrink-0">{i + 1}</span>
+                    <span>{g}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {task.acceptanceCriteria?.length > 0 && (
             <div className="mt-3">
               <label className="text-xs font-medium text-text-muted uppercase tracking-wider">Acceptance Criteria</label>

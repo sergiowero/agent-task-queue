@@ -21,6 +21,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [branch, setBranch] = useState("");
   const [mergeBranch, setMergeBranch] = useState("develop");
   const [requiresPlan, setRequiresPlan] = useState(false);
+  const [steerDetails, setSteerDetails] = useState("");
+  const [guardrails, setGuardrails] = useState("");
   const [criteria, setCriteria] = useState("");
 
   const { data: projects = [] } = useQuery({
@@ -33,6 +35,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
       api.createTask({
         title,
         description,
+        steerDetails: steerDetails || undefined,
+        guardrails: guardrails ? guardrails.split("\n").filter(Boolean) : undefined,
         priority,
         recommendedBranch: branch || undefined,
         mergeBranch,
@@ -116,6 +120,24 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
             onChange={setRequiresPlan}
             label="Requires planning"
           />
+          <div>
+            <label className="block text-sm font-medium text-text mb-1">Steer Details</label>
+            <Textarea
+              placeholder="Implementation guidance, technical recommendations, preferred approaches"
+              rows={3}
+              value={steerDetails}
+              onChange={(e) => setSteerDetails(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1">Guardrails</label>
+            <Textarea
+              placeholder="One constraint per line"
+              rows={3}
+              value={guardrails}
+              onChange={(e) => setGuardrails(e.target.value)}
+            />
+          </div>
           <div>
             <label className="block text-sm font-medium text-text mb-1">Acceptance Criteria</label>
             <Textarea

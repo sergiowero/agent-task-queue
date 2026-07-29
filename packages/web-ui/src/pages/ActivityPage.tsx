@@ -25,10 +25,11 @@ const EVENT_LABELS: Record<string, string> = {
 export function ActivityPage() {
   const [limit, setLimit] = useState(50);
 
-  const { data: events = [], isLoading } = useQuery({
+  const { data: eventsRes, isLoading } = useQuery({
     queryKey: ["activity", limit],
     queryFn: () => api.getActivity({ limit }),
   });
+  const events = eventsRes?.data ?? [];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

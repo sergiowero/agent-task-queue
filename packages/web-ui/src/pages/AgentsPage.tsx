@@ -12,10 +12,11 @@ export function AgentsPage() {
   const [roleFilter, setRoleFilter] = useState("");
   const [toolFilter, setToolFilter] = useState("");
 
-  const { data: agents = [], isLoading } = useQuery({
+  const { data: agentsRes, isLoading } = useQuery({
     queryKey: ["agents", roleFilter, toolFilter],
     queryFn: () => api.getAgents({ role: roleFilter || undefined, tool: toolFilter || undefined }),
   });
+  const agents = agentsRes?.data ?? [];
 
   const roles = [...new Set(agents.map((a: any) => a.role))];
   const tools = [...new Set(agents.map((a: any) => a.toolName))];
