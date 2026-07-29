@@ -1,6 +1,7 @@
 interface BadgeProps {
   variant?: "default" | "success" | "warning" | "danger" | "info" | "purple";
   size?: "sm" | "md";
+  dot?: boolean;
   children: React.ReactNode;
 }
 
@@ -13,21 +14,31 @@ const variantStyles = {
   purple: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
 };
 
+const dotColors: Record<string, string> = {
+  default: "bg-text-muted",
+  success: "bg-green-500",
+  warning: "bg-amber-500",
+  danger: "bg-red-500",
+  info: "bg-blue-500",
+  purple: "bg-violet-500",
+};
+
 const sizeStyles = {
   sm: "px-1.5 py-0.5 text-xs",
   md: "px-2 py-1 text-sm",
 };
 
-export function Badge({ variant = "default", size = "sm", children }: BadgeProps) {
+export function Badge({ variant = "default", size = "sm", dot = false, children }: BadgeProps) {
   return (
     <span
       className={`
-        inline-flex items-center font-medium rounded-full
+        inline-flex items-center gap-1 font-medium rounded-full
         transition-colors duration-150
         ${variantStyles[variant]}
         ${sizeStyles[size]}
       `}
     >
+      {dot && <span className={`w-1.5 h-1.5 rounded-full ${dotColors[variant]}`} />}
       {children}
     </span>
   );

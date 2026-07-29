@@ -38,7 +38,7 @@ export function ToolsPage() {
             <button
               key={tool.id}
               onClick={() => navigate(`/tools/${tool.id}`)}
-              className="bg-surface border border-border rounded-lg p-6 text-left hover:border-primary hover:shadow-sm transition-all duration-150 cursor-pointer group"
+              className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 cursor-pointer group text-left"
             >
               <div className="text-primary group-hover:text-primary/80 mb-3">
                 <ToolIcon icon={tool.icon} />
@@ -46,7 +46,7 @@ export function ToolsPage() {
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-semibold text-text">{tool.name}</h3>
                 {tool.badge && (
-                  <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-600 border border-yellow-500/30 leading-none">
+                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 leading-none">
                     {tool.badge}
                   </span>
                 )}

@@ -14,9 +14,9 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
             w-full border rounded-lg px-3 py-2 text-sm
             bg-surface text-text
             placeholder:text-text-muted
-            focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-surface
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface
             transition-all duration-150
-            ${error ? "border-danger focus:ring-danger" : "border-border focus:ring-primary"}
+            ${error ? "border-danger focus-visible:ring-danger" : "border-border focus-visible:ring-primary"}
             ${className}
           `}
           {...props}

@@ -107,28 +107,34 @@ const NAV_ITEMS = [
 export function Layout() {
   return (
     <div className="flex h-screen bg-surface-secondary">
-      {/* Sidebar */}
       <aside className="w-56 bg-surface border-r border-border flex flex-col">
         <div className="px-4 py-5 border-b border-border">
-          <h1 className="text-text font-bold text-lg">AgentQ</h1>
+          <h1 className="text-text font-bold text-lg tracking-tight">AgentQ</h1>
           <p className="text-xs text-text-muted">your 100x engineer tool</p>
         </div>
 
-        <nav className="flex-1 px-2 py-4 space-y-1">
+        <nav className="flex-1 px-2 py-4 space-y-0.5">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors duration-150 ${
+                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-150 relative ${
                   isActive
-                    ? "bg-primary text-white"
+                    ? "bg-primary/10 text-primary font-medium"
                     : "text-text-secondary hover:text-text hover:bg-surface-secondary"
                 }`
               }
             >
-              <item.icon />
-              <span>{item.label}</span>
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-full" />
+                  )}
+                  <item.icon />
+                  <span>{item.label}</span>
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -138,7 +144,6 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Main */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <Outlet />
       </main>
