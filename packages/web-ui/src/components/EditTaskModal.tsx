@@ -21,6 +21,8 @@ export function EditTaskModal({ task, onClose, onSaved }: EditTaskModalProps) {
   const [branch, setBranch] = useState(task.recommendedBranch);
   const [mergeBranch, setMergeBranch] = useState(task.mergeBranch);
   const [criteria, setCriteria] = useState(task.acceptanceCriteria?.join("\n") ?? "");
+  const [steerDetails, setSteerDetails] = useState(task.steerDetails ?? "");
+  const [guardrails, setGuardrails] = useState(task.guardrails?.join("\n") ?? "");
   const titleId = "edit-task-title";
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -55,6 +57,8 @@ export function EditTaskModal({ task, onClose, onSaved }: EditTaskModalProps) {
       api.updateTask(task.id, {
         title,
         description: description || null,
+        steerDetails: steerDetails || null,
+        guardrails: guardrails ? guardrails.split("\n").filter(Boolean) : [],
         priority,
         recommendedBranch: branch || undefined,
         mergeBranch,
@@ -151,6 +155,30 @@ export function EditTaskModal({ task, onClose, onSaved }: EditTaskModalProps) {
               value={mergeBranch}
               onChange={(e) => setMergeBranch(e.target.value)}
               className="font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1" htmlFor="edit-steer-details">
+              Steer Details
+            </label>
+            <Textarea
+              id="edit-steer-details"
+              placeholder="Implementation guidance, technical recommendations, preferred approaches"
+              rows={3}
+              value={steerDetails}
+              onChange={(e) => setSteerDetails(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1" htmlFor="edit-guardrails">
+              Guardrails
+            </label>
+            <Textarea
+              id="edit-guardrails"
+              placeholder="One constraint per line"
+              rows={3}
+              value={guardrails}
+              onChange={(e) => setGuardrails(e.target.value)}
             />
           </div>
           <div>

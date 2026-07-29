@@ -6,8 +6,11 @@ const taskStatusValues = Object.values(TaskStatus) as [string, ...string[]];
 export const createTaskSchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
   description: z.string().max(5000).default(""),
+  steerDetails: z.string().max(5000).optional(),
+  guardrails: z.array(z.string()).optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
-  priority: z.number().int().min(0).max(100).optional(),
+  priority: z.number().int().min(0).optional(),
+
   recommendedBranch: z.string().max(200).optional(),
   requiresPlan: z.boolean().optional(),
   mergeBranch: z.string().max(200).optional(),
@@ -17,9 +20,11 @@ export const createTaskSchema = z.object({
 export const updateTaskSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   description: z.string().max(5000).nullable().optional(),
+  steerDetails: z.string().max(5000).nullable().optional(),
+  guardrails: z.array(z.string()).optional(),
   status: z.enum(taskStatusValues as [string, ...string[]]).optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
-  priority: z.number().int().min(0).max(100).optional(),
+  priority: z.number().int().min(0).optional(),
   recommendedBranch: z.string().max(200).optional(),
   realBranch: z.string().max(200).nullable().optional(),
   mergeBranch: z.string().max(200).optional(),

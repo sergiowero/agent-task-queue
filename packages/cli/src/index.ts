@@ -36,11 +36,14 @@ interface ProjectsOptions extends JsonOption {}
 interface CreateOptions extends JsonOption {
   project: string;
   description?: string;
+  steerDetails?: string;
+  guardrails?: string;
   priority?: string;
   branch?: string;
   requiresPlan?: boolean;
   mergeBranch?: string;
   context?: string;
+  acceptanceCriteria?: string;
 }
 
 interface GetOptions extends JsonOption {}
@@ -111,6 +114,8 @@ function printTask(task: {
   id: string;
   title: string;
   description: string | null;
+  steerDetails: string | null;
+  guardrails: string[];
   status: string;
   priority: number;
   recommendedBranch: string;
@@ -131,6 +136,15 @@ function printTask(task: {
   console.log(`  Priority:           ${task.priority}`);
   console.log(`  Recommended Branch: ${task.recommendedBranch || "(none)"}`);
   console.log(`  Merge Branch:       ${task.mergeBranch}`);
+  if (task.steerDetails) {
+    console.log(`  Steer Details:      ${task.steerDetails}`);
+  }
+  if (task.guardrails.length > 0) {
+    console.log(`  Guardrails:`);
+    for (const g of task.guardrails) {
+      console.log(`    - ${g}`);
+    }
+  }
   if (task.acceptanceCriteria.length > 0) {
     console.log(`  Acceptance Criteria:`);
     for (const criterion of task.acceptanceCriteria) {
@@ -203,22 +217,32 @@ program
   .addHelpText("after", "\nExamples:\n  agentq create \"Fix login bug\" --project <id> -d \"Description\"\n  agentq create \"Add auth\" --project <id> -d \"Desc\" --requires-plan --json")
   .requiredOption("--project <id>", "Project ID (required)")
   .requiredOption("-d, --description <text>", "Task description")
+  .option("--steer-details <text>", "Implementation guidance and technical recommendations")
+  .option("--guardrails <text>", "Behavioral constraints (separate multiple with |)")
   .option("-p, --priority <number>", "Priority (default: 0)", "0")
   .option("-b, --branch <name>", "Recommended branch name")
   .option("--requires-plan", "Task requires planning")
   .option("--merge-branch <branch>", "Target merge branch (default: develop)", "develop")
   .option("--context <text>", "Initial context entry")
+  .option("-a, --acceptance-criteria <text>", "Acceptance criteria (separate multiple with |)")
   .option("--json", "Output as JSON")
   .action((title: string, options: CreateOptions) => {
     const task = createTask({
       title,
       description: options.description,
+      steerDetails: options.steerDetails,
+      guardrails: options.guardrails
+        ? options.guardrails.split("|").map((s) => s.trim()).filter(Boolean)
+        : undefined,
       priority: parseInt(options.priority || "0", 10),
       recommendedBranch: options.branch || "",
       requiresPlan: options.requiresPlan || false,
       mergeBranch: options.mergeBranch || "develop",
       projectId: options.project,
       contexts: options.context ? [options.context] : [],
+      acceptanceCriteria: options.acceptanceCriteria
+        ? options.acceptanceCriteria.split("|").map((s) => s.trim()).filter(Boolean)
+        : undefined,
     });
     if (options.json) {
       const project = getProjectByTaskId(task.id);
