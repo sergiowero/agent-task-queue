@@ -394,6 +394,143 @@ describe("Migration Status", () => {
   });
 });
 
+describe("SteerDetails & Guardrails", () => {
+  const projectId = "steer-guard-test-" + Date.now();
+  const createdTaskIds: string[] = [];
+
+  beforeAll(() => {
+    createProject({
+      id: projectId,
+      displayName: "SteerGuard Test",
+      workingDirectory: "/tmp/steer-guard",
+    });
+  });
+
+  afterEach(() => {
+    for (const id of createdTaskIds) {
+      try { deleteTask(id); } catch {}
+    }
+    createdTaskIds.length = 0;
+  });
+
+  it("creates task with steerDetails and guardrails", () => {
+    const task = createTask({
+      title: "steer-guard-test",
+      description: "test",
+      projectId,
+      steerDetails: "Use the shared types package. Prefer Zod validation.",
+      guardrails: ["DO NOT use raw SQL", "DO NOT mutate input objects"],
+    });
+    createdTaskIds.push(task.id);
+    expect(task.steerDetails).toBe("Use the shared types package. Prefer Zod validation.");
+    expect(task.guardrails).toEqual(["DO NOT use raw SQL", "DO NOT mutate input objects"]);
+  });
+
+  it("defaults steerDetails to null when not provided", () => {
+    const task = createTask({ title: "no-steer", description: "test", projectId });
+    createdTaskIds.push(task.id);
+    expect(task.steerDetails).toBeNull();
+  });
+
+  it("defaults guardrails to empty array when not provided", () => {
+    const task = createTask({ title: "no-guard", description: "test", projectId });
+    createdTaskIds.push(task.id);
+    expect(task.guardrails).toEqual([]);
+  });
+
+  it("updates steerDetails and guardrails", () => {
+    const task = createTask({ title: "update-test", description: "test", projectId });
+    createdTaskIds.push(task.id);
+    const updated = updateTask(task.id, {
+      steerDetails: "Updated guidance",
+      guardrails: ["New constraint"],
+    });
+    expect(updated!.steerDetails).toBe("Updated guidance");
+    expect(updated!.guardrails).toEqual(["New constraint"]);
+  });
+
+  it("clears steerDetails by setting to null", () => {
+    const task = createTask({
+      title: "clear-steer",
+      description: "test",
+      projectId,
+      steerDetails: "Some guidance",
+    });
+    createdTaskIds.push(task.id);
+    const updated = updateTask(task.id, { steerDetails: null });
+    expect(updated!.steerDetails).toBeNull();
+  });
+
+  it("persists steerDetails and guardrails through retrieval", () => {
+    const task = createTask({
+      title: "persist-test",
+      description: "test",
+      projectId,
+      steerDetails: "Persist this",
+      guardrails: ["Must persist"],
+    });
+    createdTaskIds.push(task.id);
+    const tasks = getTasks();
+    const found = tasks.find((t) => t.id === task.id);
+    expect(found).toBeDefined();
+    expect(found!.steerDetails).toBe("Persist this");
+    expect(found!.guardrails).toEqual(["Must persist"]);
+  });
+});
+
+describe("Schema Validation — SteerDetails & Guardrails", () => {
+  it("validates createTaskSchema with steerDetails", () => {
+    const result = createTaskSchema.safeParse({
+      title: "Test",
+      projectId: "00000000-0000-0000-0000-000000000001",
+      steerDetails: "Some guidance",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates createTaskSchema with guardrails", () => {
+    const result = createTaskSchema.safeParse({
+      title: "Test",
+      projectId: "00000000-0000-0000-0000-000000000001",
+      guardrails: ["One", "Two"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates createTaskSchema with both fields", () => {
+    const result = createTaskSchema.safeParse({
+      title: "Test",
+      projectId: "00000000-0000-0000-0000-000000000001",
+      steerDetails: "Guidance",
+      guardrails: ["Const1", "Const2"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects createTaskSchema with non-array guardrails", () => {
+    const result = createTaskSchema.safeParse({
+      title: "Test",
+      projectId: "00000000-0000-0000-0000-000000000001",
+      guardrails: "not-an-array",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("validates updateTaskSchema with steerDetails null", () => {
+    const result = updateTaskSchema.safeParse({
+      steerDetails: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates updateTaskSchema with guardrails", () => {
+    const result = updateTaskSchema.safeParse({
+      guardrails: ["Updated"],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("Normalized Tables (8.4 continuation)", () => {
   const createdTaskIds: string[] = [];
 

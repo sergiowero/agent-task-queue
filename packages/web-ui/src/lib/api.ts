@@ -2,6 +2,8 @@ export interface Task {
   id: string;
   title: string;
   description: string | null;
+  steerDetails: string | null;
+  guardrails: string[];
   acceptanceCriteria: string[];
   priority: number;
   recommendedBranch: string;

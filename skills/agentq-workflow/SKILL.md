@@ -44,6 +44,8 @@ agentq claim \
     "id": "...",
     "title": "...",
     "description": "...",
+    "steerDetails": "...",
+    "guardrails": ["..."],
     "status": "...",
     "worktreePath": null | "/tmp/agentq-{taskId}",
     "project": {
@@ -202,10 +204,14 @@ All `-m` messages MUST be in Markdown format.
 ## Context Reading
 
 Before working on a task, read:
-- `task.description` - What needs to be done
-- `task.acceptanceCriteria` - Requirements to meet
+- `task.description` - Functional requirements only — what needs to be accomplished
+- `task.steerDetails` - Technical recommendations, implementation hints, preferred approaches
+- `task.guardrails` - Behavioral constraints, do's and don'ts for agents
+- `task.acceptanceCriteria` - Specific, testable conditions that define completion
 - `task.conversation[]` - Previous discussion
 - `task.contexts[]` - Additional context
+
+Agents MUST respect guardrails — they define hard constraints that must not be violated during implementation. If a guardrail conflicts with other requirements, the guardrail takes precedence.
 
 ## Autonomy
 

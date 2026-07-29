@@ -59,6 +59,8 @@ function initSchema(): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT,
+      steer_details TEXT,
+      guardrails TEXT DEFAULT '[]',
       acceptance_criteria TEXT DEFAULT '[]',
       priority INTEGER DEFAULT 0,
       recommended_branch TEXT DEFAULT '',
@@ -192,6 +194,13 @@ function runMigrations(): void {
     }
     markMigrationApplied("005_extract_history");
   }
+
+  // Migration 6: Add steer_details and guardrails columns
+  if (!isMigrationApplied("006_add_steer_details_guardrails")) {
+    try { d.exec("ALTER TABLE tasks ADD COLUMN steer_details TEXT"); } catch {}
+    try { d.exec("ALTER TABLE tasks ADD COLUMN guardrails TEXT DEFAULT '[]'"); } catch {}
+    markMigrationApplied("006_add_steer_details_guardrails");
+  }
 }
 
 export function beginTransaction(): void {
@@ -226,6 +235,7 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
     "003_normalize_ready_for_code",
     "004_extract_conversation",
     "005_extract_history",
+    "006_add_steer_details_guardrails",
   ];
   return migrationNames.map((name) => ({
     name,
@@ -262,6 +272,13 @@ export function rollbackMigration(name?: string): void {
     if (name === "002_add_indexes") return;
   }
 
+  if (!name || name === "006_add_steer_details_guardrails") {
+    try { d.exec("UPDATE tasks SET steer_details = NULL"); } catch {}
+    try { d.exec("UPDATE tasks SET guardrails = '[]'"); } catch {}
+    d.exec("DELETE FROM _migrations WHERE name = '006_add_steer_details_guardrails'");
+    if (name === "006_add_steer_details_guardrails") return;
+  }
+
   if (!name || name === "001_add_deleted_at") {
     // SQLite doesn't support DROP COLUMN before 3.35.0; recreate is complex.
     // Best effort: nullify the columns.
@@ -277,6 +294,8 @@ function rowToTask(row: any): Task {
     id: row.id,
     title: row.title,
     description: row.description,
+    steerDetails: row.steer_details ?? null,
+    guardrails: JSON.parse(row.guardrails || "[]"),
     acceptanceCriteria: JSON.parse(row.acceptance_criteria || "[]"),
     priority: row.priority,
     recommendedBranch: row.recommended_branch,
@@ -338,6 +357,8 @@ function rowToActivity(row: any): ActivityEvent {
 export function createTask(data: {
   title: string;
   description: string;
+  steerDetails?: string;
+  guardrails?: string[];
   acceptanceCriteria?: string[];
   priority?: number;
   recommendedBranch?: string;
@@ -350,6 +371,8 @@ export function createTask(data: {
     id: randomUUID(),
     title: data.title,
     description: data.description,
+    steerDetails: data.steerDetails ?? null,
+    guardrails: data.guardrails ?? [],
     acceptanceCriteria: data.acceptanceCriteria ?? [],
     priority: data.priority ?? 0,
     recommendedBranch: data.recommendedBranch ?? "",
@@ -369,15 +392,17 @@ export function createTask(data: {
   };
 
   const stmt = getDb().prepare(
-    `INSERT INTO tasks (id, title, description, acceptance_criteria, priority,
+    `INSERT INTO tasks (id, title, description, steer_details, guardrails, acceptance_criteria, priority,
       recommended_branch, real_branch, requires_plan, merge_branch, status,
       assigned_agent_id, conversation, history, contexts, project_id, worktree_path, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   stmt.run(
     task.id,
     task.title,
     task.description,
+    task.steerDetails,
+    JSON.stringify(task.guardrails),
     JSON.stringify(task.acceptanceCriteria),
     task.priority,
     task.recommendedBranch,
@@ -419,6 +444,8 @@ export function updateTask(
   data: {
     title?: string;
     description?: string;
+    steerDetails?: string | null;
+    guardrails?: string[];
     status?: TaskStatus;
     acceptanceCriteria?: string[];
     priority?: number;
@@ -440,6 +467,8 @@ export function updateTask(
   const updated = {
     title: data.title ?? existing.title,
     description: data.description !== undefined ? data.description : existing.description,
+    steerDetails: data.steerDetails !== undefined ? data.steerDetails : existing.steerDetails,
+    guardrails: data.guardrails ?? existing.guardrails,
     acceptanceCriteria: data.acceptanceCriteria ?? existing.acceptanceCriteria,
     priority: data.priority ?? existing.priority,
     recommendedBranch: data.recommendedBranch ?? existing.recommendedBranch,
@@ -456,7 +485,7 @@ export function updateTask(
   };
 
   const stmt = getDb().prepare(
-    `UPDATE tasks SET title = ?, description = ?, acceptance_criteria = ?, priority = ?,
+    `UPDATE tasks SET title = ?, description = ?, steer_details = ?, guardrails = ?, acceptance_criteria = ?, priority = ?,
       recommended_branch = ?, real_branch = ?, merge_branch = ?, status = ?,
       assigned_agent_id = ?, conversation = ?, history = ?, contexts = ?,
       project_id = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
@@ -464,6 +493,8 @@ export function updateTask(
   stmt.run(
     updated.title,
     updated.description,
+    updated.steerDetails,
+    JSON.stringify(updated.guardrails),
     JSON.stringify(updated.acceptanceCriteria),
     updated.priority,
     updated.recommendedBranch,

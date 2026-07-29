@@ -31,6 +31,9 @@ Returns all registered projects with `id`, `displayName`, and `workingDirectory`
 agentq create "<title>" \
   --project <projectId> \
   --description "<detailed description>" \
+  --steer-details "<implementation guidance>" \
+  --guardrails "<constraint1|constraint2|constraint3>" \
+  --acceptance-criteria "<criterion1|criterion2|criterion3>" \
   --branch <branch-name> \
   --priority <0-5> \
   --requires-plan <true|false> \
@@ -58,7 +61,9 @@ Run `agentq projects --json` to get all registered projects. Determine which pro
 Take what the user described and produce a complete, well-structured task.
 
 **Always enhance:**
-- **Description**: Expand the user's input into a detailed specification. Include what needs to be done, why it's needed, technical context and any relevant details. Make it actionable for the agent who will claim it. Do not add file references or technical implementation details unless the user provided them, implementation details will be covered on planning and execution.
+- **Description**: Functional requirements only — user story, task definition, and what needs to be accomplished. Do NOT list files, implementation details, or technical approaches here — those go in steerDetails.
+- **steerDetails**: Technical recommendations, implementation hints, preferred approaches, files likely involved, architecture considerations. This is where agents look for HOW to implement, not WHAT to implement.
+- **guardrails**: Do's and don'ts for agents — behavioral constraints, things to avoid, security rules, project conventions. Each guardrail should be a single, clear constraint.
 - **Acceptance Criteria**: Generate 3-5 specific, testable conditions that define when the task is complete.
 
 **Respect user overrides (do not override what the user specified):**
@@ -79,7 +84,10 @@ Take what the user described and produce a complete, well-structured task.
 ```bash
 agentq create "<Elaborated Title>" \
   --project <projectId> \
-  --description "<elaborated markdown description with acceptance criteria>" \
+  --description "<functional requirements only — steerDetails go separately>" \
+  --steer-details "<technical recommendations, implementation hints>" \
+  --guardrails "<constraint1|constraint2>" \
+  --acceptance-criteria "<criterion1|criterion2>" \
   --branch <branch-name> \
   --priority <priority> \
   --requires-plan <true|false> \
@@ -95,15 +103,20 @@ When writing the description, use this structure:
 ```markdown
 ## Description
 
-[What needs to be done — expanded from user's request]
+[Functional requirements only — what needs to be done, expanded from user's request. Do NOT include files, implementation details, or technical approaches.]
 
 ## Motivation
 
 [Why this is needed — business or technical context]
 
-## Technical Notes
+## Steer Details
 
-[Implementation approach, files likely involved, architecture considerations]
+[Technical recommendations, implementation hints, preferred approaches, files likely involved, architecture considerations. Do NOT include behavioral constraints — those go in guardrails.]
+
+## Guardrails
+
+- [Behavioral constraint 1 — e.g., "DO NOT use external APIs"]
+- [Behavioral constraint 2 — e.g., "MUST support backward compatibility"]
 
 ## Acceptance Criteria
 

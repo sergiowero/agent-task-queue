@@ -62,7 +62,7 @@ export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"description" | "conversation" | "context" | "history">(
+  const [tab, setTab] = useState<"description" | "acceptance-criteria" | "conversation" | "context" | "history">(
     "description",
   );
   const [conversationInput, setConversationInput] = useState("");
@@ -182,7 +182,7 @@ export function TaskDetailPage() {
 
         <div className="border-b border-border bg-surface">
           <div className="flex px-6">
-            {(["description", "conversation", "context", "history"] as const).map((t) => (
+            {(["description", "acceptance-criteria", "conversation", "context", "history"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -206,6 +206,48 @@ export function TaskDetailPage() {
               ) : (
                 <p className="text-sm text-text-muted">No description.</p>
               )}
+            </div>
+          )}
+          {tab === "acceptance-criteria" && (
+            <div className="max-w-3xl space-y-6">
+              {task.steerDetails && (
+                <div>
+                  <h3 className="text-sm font-semibold text-text mb-2">Steer Details</h3>
+                  <p className="text-sm text-text-secondary whitespace-pre-wrap">{task.steerDetails}</p>
+                </div>
+              )}
+              {task.guardrails.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-text mb-2">Guardrails</h3>
+                  <ul className="space-y-2">
+                    {task.guardrails.map((g, i) => (
+                      <li key={i} className="flex gap-3 text-sm text-text-secondary">
+                        <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold shrink-0">
+                          {i + 1}
+                        </span>
+                        <span>{g}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <h3 className="text-sm font-semibold text-text mb-2">Acceptance Criteria</h3>
+                {(!task.acceptanceCriteria || task.acceptanceCriteria.length === 0) ? (
+                  <p className="text-sm text-text-muted">No acceptance criteria defined.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {task.acceptanceCriteria.map((c, i) => (
+                      <li key={i} className="flex gap-3 text-sm text-text-secondary">
+                        <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0">
+                          {i + 1}
+                        </span>
+                        <span>{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
           {tab === "conversation" && (

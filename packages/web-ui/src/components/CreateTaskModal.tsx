@@ -22,6 +22,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [mergeBranch, setMergeBranch] = useState("develop");
   const [requiresPlan, setRequiresPlan] = useState(false);
   const [criteria, setCriteria] = useState("");
+  const [steerDetails, setSteerDetails] = useState("");
+  const [guardrails, setGuardrails] = useState("");
   const titleId = "create-task-title";
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -61,6 +63,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
       api.createTask({
         title,
         description,
+        steerDetails: steerDetails || undefined,
+        guardrails: guardrails ? guardrails.split("\n").filter(Boolean) : undefined,
         priority,
         recommendedBranch: branch || undefined,
         mergeBranch,
@@ -153,6 +157,26 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
             />
           </div>
           <Toggle checked={requiresPlan} onChange={setRequiresPlan} label="Requires planning" />
+          <div>
+            <label className="block text-sm font-medium text-text mb-1" htmlFor="steer-details">Steer Details</label>
+            <Textarea
+              id="steer-details"
+              placeholder="Implementation guidance, technical recommendations, preferred approaches"
+              rows={3}
+              value={steerDetails}
+              onChange={(e) => setSteerDetails(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text mb-1" htmlFor="guardrails">Guardrails</label>
+            <Textarea
+              id="guardrails"
+              placeholder="One constraint per line"
+              rows={3}
+              value={guardrails}
+              onChange={(e) => setGuardrails(e.target.value)}
+            />
+          </div>
           <div>
             <label className="block text-sm font-medium text-text mb-1" htmlFor="criteria">Acceptance Criteria</label>
             <Textarea
