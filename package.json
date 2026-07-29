@@ -18,7 +18,7 @@
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
-    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/cli --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit",
+    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/cli --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

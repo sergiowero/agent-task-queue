@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
+import { homedir } from "os";
+import { join } from "path";
 import type {
   Task,
   ConversationEntry,
@@ -12,7 +14,17 @@ import {
   normalizeStatus,
 } from "./types.js";
 
-const DB_PATH = process.env.AGENTQ_DB_PATH || "agentq.db";
+function resolveDbPath(p: string): string {
+  if (p.startsWith("~/")) {
+    return join(homedir(), p.slice(2));
+  }
+  if (p === "~") {
+    return homedir();
+  }
+  return p;
+}
+
+const DB_PATH = resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
 
 let db: Database | null = null;
 

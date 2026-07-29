@@ -6,7 +6,7 @@ const envSchema = z.object({
     .default("3000")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().positive().int().max(65535)),
-  AGENTQ_DB_PATH: z.string().default("agentq.db"),
+  AGENTQ_DB_PATH: z.string().default("~/agentq/agentq.db"),
 });
 
 export type Env = z.infer<typeof envSchema>;

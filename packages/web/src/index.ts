@@ -453,15 +453,19 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   if (!task) return errorResponse("not found", 404);
 
   const body = await parseBody(req);
-  const parsed = transitionTaskSchema.safeParse({ ...body, action: subAction });
+  const actionMap: Record<string, string> = {
+    "confirm-completion": "complete",
+  };
+  const action = actionMap[subAction] ?? subAction.replace(/-/g, "_");
+  const parsed = transitionTaskSchema.safeParse({ ...body, action });
   if (!parsed.success) {
     return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
   }
 
   let updated: Task | null = null;
 
-  switch (subAction) {
-    case "submit-plan": {
+  switch (action) {
+    case "submit_plan": {
       if (task.status === TaskStatus.Canceled) {
         return errorResponse("Task is canceled and cannot accept submissions.");
       }
@@ -478,7 +482,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "submit-code": {
+    case "submit_code": {
       if (task.status === TaskStatus.Canceled) {
         return errorResponse("Task is canceled and cannot accept submissions.");
       }
@@ -495,7 +499,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "submit-review": {
+    case "submit_review": {
       if (task.status === TaskStatus.Canceled) {
         return errorResponse("Task is canceled and cannot accept submissions.");
       }
@@ -517,7 +521,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "submit-merge": {
+    case "submit_merge": {
       if (task.status === TaskStatus.Canceled) {
         return errorResponse("Task is canceled and cannot accept submissions.");
       }
@@ -549,7 +553,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "approve-plan": {
+    case "approve_plan": {
       if (task.status !== TaskStatus.WaitingPlanReview) {
         return errorResponse("task must be in Waiting Plan Review status");
       }
@@ -560,7 +564,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "request-plan-changes": {
+    case "request_plan_changes": {
       if (task.status !== TaskStatus.WaitingPlanReview) {
         return errorResponse("task must be in Waiting Plan Review status");
       }
@@ -575,7 +579,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "approve-code": {
+    case "approve_code": {
       if (task.status !== TaskStatus.WaitingCodeReview) {
         return errorResponse("task must be in Waiting Code Review status");
       }
@@ -586,7 +590,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "request-code-changes": {
+    case "request_code_changes": {
       if (task.status !== TaskStatus.WaitingCodeReview) {
         return errorResponse("task must be in Waiting Code Review status");
       }
@@ -601,7 +605,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "request-ai-review": {
+    case "request_ai_review": {
       if (task.status !== TaskStatus.WaitingCodeReview) {
         return errorResponse("task must be in Waiting Code Review status");
       }
@@ -612,7 +616,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       break;
     }
 
-    case "confirm-completion": {
+    case "complete": {
       if (task.status !== TaskStatus.Merged) {
         return errorResponse("task must be in Merged status");
       }
