@@ -5,7 +5,7 @@ import { Badge } from "./Badge";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
   plan_requested: "default",
-  ready: "info",
+  ready_for_code: "info",
   planning: "purple",
   coding: "info",
   reviewing: "warning",

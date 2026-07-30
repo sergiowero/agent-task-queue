@@ -1,9 +1,10 @@
 ---
 name: agentq-workflow
 description: Protocol for working as an AgentQ agent. Use when connected to the AgentQ MCP server (tools next_task, get_my_task, heartbeat, submit_plan, submit_code, submit_review, finalize_task, post_comment are available). Follow this protocol to correctly claim tasks, work on them, and deliver results.
+allowed-tools: Bash(agentq:*)
 metadata:
   version: "1.0.0"
-  author: "agent-task-queue"
+  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Workflow Skill

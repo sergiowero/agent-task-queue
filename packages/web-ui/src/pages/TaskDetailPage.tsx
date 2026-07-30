@@ -10,6 +10,7 @@ import { Skeleton } from "../components/Skeleton";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
   plan_requested: "default",
+  ready_for_code: "info",
   planning: "purple",
   coding: "info",
   reviewing: "warning",
@@ -26,7 +27,7 @@ const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "dange
 };
 
 const ACTIVE_STATUSES = new Set([
-  "plan_requested", "ready for code", "planning", "waiting_plan_review", "plan_changes_requested",
+  "plan_requested", "ready_for_code", "planning", "waiting_plan_review", "plan_changes_requested",
   "coding", "waiting_code_review", "code_review_requested", "reviewing",
   "changes_requested", "approved", "merging", "merged",
 ]);

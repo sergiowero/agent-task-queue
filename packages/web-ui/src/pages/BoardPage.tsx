@@ -9,7 +9,7 @@ import { EditTaskModal } from "../components/EditTaskModal";
 import { Skeleton } from "../components/Skeleton";
 
 const COLUMNS = [
-  { key: "pending", label: "Pending", statuses: ["plan_requested", "ready for code", "plan_changes_requested", "code_review_requested", "changes_requested", "approved"] },
+  { key: "pending", label: "Pending", statuses: ["plan_requested", "ready_for_code", "plan_changes_requested", "code_review_requested", "changes_requested", "approved"] },
   { key: "in-progress", label: "In Progress", statuses: ["planning", "coding", "reviewing", "merging"] },
   { key: "need-review", label: "Need Review", statuses: ["waiting_plan_review", "waiting_code_review"] },
   { key: "done", label: "Done", statuses: ["complete", "merged"] },
