@@ -23,7 +23,6 @@ import {
   addConversation,
   addActivity,
   CANCELED_CANT_CANCEL,
-  CANT_DELETE_STATUSES,
   createTaskSchema,
   updateTaskSchema,
   createProjectSchema,
@@ -700,10 +699,6 @@ const handleTaskById = wrapHandler(async (req, url) => {
   if (req.method === "DELETE") {
     const task = getTaskById(taskId);
     if (!task) return errorResponse("not found", 404);
-
-    if (CANT_DELETE_STATUSES.has(task.status)) {
-      return errorResponse("Task has reached coding stage and cannot be deleted.");
-    }
 
     const hard = url.searchParams.get("hard") === "true";
     if (hard) {

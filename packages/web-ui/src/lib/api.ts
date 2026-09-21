@@ -94,7 +94,7 @@ export const api = {
   createTask: (data: Partial<Task>) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
   updateTask: (id: string, data: Partial<Task>) =>
     request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteTask: (id: string) => request<void>(`/tasks/${id}`, { method: "DELETE" }),
+  deleteTask: (id: string) => request<void>(`/tasks/${id}?hard=true`, { method: "DELETE" }),
 
   submitPlan: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/submit-plan`, { method: "POST", body: JSON.stringify(data) }),
