@@ -167,7 +167,7 @@ describe("AgentQ MCP server", () => {
     ]);
     expect(stored.conversation.map((c) => [c.authorName, c.message, c.messageType])).toEqual([
       ["testagent@1.0|test-model", "Claimed task. Transitioning to planning.", "agent"],
-      ["agent", "1. do it", "agent"],
+      ["agent", "1. do it", "plan"],
     ]);
   });
 

@@ -258,10 +258,11 @@ export function submitPlan(taskId: string, input: SubmitInput = {}): SubmitResul
   const previousStatus = task.status;
   let updated = recordHistory(task, TaskStatus.WaitingPlanReview);
   if (input.message) {
-    updated = addConversation(updated, input.author ?? "agent", input.message);
+    updated = addConversation(updated, input.author ?? "agent", input.message, "plan");
   }
   updated = appendContext(updated, input.context);
   updated = releaseTask(updated.id)!;
+  addActivity(taskId, "plan_submitted", input.author ?? "agent");
   return {
     task: updated,
     previousStatus,
@@ -275,10 +276,11 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
   const previousStatus = task.status;
   let updated = recordHistory(task, TaskStatus.WaitingCodeReview);
   if (input.message) {
-    updated = addConversation(updated, input.author ?? "agent", input.message);
+    updated = addConversation(updated, input.author ?? "agent", input.message, "code");
   }
   updated = appendContext(updated, input.context);
   updated = releaseTask(updated.id, { worktreePath: input.worktree ?? null })!;
+  addActivity(taskId, "code_submitted", input.author ?? "agent");
   return {
     task: updated,
     previousStatus,
@@ -292,10 +294,11 @@ export function submitReview(taskId: string, input: SubmitInput = {}): SubmitRes
   const previousStatus = task.status;
   let updated = recordHistory(task, TaskStatus.WaitingCodeReview);
   if (input.message) {
-    updated = addConversation(updated, input.author ?? "agent", input.message);
+    updated = addConversation(updated, input.author ?? "agent", input.message, "review");
   }
   updated = appendContext(updated, input.context);
   updated = releaseTask(updated.id)!;
+  addActivity(taskId, "review_submitted", input.author ?? "agent");
   return {
     task: updated,
     previousStatus,
@@ -319,9 +322,10 @@ export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResu
 
   const previousStatus = task.status;
   let updated = recordHistory(task, TaskStatus.Merged);
-  updated = addConversation(updated, input.author ?? "agent", `Merge submitted. ${mergeDetails}`);
+  updated = addConversation(updated, input.author ?? "agent", `Merge submitted. ${mergeDetails}`, "merge");
   updated = appendContext(updated, input.context);
   updated = releaseTask(updated.id)!;
+  addActivity(taskId, "merge_submitted", input.author ?? "agent", mergeDetails);
   return {
     task: updated,
     previousStatus,
