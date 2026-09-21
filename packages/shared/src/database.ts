@@ -558,9 +558,15 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): boolean {
-  const stmt = getDb().prepare("DELETE FROM tasks WHERE id = ?");
-  const result = stmt.run(id);
-  return result.changes > 0;
+  // Child tables reference tasks(id) without ON DELETE CASCADE; remove them first.
+  const d = getDb();
+  return d.transaction(() => {
+    d.prepare("DELETE FROM activity WHERE task_id = ?").run(id);
+    d.prepare("DELETE FROM conversation_entries WHERE task_id = ?").run(id);
+    d.prepare("DELETE FROM status_history WHERE task_id = ?").run(id);
+    const result = d.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    return result.changes > 0;
+  })();
 }
 
 export function softDeleteTask(id: string): boolean {

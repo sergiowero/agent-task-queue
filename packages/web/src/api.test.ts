@@ -600,14 +600,13 @@ describe("DELETE /api/tasks/:id", () => {
     expect(again.status).toBe(404);
   });
 
-  it.todo(
-    "hard-deletes an API-created task (blocked: activity.task_id FK has no ON DELETE CASCADE, so deleteTask throws SQLITE_CONSTRAINT_FOREIGNKEY and the route returns 500)",
-    async () => {
-      const task = await createTaskViaApi({ title: "Hard delete (with activity)" });
-      const res = await api(`/api/tasks/${task.id}?hard=true`, { method: "DELETE" });
-      expect(res.status).toBe(204);
-    },
-  );
+  it("hard-deletes an API-created task together with its activity rows", async () => {
+    const task = await createTaskViaApi({ title: "Hard delete (with activity)" });
+    const res = await api(`/api/tasks/${task.id}?hard=true`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+    const after = await api(`/api/tasks/${task.id}`);
+    expect(after.status).toBe(404);
+  });
 });
 
 describe("GET /api/events (SSE)", () => {
