@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import type { Task } from "@agentq/shared";
+import type { SubmitResult } from "@agentq/shared";
 import {
   createTask,
   getTasks,
   getTaskById,
-  updateTask,
   getProjects,
   getProjectByTaskId,
-  TaskStatus,
-  recordHistory,
-  addConversation,
   getClaimableStatuses,
   claimNextTask,
-  releaseTask,
+  submitPlan,
+  submitCode,
+  submitReview,
+  submitMerge,
+  WorkflowError,
 } from "@agentq/shared";
 
 const program = new Command();
@@ -100,6 +100,38 @@ function jsonError(error: string, useJson: boolean | undefined): never {
     console.error(error);
   }
   process.exit(1);
+}
+
+/** Runs a shared workflow helper, turning WorkflowError into a CLI error exit. */
+function runWorkflow<T>(fn: () => T, useJson: boolean | undefined): T {
+  try {
+    return fn();
+  } catch (error) {
+    if (error instanceof WorkflowError) {
+      jsonError(error.message, useJson);
+    }
+    throw error;
+  }
+}
+
+function printSubmitResult(result: SubmitResult, useJson: boolean | undefined): void {
+  if (useJson) {
+    jsonOutput(
+      {
+        success: true,
+        taskId: result.task.id,
+        previousStatus: result.previousStatus,
+        newStatus: result.newStatus,
+        message: result.message,
+      },
+      true,
+    );
+    return;
+  }
+
+  console.log(result.message);
+  const project = result.task.projectId ? getProjectByTaskId(result.task.id) : null;
+  printTask({ ...result.task, project });
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -348,43 +380,16 @@ program
   .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action((taskId: string, options: SubmitPlanOptions) => {
-    const task = getTaskById(taskId);
-    if (!task) {
-      jsonError("Task not found.", options.json);
-    }
-    if (task!.status !== TaskStatus.Planning) {
-      jsonError("Task must be in Planning status.", options.json);
-    }
-
-    const previousStatus = task!.status;
-    let updated = recordHistory(task!, TaskStatus.WaitingPlanReview);
-    if (options.message) {
-      updated = addConversation(updated!, options.author ?? "agent", options.message);
-    }
-    if (options.context) {
-      updated = updateTask(updated!.id, {
-        contexts: [...(updated!.contexts || []), options.context],
-      })!;
-    }
-    updated = releaseTask(updated!.id)!;
-
-    if (options.json) {
-      jsonOutput(
-        {
-          success: true,
-          taskId: updated!.id,
-          previousStatus,
-          newStatus: updated!.status,
-          message: "Plan submitted. Task moved to Waiting Plan Review.",
-        },
-        true,
-      );
-      return;
-    }
-
-    console.log("Plan submitted. Task moved to Waiting Plan Review.");
-    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
-    printTask({ ...updated!, project });
+    const result = runWorkflow(
+      () =>
+        submitPlan(taskId, {
+          message: options.message,
+          author: options.author,
+          context: options.context,
+        }),
+      options.json,
+    );
+    printSubmitResult(result, options.json);
   });
 
 program
@@ -397,43 +402,17 @@ program
   .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action((taskId: string, options: SubmitCodeOptions) => {
-    const task = getTaskById(taskId);
-    if (!task) {
-      jsonError("Task not found.", options.json);
-    }
-    if (task!.status !== TaskStatus.Coding) {
-      jsonError("Task must be in Coding status.", options.json);
-    }
-
-    const previousStatus = task!.status;
-    let updated = recordHistory(task!, TaskStatus.WaitingCodeReview);
-    if (options.message) {
-      updated = addConversation(updated!, options.author ?? "agent", options.message);
-    }
-    if (options.context) {
-      updated = updateTask(updated!.id, {
-        contexts: [...(updated!.contexts || []), options.context],
-      })!;
-    }
-    updated = releaseTask(updated!.id, { worktreePath: options.worktree ?? null })!;
-
-    if (options.json) {
-      jsonOutput(
-        {
-          success: true,
-          taskId: updated!.id,
-          previousStatus,
-          newStatus: updated!.status,
-          message: "Code submitted. Task moved to Waiting Code Review.",
-        },
-        true,
-      );
-      return;
-    }
-
-    console.log("Code submitted. Task moved to Waiting Code Review.");
-    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
-    printTask({ ...updated!, project });
+    const result = runWorkflow(
+      () =>
+        submitCode(taskId, {
+          message: options.message,
+          author: options.author,
+          worktree: options.worktree,
+          context: options.context,
+        }),
+      options.json,
+    );
+    printSubmitResult(result, options.json);
   });
 
 program
@@ -445,43 +424,16 @@ program
   .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action((taskId: string, options: SubmitReviewOptions) => {
-    const task = getTaskById(taskId);
-    if (!task) {
-      jsonError("Task not found.", options.json);
-    }
-    if (task!.status !== TaskStatus.Reviewing) {
-      jsonError("Task must be in Reviewing status.", options.json);
-    }
-
-    const previousStatus = task!.status;
-    let updated = recordHistory(task!, TaskStatus.WaitingCodeReview);
-    if (options.message) {
-      updated = addConversation(updated!, options.author ?? "agent", options.message);
-    }
-    if (options.context) {
-      updated = updateTask(updated!.id, {
-        contexts: [...(updated!.contexts || []), options.context],
-      })!;
-    }
-    updated = releaseTask(updated!.id)!;
-
-    if (options.json) {
-      jsonOutput(
-        {
-          success: true,
-          taskId: updated!.id,
-          previousStatus,
-          newStatus: updated!.status,
-          message: "Review submitted. Task moved to Waiting Code Review.",
-        },
-        true,
-      );
-      return;
-    }
-
-    console.log("Review submitted. Task moved to Waiting Code Review.");
-    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
-    printTask({ ...updated!, project });
+    const result = runWorkflow(
+      () =>
+        submitReview(taskId, {
+          message: options.message,
+          author: options.author,
+          context: options.context,
+        }),
+      options.json,
+    );
+    printSubmitResult(result, options.json);
   });
 
 program
@@ -497,55 +449,20 @@ program
   .option("--context <text>", "Context entry")
   .option("--json", "Output as JSON")
   .action((taskId: string, options: SubmitMergeOptions) => {
-    const task = getTaskById(taskId);
-    if (!task) {
-      jsonError("Task not found.", options.json);
-    }
-    if (task!.status !== TaskStatus.Merging) {
-      jsonError("Task must be in Merging status.", options.json);
-    }
-
-    const mergeDetails = [
-      `Branch: ${options.branch}`,
-      `Commit: ${options.commit}`,
-      `Authors: ${options.authors}`,
-      options.worktree ? `Worktree: ${options.worktree}` : null,
-      options.message ? `Message: ${options.message}` : null,
-    ]
-      .filter(Boolean)
-      .join(", ");
-
-    const previousStatus = task!.status;
-    let updated = recordHistory(task!, TaskStatus.Merged);
-    updated = addConversation(
-      updated!,
-      options.author ?? "agent",
-      `Merge submitted. ${mergeDetails}`,
+    const result = runWorkflow(
+      () =>
+        submitMerge(taskId, {
+          branch: options.branch,
+          commit: options.commit,
+          authors: options.authors,
+          worktree: options.worktree,
+          message: options.message,
+          author: options.author,
+          context: options.context,
+        }),
+      options.json,
     );
-    if (options.context) {
-      updated = updateTask(updated!.id, {
-        contexts: [...(updated!.contexts || []), options.context],
-      })!;
-    }
-    updated = releaseTask(updated!.id)!;
-
-    if (options.json) {
-      jsonOutput(
-        {
-          success: true,
-          taskId: updated!.id,
-          previousStatus,
-          newStatus: updated!.status,
-          message: "Merge submitted. Task moved to Merged.",
-        },
-        true,
-      );
-      return;
-    }
-
-    console.log("Merge submitted. Task moved to Merged.");
-    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
-    printTask({ ...updated!, project });
+    printSubmitResult(result, options.json);
   });
 
 program.parse();
