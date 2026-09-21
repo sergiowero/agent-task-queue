@@ -6,17 +6,14 @@ import {
   getTasks,
   getTaskById,
   updateTask,
-  getNextClaimableTask,
-  createAgent,
-  updateAgentLastSeen,
   getProjects,
   getProjectByTaskId,
   TaskStatus,
   recordHistory,
   addConversation,
   getClaimableStatuses,
-  getClaimTransition,
-  getEffectiveRole,
+  claimNextTask,
+  releaseTask,
 } from "@agentq/shared";
 
 const program = new Command();
@@ -56,6 +53,7 @@ interface ClaimOptions extends JsonOption {
   sessionId: string;
   host?: string;
   context?: string;
+  project?: string;
 }
 
 interface SubmitPlanOptions extends JsonOption {
@@ -105,10 +103,6 @@ function jsonError(error: string, useJson: boolean | undefined): never {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
-
-function buildAgentRef(toolName: string, model: string) {
-  return { name: toolName, tool: toolName, model };
-}
 
 function printTask(task: {
   id: string;
@@ -288,6 +282,7 @@ program
   .requiredOption("-s, --session-id <sessionId>", "Session ID")
   .option("--host <host>", "Host path")
   .option("--context <text>", "Context entry")
+  .option("--project <id>", "Only claim tasks from this project")
   .option("--json", "Output as JSON")
   .action((options: ClaimOptions) => {
     const { name, version, model, role, sessionId, host, json } = options;
@@ -300,8 +295,13 @@ program
       );
     }
 
-    const task = getNextClaimableTask(claimableStatuses);
-    if (!task) {
+    const result = claimNextTask({
+      role,
+      agent: { toolName: name, version, model, sessionId, host },
+      context: options.context,
+      projectId: options.project,
+    });
+    if (!result) {
       if (json) {
         jsonOutput(
           {
@@ -317,41 +317,14 @@ program
       process.exit(0);
     }
 
-    const effectiveRole = getEffectiveRole(task.status, role);
-    const newStatus = getClaimTransition(task.status, effectiveRole);
-    if (!newStatus) {
-      jsonError(`Cannot claim task in ${task.status} status for role ${role}`, json);
-    }
-
-    const agent = createAgent({
-      toolName: name,
-      version,
-      model,
-      role: effectiveRole,
-      sessionId,
-      host,
-    });
-
-    let updated = updateTask(task.id, {
-      status: newStatus,
-      assignedAgent: buildAgentRef(agent.toolName, agent.model),
-    });
-
-    updated = recordHistory(updated!, newStatus);
-    updated = addConversation(updated!, agent.id, `Claimed task. Transitioning to ${newStatus}.`);
-
-    if (options.context) {
-      updated = updateTask(updated!.id, {
-        contexts: [...(updated!.contexts || []), options.context],
-      })!;
-    }
+    const { task: updated, agent, effectiveRole } = result;
 
     if (json) {
-      const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
+      const project = updated.projectId ? getProjectByTaskId(updated.id) : null;
       jsonOutput(
         {
           success: true,
-          task: { ...updated!, project },
+          task: { ...updated, project },
           agent: { id: agent.id, role: effectiveRole },
         },
         true,
@@ -360,8 +333,8 @@ program
     }
 
     console.log("\nTask claimed successfully!\n");
-    const project = updated!.projectId ? getProjectByTaskId(updated!.id) : null;
-    printTask({ ...updated!, project });
+    const project = updated.projectId ? getProjectByTaskId(updated.id) : null;
+    printTask({ ...updated, project });
   });
 
 // ─── Submit commands ───────────────────────────────────────────────────
@@ -393,7 +366,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null })!;
+    updated = releaseTask(updated!.id)!;
 
     if (options.json) {
       jsonOutput(
@@ -442,10 +415,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, {
-      assignedAgent: null,
-      worktreePath: options.worktree ?? null,
-    })!;
+    updated = releaseTask(updated!.id, { worktreePath: options.worktree ?? null })!;
 
     if (options.json) {
       jsonOutput(
@@ -493,7 +463,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null })!;
+    updated = releaseTask(updated!.id)!;
 
     if (options.json) {
       jsonOutput(
@@ -557,7 +527,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null })!;
+    updated = releaseTask(updated!.id)!;
 
     if (options.json) {
       jsonOutput(
