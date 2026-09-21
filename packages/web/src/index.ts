@@ -39,7 +39,7 @@ import { resolve, extname } from "path";
 
 const env = validateEnv();
 const PORT = env.PORT;
-const isDev = process.argv.includes("--dev");
+let isDev = process.argv.includes("--dev");
 
 let viteProcess: ChildProcess | null = null;
 let viteCrashTimer: Timer | null = null;
@@ -262,24 +262,18 @@ function wrapHandler(
   };
 }
 
-async function main() {
-  if (isDev) {
-    console.log("[server] starting in dev mode, launching Vite...");
-    await startVite();
-    process.on("SIGINT", () => {
-      stopVite();
-      stopKeepAlive();
-      process.exit(0);
-    });
-    process.on("SIGTERM", () => {
-      stopVite();
-      stopKeepAlive();
-      process.exit(0);
-    });
-  }
+export interface StartServerOptions {
+  /** Port to listen on (0 = random free port). Defaults to env PORT. */
+  port?: number;
+  /** Enable dev-mode CORS headers and the Vite proxy. Defaults to `--dev` flag. */
+  dev?: boolean;
+}
+
+export function startServer(opts: StartServerOptions = {}) {
+  if (opts.dev !== undefined) isDev = opts.dev;
 
   const server = Bun.serve({
-    port: PORT,
+    port: opts.port ?? PORT,
     async fetch(req) {
       const url = new URL(req.url);
       const handlers: Array<(req: Request, url: URL) => Promise<Response | null>> = [
@@ -306,6 +300,27 @@ async function main() {
       return errorResponse("not found", 404);
     },
   });
+
+  return server;
+}
+
+async function main() {
+  if (isDev) {
+    console.log("[server] starting in dev mode, launching Vite...");
+    await startVite();
+    process.on("SIGINT", () => {
+      stopVite();
+      stopKeepAlive();
+      process.exit(0);
+    });
+    process.on("SIGTERM", () => {
+      stopVite();
+      stopKeepAlive();
+      process.exit(0);
+    });
+  }
+
+  const server = startServer();
 
   console.log(`AgentQ Web Server running on http://localhost:${server.port}`);
 }
@@ -454,6 +469,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   const body = await parseBody(req);
   const actionMap: Record<string, string> = {
     "confirm-completion": "complete",
+    "add-comment": "comment",
   };
   const action = actionMap[subAction] ?? subAction.replace(/-/g, "_");
   const parsed = transitionTaskSchema.safeParse({ ...body, action });
@@ -731,4 +747,4 @@ async function handleStatic(req: Request, url: URL): Promise<Response | null> {
   return staticResponse ?? null;
 }
 
-main();
+if (import.meta.main) main();

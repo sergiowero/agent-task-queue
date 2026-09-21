@@ -1,13 +1,35 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { BoardPage } from "./pages/BoardPage";
-import { TaskDetailPage } from "./pages/TaskDetailPage";
-import { AgentsPage } from "./pages/AgentsPage";
-import { ActivityPage } from "./pages/ActivityPage";
-import { ProjectsPage } from "./pages/ProjectsPage";
-import { ToolsPage } from "./pages/ToolsPage";
-import { InstallToolPage } from "./pages/InstallToolPage";
+import { LoadingSkeleton } from "./components/LoadingSkeleton";
+
+// Pages are code-split so the initial bundle only carries the shell.
+const BoardPage = lazy(() => import("./pages/BoardPage").then((m) => ({ default: m.BoardPage })));
+const TaskDetailPage = lazy(() =>
+  import("./pages/TaskDetailPage").then((m) => ({ default: m.TaskDetailPage })),
+);
+const AgentsPage = lazy(() =>
+  import("./pages/AgentsPage").then((m) => ({ default: m.AgentsPage })),
+);
+const ActivityPage = lazy(() =>
+  import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })),
+);
+const ProjectsPage = lazy(() =>
+  import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
+);
+const ToolsPage = lazy(() => import("./pages/ToolsPage").then((m) => ({ default: m.ToolsPage })));
+const InstallToolPage = lazy(() =>
+  import("./pages/InstallToolPage").then((m) => ({ default: m.InstallToolPage })),
+);
+
+function Page({ children }: { children: ReactNode }) {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<LoadingSkeleton />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
 
 export default function App() {
   return (
@@ -17,60 +39,67 @@ export default function App() {
         <Route
           path="/board"
           element={
-            <ErrorBoundary>
+            <Page>
               <BoardPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/agents"
           element={
-            <ErrorBoundary>
+            <Page>
               <AgentsPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/activity"
           element={
-            <ErrorBoundary>
+            <Page>
               <ActivityPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/projects"
           element={
-            <ErrorBoundary>
+            <Page>
               <ProjectsPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/tools"
           element={
-            <ErrorBoundary>
+            <Page>
               <ToolsPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/tools/install"
           element={
-            <ErrorBoundary>
+            <Page>
               <InstallToolPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
         <Route
           path="/tasks/:id/details"
           element={
-            <ErrorBoundary>
+            <Page>
               <TaskDetailPage />
-            </ErrorBoundary>
+            </Page>
           }
         />
-        <Route path="/tasks/:id" element={<BoardPage />} />
+        <Route
+          path="/tasks/:id"
+          element={
+            <Suspense fallback={<LoadingSkeleton />}>
+              <BoardPage />
+            </Suspense>
+          }
+        />
       </Route>
     </Routes>
   );
