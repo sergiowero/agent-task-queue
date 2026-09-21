@@ -181,9 +181,7 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
 
       let updated = recordHistory(candidate, newStatus);
       updated = addConversation(updated, agent.id, `Claimed task. Transitioning to ${newStatus}.`);
-      if (input.context) {
-        updated = updateTask(updated.id, { contexts: [...(updated.contexts || []), input.context] })!;
-      }
+      updated = appendContext(updated, input.context);
 
       return { task: getTaskById(updated.id)!, agent, effectiveRole };
     }
@@ -196,4 +194,149 @@ export function releaseTask(
   patch?: Omit<Parameters<typeof updateTask>[1], "assignedAgent">,
 ): Task | null {
   return updateTask(taskId, { ...patch, assignedAgent: null });
+}
+
+export function appendContext(task: Task, context?: string): Task {
+  if (!context) return task;
+  return updateTask(task.id, { contexts: [...(task.contexts || []), context] })!;
+}
+
+// ─── Agent submissions (shared by the CLI and the MCP server) ──────────
+
+/** Thrown when a submission is not allowed in the task's current state. */
+export class WorkflowError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowError";
+  }
+}
+
+export interface SubmitInput {
+  message?: string;
+  author?: string;
+  context?: string;
+}
+
+export interface SubmitCodeInput extends SubmitInput {
+  worktree?: string;
+}
+
+export interface SubmitMergeInput extends SubmitInput {
+  branch: string;
+  commit: string;
+  authors: string;
+  worktree?: string;
+}
+
+export interface SubmitResult {
+  task: Task;
+  previousStatus: TaskStatus;
+  newStatus: TaskStatus;
+  message: string;
+}
+
+const STATUS_LABELS: Partial<Record<TaskStatus, string>> = {
+  [TaskStatus.Planning]: "Planning",
+  [TaskStatus.Coding]: "Coding",
+  [TaskStatus.Reviewing]: "Reviewing",
+  [TaskStatus.Merging]: "Merging",
+};
+
+export function requireTaskInStatus(taskId: string, status: TaskStatus): Task {
+  const task = getTaskById(taskId);
+  if (!task) {
+    throw new WorkflowError("Task not found.");
+  }
+  if (task.status !== status) {
+    throw new WorkflowError(`Task must be in ${STATUS_LABELS[status] ?? status} status.`);
+  }
+  return task;
+}
+
+export function submitPlan(taskId: string, input: SubmitInput = {}): SubmitResult {
+  const task = requireTaskInStatus(taskId, TaskStatus.Planning);
+  const previousStatus = task.status;
+  let updated = recordHistory(task, TaskStatus.WaitingPlanReview);
+  if (input.message) {
+    updated = addConversation(updated, input.author ?? "agent", input.message);
+  }
+  updated = appendContext(updated, input.context);
+  updated = releaseTask(updated.id)!;
+  return {
+    task: updated,
+    previousStatus,
+    newStatus: updated.status,
+    message: "Plan submitted. Task moved to Waiting Plan Review.",
+  };
+}
+
+export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitResult {
+  const task = requireTaskInStatus(taskId, TaskStatus.Coding);
+  const previousStatus = task.status;
+  let updated = recordHistory(task, TaskStatus.WaitingCodeReview);
+  if (input.message) {
+    updated = addConversation(updated, input.author ?? "agent", input.message);
+  }
+  updated = appendContext(updated, input.context);
+  updated = releaseTask(updated.id, { worktreePath: input.worktree ?? null })!;
+  return {
+    task: updated,
+    previousStatus,
+    newStatus: updated.status,
+    message: "Code submitted. Task moved to Waiting Code Review.",
+  };
+}
+
+export function submitReview(taskId: string, input: SubmitInput = {}): SubmitResult {
+  const task = requireTaskInStatus(taskId, TaskStatus.Reviewing);
+  const previousStatus = task.status;
+  let updated = recordHistory(task, TaskStatus.WaitingCodeReview);
+  if (input.message) {
+    updated = addConversation(updated, input.author ?? "agent", input.message);
+  }
+  updated = appendContext(updated, input.context);
+  updated = releaseTask(updated.id)!;
+  return {
+    task: updated,
+    previousStatus,
+    newStatus: updated.status,
+    message: "Review submitted. Task moved to Waiting Code Review.",
+  };
+}
+
+export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResult {
+  const task = requireTaskInStatus(taskId, TaskStatus.Merging);
+
+  const mergeDetails = [
+    `Branch: ${input.branch}`,
+    `Commit: ${input.commit}`,
+    `Authors: ${input.authors}`,
+    input.worktree ? `Worktree: ${input.worktree}` : null,
+    input.message ? `Message: ${input.message}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const previousStatus = task.status;
+  let updated = recordHistory(task, TaskStatus.Merged);
+  updated = addConversation(updated, input.author ?? "agent", `Merge submitted. ${mergeDetails}`);
+  updated = appendContext(updated, input.context);
+  updated = releaseTask(updated.id)!;
+  return {
+    task: updated,
+    previousStatus,
+    newStatus: updated.status,
+    message: "Merge submitted. Task moved to Merged.",
+  };
+}
+
+export function postComment(taskId: string, input: { message: string; author?: string }): Task {
+  const task = getTaskById(taskId);
+  if (!task) {
+    throw new WorkflowError("Task not found.");
+  }
+  const author = input.author ?? "agent";
+  const updated = addConversation(task, author, input.message, "agent");
+  addActivity(task.id, "comment_added", author, input.message);
+  return updated;
 }
