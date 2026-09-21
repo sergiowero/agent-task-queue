@@ -7,6 +7,7 @@ import type {
   ConversationEntry,
   StatusHistoryEntry,
   Agent,
+  AgentReference,
   Project,
   ActivityEvent} from "./types.js";
 import {
@@ -35,6 +36,7 @@ let db: Database | null = null;
 function getDb(): Database {
   if (!db) {
     db = new Database(getDbPath());
+    db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     initSchema();
@@ -233,7 +235,7 @@ export function rollbackTransaction(): void {
 
 export function withTransaction<T>(fn: () => T): T {
   const d = getDb();
-  d.exec("BEGIN");
+  d.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
     d.exec("COMMIT");
@@ -446,14 +448,38 @@ export function getTaskById(id: string): Task | null {
   return row ? rowToTask(row) : null;
 }
 
-export function getNextClaimableTask(statuses: string[]): Task | null {
-  if (statuses.length === 0) return null;
+export function getClaimableTasks(statuses: string[], projectId?: string, limit = 10): Task[] {
+  if (statuses.length === 0) return [];
   const placeholders = statuses.map(() => "?").join(", ");
-  const sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 1`;
-  const row = getDb()
-    .prepare(sql)
-    .get(...statuses);
-  return row ? rowToTask(row) : null;
+  let sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL`;
+  const params: any[] = [...statuses];
+  if (projectId) {
+    sql += " AND project_id = ?";
+    params.push(projectId);
+  }
+  sql += " ORDER BY priority DESC, created_at ASC LIMIT ?";
+  params.push(limit);
+  return getDb().prepare(sql).all(...params).map(rowToTask);
+}
+
+export function getNextClaimableTask(statuses: string[], projectId?: string): Task | null {
+  return getClaimableTasks(statuses, projectId, 1)[0] ?? null;
+}
+
+export function tryAssignTask(data: {
+  id: string;
+  fromStatus: TaskStatus;
+  toStatus: TaskStatus;
+  assignedAgent: AgentReference;
+}): boolean {
+  const now = new Date().toISOString();
+  const result = getDb()
+    .prepare(
+      `UPDATE tasks SET status = ?, assigned_agent_id = ?, updated_at = ?
+       WHERE id = ? AND assigned_agent_id IS NULL AND status = ? AND deleted_at IS NULL`,
+    )
+    .run(data.toStatus, JSON.stringify(data.assignedAgent), now, data.id, data.fromStatus);
+  return result.changes === 1;
 }
 
 export function updateTask(

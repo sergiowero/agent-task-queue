@@ -1,5 +1,13 @@
-import { updateTask, addActivityEvent } from "./database.js";
-import type { Task } from "./types.js";
+import {
+  updateTask,
+  addActivityEvent,
+  createAgent,
+  getTaskById,
+  getClaimableTasks,
+  tryAssignTask,
+  withTransaction,
+} from "./database.js";
+import type { Task, Agent, AgentReference } from "./types.js";
 import { TaskStatus } from "./types.js";
 
 export const ROLE_STATUSES: Record<string, TaskStatus[]> = {
@@ -121,4 +129,71 @@ export function normalizeStatusInput(status: string): TaskStatus | null {
   if (status === "ready for code") return TaskStatus.ReadyForCode;
   const found = Object.values(TaskStatus).find((s) => s === status);
   return found ?? null;
+}
+
+export function buildAgentRef(toolName: string, model: string): AgentReference {
+  return { name: toolName, tool: toolName, model };
+}
+
+export const MAX_CLAIM_ATTEMPTS = 10;
+
+export interface ClaimNextTaskInput {
+  role: string;
+  agent: {
+    toolName: string;
+    version: string;
+    model: string;
+    sessionId: string;
+    host?: string;
+  };
+  context?: string;
+  projectId?: string;
+}
+
+export interface ClaimNextTaskResult {
+  task: Task;
+  agent: Agent;
+  effectiveRole: string;
+}
+
+export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | null {
+  const claimableStatuses = getClaimableStatuses(input.role);
+  if (claimableStatuses.length === 0) {
+    throw new Error(`Invalid role: ${input.role}`);
+  }
+
+  return withTransaction(() => {
+    const candidates = getClaimableTasks(claimableStatuses, input.projectId, MAX_CLAIM_ATTEMPTS);
+    for (const candidate of candidates) {
+      const effectiveRole = getEffectiveRole(candidate.status, input.role);
+      const newStatus = getClaimTransition(candidate.status, effectiveRole);
+      if (!newStatus) continue;
+
+      const assigned = tryAssignTask({
+        id: candidate.id,
+        fromStatus: candidate.status,
+        toStatus: newStatus,
+        assignedAgent: buildAgentRef(input.agent.toolName, input.agent.model),
+      });
+      if (!assigned) continue;
+
+      const agent = createAgent({ ...input.agent, role: effectiveRole });
+
+      let updated = recordHistory(candidate, newStatus);
+      updated = addConversation(updated, agent.id, `Claimed task. Transitioning to ${newStatus}.`);
+      if (input.context) {
+        updated = updateTask(updated.id, { contexts: [...(updated.contexts || []), input.context] })!;
+      }
+
+      return { task: getTaskById(updated.id)!, agent, effectiveRole };
+    }
+    return null;
+  });
+}
+
+export function releaseTask(
+  taskId: string,
+  patch?: Omit<Parameters<typeof updateTask>[1], "assignedAgent">,
+): Task | null {
+  return updateTask(taskId, { ...patch, assignedAgent: null });
 }
