@@ -35,7 +35,7 @@ interface ProjectsOptions extends JsonOption {}
 
 interface CreateOptions extends JsonOption {
   project: string;
-  description?: string;
+  description: string;
   steerDetails?: string;
   guardrails?: string;
   priority?: string;
@@ -393,7 +393,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null });
+    updated = updateTask(updated!.id, { assignedAgent: null })!;
 
     if (options.json) {
       jsonOutput(
@@ -445,7 +445,7 @@ program
     updated = updateTask(updated!.id, {
       assignedAgent: null,
       worktreePath: options.worktree ?? null,
-    });
+    })!;
 
     if (options.json) {
       jsonOutput(
@@ -493,7 +493,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null });
+    updated = updateTask(updated!.id, { assignedAgent: null })!;
 
     if (options.json) {
       jsonOutput(
@@ -557,7 +557,7 @@ program
         contexts: [...(updated!.contexts || []), options.context],
       })!;
     }
-    updated = updateTask(updated!.id, { assignedAgent: null });
+    updated = updateTask(updated!.id, { assignedAgent: null })!;
 
     if (options.json) {
       jsonOutput(

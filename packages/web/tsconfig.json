@@ -7,7 +7,12 @@
     "strict": true,
     "outDir": "dist",
     "sourceMap": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": [
+      "bun-types"
+    ]
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { TaskStatus } from "./types.js";
 
-const taskStatusValues = Object.values(TaskStatus) as [string, ...string[]];
-
 export const createTaskSchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
   description: z.string().max(5000).default(""),
@@ -22,7 +20,7 @@ export const updateTaskSchema = z.object({
   description: z.string().max(5000).nullable().optional(),
   steerDetails: z.string().max(5000).nullable().optional(),
   guardrails: z.array(z.string()).optional(),
-  status: z.enum(taskStatusValues as [string, ...string[]]).optional(),
+  status: z.nativeEnum(TaskStatus).optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
   priority: z.number().int().min(0).optional(),
   recommendedBranch: z.string().max(200).optional(),
@@ -62,7 +60,7 @@ export const transitionTaskSchema = z.object({
   ]),
   authorName: z.string().optional(),
   message: z.string().max(10000).optional(),
-  targetStatus: z.enum(taskStatusValues as [string, ...string[]]).optional(),
+  targetStatus: z.nativeEnum(TaskStatus).optional(),
 });
 
 export const createProjectSchema = z.object({

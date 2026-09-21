@@ -24,13 +24,17 @@ function resolveDbPath(p: string): string {
   return p;
 }
 
-const DB_PATH = resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
+// Resolved lazily on first use so callers (e.g. tests) can set AGENTQ_DB_PATH
+// after importing this module — ESM imports are hoisted above env assignments.
+function getDbPath(): string {
+  return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
+}
 
 let db: Database | null = null;
 
 function getDb(): Database {
   if (!db) {
-    db = new Database(DB_PATH);
+    db = new Database(getDbPath());
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     initSchema();
@@ -377,6 +381,7 @@ export function createTask(data: {
   requiresPlan?: boolean;
   mergeBranch?: string;
   projectId: string;
+  contexts?: string[];
 }): Task {
   const now = new Date().toISOString();
   const task: Task = {
@@ -395,7 +400,7 @@ export function createTask(data: {
     assignedAgent: null,
     conversation: [],
     history: [],
-    contexts: [],
+    contexts: data.contexts ?? [],
     projectId: data.projectId,
     worktreePath: null,
     createdAt: now,
@@ -455,20 +460,20 @@ export function updateTask(
   id: string,
   data: {
     title?: string;
-    description?: string;
+    description?: string | null;
     steerDetails?: string | null;
     guardrails?: string[];
     status?: TaskStatus;
     acceptanceCriteria?: string[];
     priority?: number;
     recommendedBranch?: string;
-    realBranch?: string;
+    realBranch?: string | null;
     mergeBranch?: string;
     assignedAgent?: Task["assignedAgent"];
     conversation?: ConversationEntry[];
     history?: StatusHistoryEntry[];
     contexts?: string[];
-    projectId?: string;
+    projectId?: string | null;
     worktreePath?: string | null;
   },
 ): Task | null {
