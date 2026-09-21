@@ -11,7 +11,7 @@ metadata:
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit command) live in the phase skills.
 
-**CLI conventions**: use only `agentq claim`, `agentq heartbeat` and `agentq submit-*`, always with `--json`. Include `--context "<short summary of current state, findings, or blockers>"` on every `agentq claim` and `agentq submit-*` so the next agent has context. All `-m` messages MUST be in Markdown format (templates are in the phase skills).
+**CLI conventions**: use only `agentq claim` and `agentq submit-*`, always with `--json`. Include `--context "<short summary of current state, findings, or blockers>"` on every `agentq claim` and `agentq submit-*` so the next agent has context. All `-m` messages MUST be in Markdown format (templates are in the phase skills).
 
 ## Identity
 
@@ -28,12 +28,12 @@ agentq claim -n <toolName> -v <version> -m <model> -r <role> -s <sessionId> \
   [--host <host>] [--project <projectId>] [--context "<summary>"] --json   # --project restricts the claim to one project
 ```
 
-**Response (success)** — the full task plus `project` and your `agent` identity. Keep `task.id` and `agent.id`: the phase skills need them for `agentq heartbeat` and `agentq submit-*`. A claim holds a lease (default 15 min, see `task.leaseExpiresAt`); the phase skills tell you when to extend it.
+**Response (success)** — the full task plus `project` and your `agent` identity. Keep `task.id`: the phase skills need it for `agentq submit-*`.
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."],
     "acceptanceCriteria": ["..."], "status": "ready_for_code", "recommendedBranch": "feat/...", "mergeBranch": "develop",
-    "worktreePath": null | "{project}/.agentq/worktrees/{taskId}", "claimedAt": "<ISO>", "leaseExpiresAt": "<ISO>",
+    "worktreePath": null | "{project}/.agentq/worktrees/{taskId}",
     "conversation": [{ "authorName": "...", "timestamp": "...", "message": "...", "messageType": "review" }], "contexts": ["..."],
     "project": { "id": "...", "name": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "senior" } }
@@ -76,8 +76,8 @@ Agents MUST NOT ask the user for permission or confirmation during task executio
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq claim`, `agentq heartbeat`, `agentq submit-*`)
-- **DO NOT** use `agentq list` or `agentq get` - agents only use `claim`, `heartbeat` and `submit-*`
+- **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq claim`, `agentq submit-*`)
+- **DO NOT** use `agentq list` or `agentq get` - agents only use `claim` and `submit-*`
 - **DO NOT** manage state or generate session IDs
 - **DO NOT** retry indefinitely on empty queue — **STOP** and inform user when no tasks available
 - **DO NOT** skip phases or jump to other tasks - follow the status-driven phase and focus only on the claimed task until submitted

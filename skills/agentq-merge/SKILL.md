@@ -1,6 +1,6 @@
 ---
 name: agentq-merge
-description: Merging phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `approved` (the agentq-workflow router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, keeps the lease alive with `agentq heartbeat`, and records the PR with `agentq submit-merge`. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
+description: Merging phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `approved` (the agentq-workflow router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with `agentq submit-merge`. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
 allowed-tools: Bash(agentq:*), Bash(git:*), Bash(gh:*)
 metadata:
   version: "2.0.0"
@@ -42,16 +42,6 @@ Two branches matter:
 - `agentq submit-merge` is queue bookkeeping — it does NOT run git and does NOT create the PR. The feature branch is committed during coding; you push it and create the PR with `gh pr create` before calling it.
 - NEVER force-push (`git push --force` / `-f`).
 - NEVER commit in the main working directory (`task.project.workingDirectory`) — commits live in the task worktree.
-
-## Heartbeat
-
-A claim holds a lease (default 15 min; see `task.leaseExpiresAt` in the claim response). Extend the lease roughly every 5–10 minutes while working through the steps below (pushes and PR creation can be slow); calling it more often is harmless:
-
-```bash
-agentq heartbeat <taskId> --agent-id <agent.id> --json
-```
-
-`<agent.id>` is the `agent.id` value from the claim response.
 
 ## Step by Step
 

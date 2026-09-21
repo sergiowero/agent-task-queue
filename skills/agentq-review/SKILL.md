@@ -1,6 +1,6 @@
 ---
 name: agentq-review
-description: Reviewing phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `code_review_requested` or `reviewing` (the agentq-workflow router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, keeps the lease alive with `agentq heartbeat`, and submits with `agentq submit-review`. Never edits, commits or pushes.
+description: Reviewing phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `code_review_requested` or `reviewing` (the agentq-workflow router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with `agentq submit-review`. Never edits, commits or pushes.
 allowed-tools: Bash(agentq:*), Bash(git:*)
 metadata:
   version: "2.0.0"
@@ -38,16 +38,6 @@ Always `cd` into the worktree before starting work — never assume which one to
 | Phase | Git operations allowed |
 |-------|------------------------|
 | Reviewing | Read-only (`git diff`, `git show`, `git log`). NO `git add`, `git commit`, `git push`. |
-
-## Heartbeat
-
-A claim holds a lease (default 15 min; see `task.leaseExpiresAt` in the claim response). A thorough review is long work — extend the lease roughly every 5–10 minutes while reviewing; calling it more often is harmless:
-
-```bash
-agentq heartbeat <taskId> --agent-id <agent.id> --json
-```
-
-`<agent.id>` is the `agent.id` value from the claim response.
 
 ## Steps
 

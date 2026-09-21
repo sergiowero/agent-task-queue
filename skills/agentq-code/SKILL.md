@@ -1,6 +1,6 @@
 ---
 name: agentq-code
-description: Coding phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `ready_for_code` or `changes_requested` (the agentq-workflow router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, keeps the lease alive with `agentq heartbeat`, and submits with `agentq submit-code --worktree`. Never pushes, never commits in the main working directory.
+description: Coding phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `ready_for_code` or `changes_requested` (the agentq-workflow router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with `agentq submit-code --worktree`. Never pushes, never commits in the main working directory.
 allowed-tools: Bash(agentq:*), Bash(git:*)
 metadata:
   version: "2.0.0"
@@ -50,16 +50,6 @@ Always `cd` into the worktree before starting work — never assume which one to
 - NEVER force-push (`git push --force` / `-f`). NEVER amend or rewrite commits made in earlier rounds — each round of changes is a new commit.
 - `git push` happens only in the merging phase (`agentq-merge`), never here.
 
-## Heartbeat
-
-A claim holds a lease (default 15 min; see `task.leaseExpiresAt` in the claim response). Implementation is long work — extend the lease roughly every 5–10 minutes while coding (e.g. after each meaningful step or test run); calling it more often is harmless:
-
-```bash
-agentq heartbeat <taskId> --agent-id <agent.id> --json
-```
-
-`<agent.id>` is the `agent.id` value from the claim response.
-
 ## Commit Before Submit
 
 Every time you change code, commit it. Do NOT call `submit-code` with uncommitted changes in the worktree.
@@ -68,7 +58,7 @@ Every time you change code, commit it. Do NOT call `submit-code` with uncommitte
 
 1. Go to the worktree (create it if needed — see Worktree Rules)
 2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` (an approved plan, if any, is there) and `task.contexts[]`
-3. Implement the code, verify it (run the project's tests/build where available), sending heartbeats as you go
+3. Implement the code, verify it (run the project's tests/build where available)
 4. Commit it:
    ```bash
    git add -A

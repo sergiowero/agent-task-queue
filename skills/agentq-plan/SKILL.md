@@ -33,16 +33,6 @@ Follow this skill when `agentq claim` returned a task with status `plan_requeste
 |-------|------------------------|
 | Planning / Plan Changes Requested | Read-only (`git log`, `git status`, `git show`). NO `git add`, `git commit`, `git push`. |
 
-## Heartbeat
-
-A claim holds a lease (default 15 min; see `task.leaseExpiresAt` in the claim response). Exploring a large codebase can take longer, so extend the lease roughly every 5–10 minutes while you work — calling it more often is harmless:
-
-```bash
-agentq heartbeat <taskId> --agent-id <agent.id> --json
-```
-
-`<agent.id>` is the `agent.id` value from the claim response.
-
 ## Steps
 
 1. `cd {task.project.workingDirectory}`
