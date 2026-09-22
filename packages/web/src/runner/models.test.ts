@@ -121,7 +121,7 @@ describe("parsers", () => {
   it("keeps only listed codex models, lowest priority number first", () => {
     const models = parseCodexModels(CODEX_OUTPUT);
     expect(models.map((m) => m.id)).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
-    expect(models[1]).toEqual({
+    expect(models[0]).toEqual({
       id: "gpt-5.6-terra",
       label: "GPT-5.6-Terra",
       description: "Frontier agentic model.",
@@ -177,7 +177,7 @@ describe("discoverModels", () => {
     expect(result.models.map((m) => m.id)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"]);
     expect(result.models[0]).toMatchObject({ label: "gpt-5.6-sol (configured)", defaultEffort: "max" });
     expect(result.models[0].efforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
-    expect(result.models[1]).toMatchObject({ label: "GPT-5.5", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" });
+    expect(result.models[2]).toMatchObject({ label: "GPT-5.5", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" });
     // Union of every listed model's levels, low → ultra.
     expect(result.efforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
     expect(result.defaultEffort).toBe("max");
