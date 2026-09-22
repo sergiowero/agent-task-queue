@@ -308,7 +308,8 @@ function RunnerCard({
           </div>
           <div className="text-xs text-text-muted mt-1 truncate">
             {projectName ?? "Any project"}
-            {runner.model ? ` · ${runner.model}` : ""} · every {runner.pollIntervalSec}s · up to {runner.concurrency} job
+            {runner.model ? ` · ${runner.model}` : ""}
+            {runner.effort ? ` · effort ${runner.effort}` : ""} · every {runner.pollIntervalSec}s · up to {runner.concurrency} job
             {runner.concurrency === 1 ? "" : "s"}
           </div>
         </div>

@@ -12,6 +12,8 @@ export interface CommandContext {
   taskId: string;
   role: string;
   model: string | null;
+  /** Reasoning effort; only claude, codex and opencode receive it. */
+  effort: string | null;
   permissionMode: RunnerPermissionMode;
   extraArgs: string[] | null;
 }
@@ -80,6 +82,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
         cmd.push("--permission-mode", "acceptEdits", "--allowedTools", ...CLAUDE_SAFE_TOOLS);
       }
       if (ctx.model) cmd.push("--model", ctx.model);
+      if (ctx.effort) cmd.push("--effort", ctx.effort);
       cmd.push(...extra);
       return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
     }
@@ -90,12 +93,15 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       );
       cmd.push("-C", ctx.cwd, "--skip-git-repo-check");
       if (ctx.model) cmd.push("-m", ctx.model);
+      // `-c` values are parsed as TOML, so the string must be quoted.
+      if (ctx.effort) cmd.push("-c", `model_reasoning_effort="${ctx.effort}"`);
       cmd.push(...extra, ctx.prompt);
       return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
     }
     case "opencode": {
       const cmd = ["opencode", "run", "--dir", ctx.cwd, "--format", "json", "--auto"];
       if (ctx.model) cmd.push("-m", ctx.model);
+      if (ctx.effort) cmd.push("--variant", ctx.effort);
       cmd.push(...extra, ctx.prompt);
       return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
     }

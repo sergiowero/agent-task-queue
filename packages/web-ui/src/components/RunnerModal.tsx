@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { Project, Runner, RunnerInput, RunnerPermissionMode, RunnerRole, RunnerTool } from "../lib/api";
+import type { ModelOption, Project, Runner, RunnerInput, RunnerPermissionMode, RunnerRole, RunnerTool } from "../lib/api";
 import { api } from "../lib/api";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Select } from "./Select";
 
 const ROLES: RunnerRole[] = ["planner", "implementer", "reviewer", "senior", "architect"];
+
+/** Sentinel value of the model select that reveals the free-text input. */
+const CUSTOM_MODEL = "__custom__";
 
 interface RunnerModalProps {
   /** Existing runner to edit; omit to create a new one. */
@@ -39,6 +42,30 @@ function formatExtraArgs(args: string[] | null): string {
   return JSON.stringify(args);
 }
 
+/**
+ * Group options by `description` when it acts as a category (opencode providers,
+ * claude "alias" / "full model ID"); a unique blurb per model is not a group.
+ */
+function groupModels(models: ModelOption[]): { group: string | null; models: ModelOption[] }[] {
+  const distinct = new Set(models.map((m) => m.description ?? ""));
+  const useGroups = models.length > 1 && models.every((m) => m.description) && distinct.size < models.length;
+  if (!useGroups) return [{ group: null, models }];
+  const groups = new Map<string, ModelOption[]>();
+  for (const m of models) {
+    const key = m.description!;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(m);
+  }
+  return [...groups].map(([group, list]) => ({ group, models: list }));
+}
+
+function modelOptionText(m: ModelOption): string {
+  if (m.label === m.id || m.label.includes(m.id)) return m.label;
+  // opencode: the provider is the group, the model part is the label.
+  if (m.description && m.id === `${m.description}/${m.label}`) return m.label;
+  return `${m.label} (${m.id})`;
+}
+
 export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   const queryClient = useQueryClient();
   const isEdit = !!runner;
@@ -55,6 +82,10 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   const [role, setRole] = useState<RunnerRole>(runner?.role ?? "senior");
   const [projectId, setProjectId] = useState(runner?.projectId ?? "");
   const [model, setModel] = useState(runner?.model ?? "");
+  const [effort, setEffort] = useState(runner?.effort ?? "");
+  // null = decide from the list: an edited runner whose model is not listed is "custom".
+  const [customMode, setCustomMode] = useState<boolean | null>(null);
+  const [refreshingModels, setRefreshingModels] = useState(false);
   const [concurrency, setConcurrency] = useState(String(runner?.concurrency ?? 1));
   const [pollIntervalSec, setPollIntervalSec] = useState(String(runner?.pollIntervalSec ?? 5));
   const [permissionMode, setPermissionMode] = useState<RunnerPermissionMode>(runner?.permissionMode ?? "safe");
@@ -64,6 +95,54 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   // Pick the first installed tool once the list arrives (create mode only).
   const effectiveTool: RunnerTool | "" = tool || (isEdit ? "" : (installed[0]?.tool ?? ""));
 
+  const { data: discovery, isLoading: modelsLoading } = useQuery({
+    queryKey: ["runner-models", effectiveTool],
+    queryFn: () => api.getRunnerModels(effectiveTool as RunnerTool),
+    enabled: !!effectiveTool,
+    staleTime: 60_000,
+  });
+  const models = discovery?.models ?? [];
+  const modelInList = models.some((m) => m.id === model);
+  const customModel = models.length > 0 && (customMode ?? (!!model && !modelInList));
+  const selectedModel = customModel ? undefined : models.find((m) => m.id === model);
+  const efforts = selectedModel?.efforts ?? discovery?.efforts ?? null;
+  const defaultEffort = selectedModel?.defaultEffort ?? discovery?.defaultEffort ?? null;
+  const showEffort = !!efforts && efforts.length > 0;
+
+  function changeTool(next: RunnerTool) {
+    setTool(next);
+    setModel("");
+    setEffort("");
+    setCustomMode(null);
+  }
+
+  function selectModel(value: string) {
+    if (value === CUSTOM_MODEL) {
+      setCustomMode(true);
+      return;
+    }
+    setCustomMode(false);
+    setModel(value);
+    const allowed = models.find((m) => m.id === value)?.efforts ?? discovery?.efforts ?? [];
+    if (effort && !allowed.includes(effort)) setEffort("");
+  }
+
+  async function refreshModels() {
+    if (!effectiveTool) return;
+    setRefreshingModels(true);
+    try {
+      await queryClient.fetchQuery({
+        queryKey: ["runner-models", effectiveTool],
+        queryFn: () => api.getRunnerModels(effectiveTool as RunnerTool, true),
+        staleTime: 0,
+      });
+    } catch {
+      // The query keeps its previous data; the hint simply stays as it was.
+    } finally {
+      setRefreshingModels(false);
+    }
+  }
+
   const mutation = useMutation({
     mutationFn: () => {
       const payload: RunnerInput = {
@@ -72,6 +151,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
         role,
         projectId: projectId || null,
         model: model.trim() || null,
+        effort: showEffort && effort ? effort : null,
         concurrency: Math.max(1, parseInt(concurrency, 10) || 1),
         pollIntervalSec: Math.max(1, parseInt(pollIntervalSec, 10) || 5),
         permissionMode,
@@ -102,7 +182,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-text mb-1">Tool *</label>
-              <Select value={effectiveTool} onChange={(e) => setTool(e.target.value as RunnerTool)} disabled={toolsLoading}>
+              <Select value={effectiveTool} onChange={(e) => changeTool(e.target.value as RunnerTool)} disabled={toolsLoading}>
                 {toolsLoading && <option value="">Detecting...</option>}
                 {!toolsLoading && installed.length === 0 && <option value="">No tools installed</option>}
                 {installed.map((t) => (
@@ -140,11 +220,73 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
             </Select>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            <div>
+          <div className={`grid gap-3 ${showEffort ? "grid-cols-3" : "grid-cols-1"}`}>
+            <div className={showEffort ? "col-span-2" : ""}>
               <label className="block text-sm font-medium text-text mb-1">Model</label>
-              <Input placeholder="default" value={model} onChange={(e) => setModel(e.target.value)} className="font-mono" />
+              {modelsLoading ? (
+                <Select disabled>
+                  <option value="">Loading models...</option>
+                </Select>
+              ) : models.length === 0 ? (
+                <Input placeholder="default" value={model} onChange={(e) => setModel(e.target.value)} className="font-mono" />
+              ) : (
+                <Select value={customModel ? CUSTOM_MODEL : modelInList ? model : ""} onChange={(e) => selectModel(e.target.value)}>
+                  <option value="">default</option>
+                  {groupModels(models).map(({ group, models: list }) =>
+                    group ? (
+                      <optgroup key={group} label={group}>
+                        {list.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {modelOptionText(m)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : (
+                      list.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {modelOptionText(m)}
+                        </option>
+                      ))
+                    ),
+                  )}
+                  <option value={CUSTOM_MODEL}>Custom...</option>
+                </Select>
+              )}
+              {customModel && (
+                <Input
+                  placeholder="model id"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="font-mono mt-2"
+                  autoFocus={customMode === true}
+                />
+              )}
+              {discovery && (
+                <p className="text-xs text-text-muted mt-1">
+                  source: {discovery.source}
+                  {models.length > 0 ? ` · ${models.length} model${models.length === 1 ? "" : "s"}` : ""} ·{" "}
+                  <button type="button" className="underline hover:text-text disabled:opacity-50" onClick={refreshModels} disabled={refreshingModels}>
+                    {refreshingModels ? "Refreshing..." : "Refresh"}
+                  </button>
+                </p>
+              )}
             </div>
+            {showEffort && (
+              <div>
+                <label className="block text-sm font-medium text-text mb-1">Effort</label>
+                <Select value={efforts!.includes(effort) ? effort : ""} onChange={(e) => setEffort(e.target.value)}>
+                  <option value="">(default{defaultEffort ? `: ${defaultEffort}` : ""})</option>
+                  {efforts!.map((e) => (
+                    <option key={e} value={e}>
+                      {e}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-text mb-1">Concurrency</label>
               <Input type="number" min={1} max={16} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} />
