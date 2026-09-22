@@ -99,7 +99,7 @@ Local SQLite database storing all system data:
 
 ### AI Skills
 Agent instruction files that define the exact protocol for interacting with AgentQ:
-- **agentq-workflow** — Full protocol: claim → work → submit → repeat. Includes identity info, CLI command reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails
+- **agentq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, CLI command reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails
 - **agentq-create-task** — Instructions for creating well-structured tasks via the CLI with project discovery, task elaboration, and acceptance criteria generation
 - Agent skills are installed to multiple AI tool configs (opencode, claude, codex, kimi, junie) via a single install command
 

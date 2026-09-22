@@ -5,7 +5,7 @@ import { homedir } from "os";
 const SKILLS_SOURCE_DIR = join(import.meta.dir, "../../../skills");
 
 /** Directory names that are leftovers from the old tool name and must be removed. */
-const STALE_SKILL_DIRS = ["atq-workflow"];
+const STALE_SKILL_DIRS = ["atq-workflow", "agentq-workflow"];
 
 const TOOL_SKILL_DIRS: Record<string, string> = {
   claude: join(homedir(), ".claude/skills"),
@@ -19,7 +19,7 @@ function log(icon: string, msg: string) {
   console.log(`${icon} ${msg}`);
 }
 
-/** Every directory under `skills/` that contains a SKILL.md, e.g. ["agentq-workflow", "agentq-plan", ...]. */
+/** Every directory under `skills/` that contains a SKILL.md, e.g. ["agentq-claim", "agentq-plan", ...]. */
 function discoverSkills(): string[] {
   return readdirSync(SKILLS_SOURCE_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(SKILLS_SOURCE_DIR, entry.name, "SKILL.md")))

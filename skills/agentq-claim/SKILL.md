@@ -1,5 +1,5 @@
 ---
-name: agentq-workflow
+name: agentq-claim
 description: Entry point for working as an AgentQ agent through the `agentq` CLI. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with `agentq claim --json`, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
 allowed-tools: Bash(agentq:*)
 metadata:
@@ -7,7 +7,7 @@ metadata:
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# AgentQ Workflow Skill
+# AgentQ Claim Skill
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit command) live in the phase skills.
 

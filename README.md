@@ -136,7 +136,7 @@ agent-task-queue/
 │   ├── shared/       # Database, types, workflow rules (single source of truth)
 │   └── installer/    # Binary + skills + agents installers
 ├── docs/             # architecture.md, runner.md, mcp.md, project-spec.md
-└── skills/           # Agent skills: agentq-workflow (router) + agentq-plan/code/review/merge + agentq-create-task
+└── skills/           # Agent skills: agentq-claim (router) + agentq-plan/code/review/merge + agentq-create-task
 ```
 
 ### Ways an agent can talk to AgentQ
@@ -144,7 +144,7 @@ agent-task-queue/
 | Channel | When to use |
 |---------|-------------|
 | **Runner** (web UI → Runners) | Hands-free: the server claims tasks and launches `claude` / `codex` / `opencode` / `gemini` headless in the project directory. See `docs/runner.md`. |
-| **CLI + skills** | You open the coding tool yourself and invoke the `agentq-workflow` skill; it claims and routes to the phase skill. Install with `bun run install:bin` and `bun run install:skills`. |
+| **CLI + skills** | You open the coding tool yourself and invoke the `agentq-claim` skill; it claims and routes to the phase skill. Install with `bun run install:bin` and `bun run install:skills`. |
 | **MCP server** | Same operations as typed tools for any MCP-capable client. See `docs/mcp.md`. |
 
 All three share the same SQLite database and the same workflow code in `packages/shared`.

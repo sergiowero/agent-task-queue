@@ -1,6 +1,6 @@
 ---
 name: agentq-review
-description: Reviewing phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `code_review_requested` or `reviewing` (the agentq-workflow router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with `agentq submit-review`. Never edits, commits or pushes.
+description: Reviewing phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `code_review_requested` or `reviewing` (the agentq-claim router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with `agentq submit-review`. Never edits, commits or pushes.
 allowed-tools: Bash(agentq:*), Bash(git:*)
 metadata:
   version: "2.0.0"
@@ -9,7 +9,7 @@ metadata:
 
 # AgentQ Review Skill
 
-Follow this skill when `agentq claim` returned a task with status `code_review_requested` or `reviewing`. The cross-cutting rules in `agentq-workflow` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when `agentq claim` returned a task with status `code_review_requested` or `reviewing`. The cross-cutting rules in `agentq-claim` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 

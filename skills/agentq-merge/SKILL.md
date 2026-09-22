@@ -1,6 +1,6 @@
 ---
 name: agentq-merge
-description: Merging phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `approved` (the agentq-workflow router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with `agentq submit-merge`. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
+description: Merging phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `approved` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with `agentq submit-merge`. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
 allowed-tools: Bash(agentq:*), Bash(git:*), Bash(gh:*)
 metadata:
   version: "2.0.0"
@@ -9,7 +9,7 @@ metadata:
 
 # AgentQ Merge Skill
 
-Follow this skill when `agentq claim` returned a task with status `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-workflow` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when `agentq claim` returned a task with status `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-claim` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 

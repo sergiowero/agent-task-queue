@@ -1,6 +1,6 @@
 ---
 name: agentq-code
-description: Coding phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `ready_for_code` or `changes_requested` (the agentq-workflow router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with `agentq submit-code --worktree`. Never pushes, never commits in the main working directory.
+description: Coding phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `ready_for_code` or `changes_requested` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with `agentq submit-code --worktree`. Never pushes, never commits in the main working directory.
 allowed-tools: Bash(agentq:*), Bash(git:*)
 metadata:
   version: "2.0.0"
@@ -9,7 +9,7 @@ metadata:
 
 # AgentQ Code Skill
 
-Follow this skill when `agentq claim` returned a task with status `ready_for_code` or `changes_requested`. The cross-cutting rules in `agentq-workflow` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when `agentq claim` returned a task with status `ready_for_code` or `changes_requested`. The cross-cutting rules in `agentq-claim` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 

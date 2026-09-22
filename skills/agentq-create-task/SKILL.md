@@ -130,7 +130,7 @@ When writing the description, use this structure:
 
 - **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq create`, `agentq projects`)
 - **DO NOT** claim or execute the task — this skill is only for creating tasks
-- **DO NOT** use `agentq claim` or `agentq submit-*` — those belong to the `agentq-workflow` skill
+- **DO NOT** use `agentq claim` or `agentq submit-*` — those belong to the `agentq-claim` skill
 - **DO** elaborate descriptions and acceptance criteria — always add value beyond what the user provided
 - **DO** respect user-specified priority and branch — only generate them when not given
 - **DO** verify the project exists before creating the task
