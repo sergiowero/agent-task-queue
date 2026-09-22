@@ -7,8 +7,10 @@ import type {
   ConversationEntry,
   StatusHistoryEntry,
   Agent,
+  AgentReference,
   Project,
-  ActivityEvent} from "./types.js";
+  ActivityEvent,
+  Runner} from "./types.js";
 import {
   TaskStatus,
   normalizeStatus,
@@ -24,19 +26,36 @@ function resolveDbPath(p: string): string {
   return p;
 }
 
-const DB_PATH = resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
+// Resolved lazily on first use so callers (e.g. tests) can set AGENTQ_DB_PATH
+// after importing this module — ESM imports are hoisted above env assignments.
+function getDbPath(): string {
+  return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
+}
 
 let db: Database | null = null;
 
 function getDb(): Database {
   if (!db) {
-    db = new Database(DB_PATH);
+    db = new Database(getDbPath());
+    db.exec("PRAGMA busy_timeout = 5000");
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     initSchema();
     runMigrations();
   }
   return db;
+}
+
+/**
+ * Closes the current connection so the next getDb() call reopens using the
+ * current AGENTQ_DB_PATH. Intended for tests that need a file-backed database
+ * (e.g. when subprocesses must see the same rows).
+ */
+export function resetDb(): void {
+  if (db) {
+    try { db.close(); } catch {}
+    db = null;
+  }
 }
 
 function initSchema(): void {
@@ -213,6 +232,34 @@ function runMigrations(): void {
     try { d.exec("ALTER TABLE tasks ADD COLUMN guardrails TEXT DEFAULT '[]'"); } catch {}
     markMigrationApplied("006_add_steer_details_guardrails");
   }
+
+  // Migration 7: Runners (headless agent launchers managed by the web server)
+  if (!isMigrationApplied("007_add_runners")) {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS runners (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        role TEXT NOT NULL,
+        project_id TEXT,
+        model TEXT,
+        concurrency INTEGER NOT NULL DEFAULT 1,
+        poll_interval_sec INTEGER NOT NULL DEFAULT 5,
+        permission_mode TEXT NOT NULL DEFAULT 'safe',
+        extra_args TEXT,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    markMigrationApplied("007_add_runners");
+  }
+
+  // Migration 8: Reasoning effort per runner (claude --effort, codex model_reasoning_effort, opencode --variant)
+  if (!isMigrationApplied("008_add_runner_effort")) {
+    try { d.exec("ALTER TABLE runners ADD COLUMN effort TEXT"); } catch {}
+    markMigrationApplied("008_add_runner_effort");
+  }
 }
 
 export function beginTransaction(): void {
@@ -229,7 +276,7 @@ export function rollbackTransaction(): void {
 
 export function withTransaction<T>(fn: () => T): T {
   const d = getDb();
-  d.exec("BEGIN");
+  d.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
     d.exec("COMMIT");
@@ -248,6 +295,8 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
     "004_extract_conversation",
     "005_extract_history",
     "006_add_steer_details_guardrails",
+    "007_add_runners",
+    "008_add_runner_effort",
   ];
   return migrationNames.map((name) => ({
     name,
@@ -257,6 +306,19 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
 
 export function rollbackMigration(name?: string): void {
   const d = getDb();
+
+  if (!name || name === "008_add_runner_effort") {
+    // SQLite cannot drop the column portably; nullify it instead.
+    try { d.exec("UPDATE runners SET effort = NULL"); } catch {}
+    d.exec("DELETE FROM _migrations WHERE name = '008_add_runner_effort'");
+    if (name === "008_add_runner_effort") return;
+  }
+
+  if (!name || name === "007_add_runners") {
+    d.exec("DROP TABLE IF EXISTS runners");
+    d.exec("DELETE FROM _migrations WHERE name = '007_add_runners'");
+    if (name === "007_add_runners") return;
+  }
 
   if (!name || name === "005_extract_history") {
     d.exec("DELETE FROM status_history");
@@ -353,6 +415,25 @@ function rowToProject(row: any): Project {
   };
 }
 
+function rowToRunner(row: any): Runner {
+  return {
+    id: row.id,
+    name: row.name,
+    tool: row.tool,
+    role: row.role,
+    projectId: row.project_id ?? null,
+    model: row.model ?? null,
+    effort: row.effort ?? null,
+    concurrency: row.concurrency,
+    pollIntervalSec: row.poll_interval_sec,
+    permissionMode: row.permission_mode,
+    extraArgs: row.extra_args ? JSON.parse(row.extra_args) : null,
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function rowToActivity(row: any): ActivityEvent {
   return {
     id: row.id,
@@ -366,6 +447,19 @@ function rowToActivity(row: any): ActivityEvent {
 
 // ─── Tasks ────────────────────────────────────────────────────────────
 
+// Agents need a feature branch name; derive one when the creator did not pick it.
+export function defaultBranchName(id: string, title: string): string {
+  const slug = title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return `task/${id.slice(0, 8)}${slug ? `-${slug}` : ""}`;
+}
+
 export function createTask(data: {
   title: string;
   description: string;
@@ -377,17 +471,19 @@ export function createTask(data: {
   requiresPlan?: boolean;
   mergeBranch?: string;
   projectId: string;
+  contexts?: string[];
 }): Task {
   const now = new Date().toISOString();
+  const id = randomUUID();
   const task: Task = {
-    id: randomUUID(),
+    id,
     title: data.title,
     description: data.description,
     steerDetails: data.steerDetails ?? null,
     guardrails: data.guardrails ?? [],
     acceptanceCriteria: data.acceptanceCriteria ?? [],
     priority: data.priority ?? 0,
-    recommendedBranch: data.recommendedBranch ?? "",
+    recommendedBranch: data.recommendedBranch?.trim() || defaultBranchName(id, data.title),
     realBranch: null,
     requiresPlan: data.requiresPlan ?? false,
     mergeBranch: data.mergeBranch ?? "develop",
@@ -395,7 +491,7 @@ export function createTask(data: {
     assignedAgent: null,
     conversation: [],
     history: [],
-    contexts: [],
+    contexts: data.contexts ?? [],
     projectId: data.projectId,
     worktreePath: null,
     createdAt: now,
@@ -441,34 +537,67 @@ export function getTaskById(id: string): Task | null {
   return row ? rowToTask(row) : null;
 }
 
-export function getNextClaimableTask(statuses: string[]): Task | null {
-  if (statuses.length === 0) return null;
+export function getClaimableTasks(
+  statuses: string[],
+  projectId?: string,
+  limit = 10,
+  excludeTaskIds: string[] = [],
+): Task[] {
+  if (statuses.length === 0) return [];
   const placeholders = statuses.map(() => "?").join(", ");
-  const sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 1`;
-  const row = getDb()
-    .prepare(sql)
-    .get(...statuses);
-  return row ? rowToTask(row) : null;
+  let sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL`;
+  const params: any[] = [...statuses];
+  if (projectId) {
+    sql += " AND project_id = ?";
+    params.push(projectId);
+  }
+  if (excludeTaskIds.length > 0) {
+    sql += ` AND id NOT IN (${excludeTaskIds.map(() => "?").join(", ")})`;
+    params.push(...excludeTaskIds);
+  }
+  sql += " ORDER BY priority DESC, created_at ASC LIMIT ?";
+  params.push(limit);
+  return getDb().prepare(sql).all(...params).map(rowToTask);
+}
+
+export function getNextClaimableTask(statuses: string[], projectId?: string): Task | null {
+  return getClaimableTasks(statuses, projectId, 1)[0] ?? null;
+}
+
+export function tryAssignTask(data: {
+  id: string;
+  fromStatus: TaskStatus;
+  toStatus: TaskStatus;
+  assignedAgent: AgentReference;
+}): boolean {
+  const now = new Date().toISOString();
+  const result = getDb()
+    .prepare(
+      `UPDATE tasks SET status = ?, assigned_agent_id = ?, updated_at = ?
+       WHERE id = ? AND assigned_agent_id IS NULL AND status = ? AND deleted_at IS NULL`,
+    )
+    .run(data.toStatus, JSON.stringify(data.assignedAgent), now, data.id, data.fromStatus);
+  return result.changes === 1;
 }
 
 export function updateTask(
   id: string,
   data: {
     title?: string;
-    description?: string;
+    description?: string | null;
     steerDetails?: string | null;
     guardrails?: string[];
     status?: TaskStatus;
     acceptanceCriteria?: string[];
     priority?: number;
     recommendedBranch?: string;
-    realBranch?: string;
+    realBranch?: string | null;
     mergeBranch?: string;
     assignedAgent?: Task["assignedAgent"];
     conversation?: ConversationEntry[];
     history?: StatusHistoryEntry[];
     contexts?: string[];
-    projectId?: string;
+    projectId?: string | null;
     worktreePath?: string | null;
   },
 ): Task | null {
@@ -527,9 +656,15 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): boolean {
-  const stmt = getDb().prepare("DELETE FROM tasks WHERE id = ?");
-  const result = stmt.run(id);
-  return result.changes > 0;
+  // Child tables reference tasks(id) without ON DELETE CASCADE; remove them first.
+  const d = getDb();
+  return d.transaction(() => {
+    d.prepare("DELETE FROM activity WHERE task_id = ?").run(id);
+    d.prepare("DELETE FROM conversation_entries WHERE task_id = ?").run(id);
+    d.prepare("DELETE FROM status_history WHERE task_id = ?").run(id);
+    const result = d.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    return result.changes > 0;
+  })();
 }
 
 export function softDeleteTask(id: string): boolean {
@@ -548,6 +683,14 @@ export function getTasks(projectId?: string): Task[] {
   }
   sql += " ORDER BY priority DESC, created_at ASC";
   return getDb().prepare(sql).all(...params).map(rowToTask);
+}
+
+/** Tasks (including soft-deleted ones) whose updated_at is strictly after `iso`. */
+export function getTasksUpdatedSince(iso: string): Task[] {
+  return getDb()
+    .prepare("SELECT * FROM tasks WHERE updated_at > ? ORDER BY updated_at ASC")
+    .all(iso)
+    .map(rowToTask);
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────
@@ -836,4 +979,115 @@ export function getActivityEvents(filters?: {
     .prepare(sql)
     .all(...params)
     .map(rowToActivity);
+}
+
+// ─── Runners ──────────────────────────────────────────────────────────
+
+export function createRunner(data: {
+  name: string;
+  tool: Runner["tool"];
+  role: string;
+  projectId?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  concurrency?: number;
+  pollIntervalSec?: number;
+  permissionMode?: Runner["permissionMode"];
+  extraArgs?: string[] | null;
+  enabled?: boolean;
+}): Runner {
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  getDb()
+    .prepare(
+      `INSERT INTO runners (id, name, tool, role, project_id, model, effort, concurrency, poll_interval_sec,
+        permission_mode, extra_args, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      data.name,
+      data.tool,
+      data.role,
+      data.projectId ?? null,
+      data.model ?? null,
+      data.effort ?? null,
+      data.concurrency ?? 1,
+      data.pollIntervalSec ?? 5,
+      data.permissionMode ?? "safe",
+      data.extraArgs ? JSON.stringify(data.extraArgs) : null,
+      data.enabled ? 1 : 0,
+      now,
+      now,
+    );
+  return getRunnerById(id)!;
+}
+
+export function getRunners(): Runner[] {
+  return getDb().prepare("SELECT * FROM runners ORDER BY created_at ASC").all().map(rowToRunner);
+}
+
+export function getRunnerById(id: string): Runner | null {
+  const row = getDb().prepare("SELECT * FROM runners WHERE id = ?").get(id);
+  return row ? rowToRunner(row) : null;
+}
+
+export function updateRunner(
+  id: string,
+  data: {
+    name?: string;
+    tool?: Runner["tool"];
+    role?: string;
+    projectId?: string | null;
+    model?: string | null;
+    effort?: string | null;
+    concurrency?: number;
+    pollIntervalSec?: number;
+    permissionMode?: Runner["permissionMode"];
+    extraArgs?: string[] | null;
+    enabled?: boolean;
+  },
+): Runner | null {
+  const existing = getRunnerById(id);
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  const updated = {
+    name: data.name ?? existing.name,
+    tool: data.tool ?? existing.tool,
+    role: data.role ?? existing.role,
+    projectId: data.projectId !== undefined ? data.projectId : existing.projectId,
+    model: data.model !== undefined ? data.model : existing.model,
+    effort: data.effort !== undefined ? data.effort : existing.effort,
+    concurrency: data.concurrency ?? existing.concurrency,
+    pollIntervalSec: data.pollIntervalSec ?? existing.pollIntervalSec,
+    permissionMode: data.permissionMode ?? existing.permissionMode,
+    extraArgs: data.extraArgs !== undefined ? data.extraArgs : existing.extraArgs,
+    enabled: data.enabled !== undefined ? data.enabled : existing.enabled,
+  };
+  getDb()
+    .prepare(
+      `UPDATE runners SET name = ?, tool = ?, role = ?, project_id = ?, model = ?, effort = ?, concurrency = ?,
+        poll_interval_sec = ?, permission_mode = ?, extra_args = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+    )
+    .run(
+      updated.name,
+      updated.tool,
+      updated.role,
+      updated.projectId,
+      updated.model,
+      updated.effort,
+      updated.concurrency,
+      updated.pollIntervalSec,
+      updated.permissionMode,
+      updated.extraArgs ? JSON.stringify(updated.extraArgs) : null,
+      updated.enabled ? 1 : 0,
+      now,
+      id,
+    );
+  return getRunnerById(id)!;
+}
+
+export function deleteRunner(id: string): boolean {
+  const result = getDb().prepare("DELETE FROM runners WHERE id = ?").run(id);
+  return result.changes > 0;
 }

@@ -1,8 +1,11 @@
 import { useEffect, useRef } from "react";
 import type { QueryClient } from "@tanstack/react-query";
-import type { Task } from "../lib/api";
+import type { Runner, RunnerJobEvent, RunnerState, Task } from "../lib/api";
 
 type SSEEvent = { event: string; data: any };
+
+/** Events forwarded verbatim to `onMessage` after updating the query cache. */
+const RUNNER_EVENTS = ["runner_updated", "runner_job", "runner_deleted"] as const;
 
 const SSE_URL = "/api/events";
 
@@ -47,6 +50,31 @@ export function useSSE(
         onMessageRef.current({ event: "task_updated", data });
         retryDelay = 1000;
       });
+
+      for (const name of RUNNER_EVENTS) {
+        es.addEventListener(name, (e) => {
+          const data = JSON.parse((e as MessageEvent).data);
+          if (queryClient) {
+            if (name === "runner_updated") {
+              const state = data as RunnerState;
+              queryClient.setQueryData<Runner[]>(["runners"], (old) =>
+                old ? old.map((r) => (r.id === state.id ? { ...r, state } : r)) : undefined,
+              );
+            } else if (name === "runner_deleted") {
+              queryClient.setQueryData<Runner[]>(["runners"], (old) =>
+                old ? old.filter((r) => r.id !== data.id) : undefined,
+              );
+            } else if (name === "runner_job") {
+              const ev = data as RunnerJobEvent;
+              if (ev.type !== "output") {
+                queryClient.invalidateQueries({ queryKey: ["runner-jobs", ev.runnerId] });
+              }
+            }
+          }
+          onMessageRef.current({ event: name, data });
+          retryDelay = 1000;
+        });
+      }
 
       es.onerror = () => {
         es?.close();

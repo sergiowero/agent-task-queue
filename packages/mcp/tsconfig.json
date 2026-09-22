@@ -8,11 +8,7 @@
     "outDir": "dist",
     "sourceMap": true,
     "skipLibCheck": true,
-    "types": [
-      "bun-types"
-    ]
+    "types": ["bun-types"]
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

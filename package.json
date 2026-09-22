@@ -11,6 +11,7 @@
     "start": "bun run --cwd packages/web-ui build && bun run packages/web/src/index.ts",
     "dev": "bun --watch run packages/web/src/index.ts --dev",
     "cli": "bun run packages/cli/src/index.ts",
+    "mcp": "bun run packages/mcp/src/index.ts",
     "install:bin": "bun run packages/installer/src/install-bin.ts",
     "install:skills": "bun run packages/installer/src/install-skills.ts",
     "install:agents": "bun run packages/installer/src/install-agents.ts",
@@ -18,7 +19,7 @@
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
-    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/cli --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit"
+    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/cli --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit && tsc --project packages/mcp --noEmit"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -32,12 +33,14 @@
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.65.0",
     "@typescript-eslint/parser": "^8.65.0",
+    "bun-types": "^1.3.14",
     "eslint": "^10.8.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.2.0",
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.0"
   }
 }

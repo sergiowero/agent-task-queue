@@ -12,6 +12,7 @@ AgentQ is a local task queue system for managing coding-agent work across multip
 - **Role-based workflows** - Planner, implementer, reviewer, and senior roles with proper access control
 - **Web dashboard** - Kanban-style board with task details, agent monitoring, and activity feed
 - **CLI for agents** - Structured commands for agents to interact with the queue
+- **Runners** - Launch Claude Code, Codex, OpenCode or Gemini headless on claimed tasks, no manual prompting
 - **Plan → Code → Review → Merge** - Full workflow with approval gates and feedback loops
 
 ## Quick Start
@@ -82,6 +83,25 @@ agentq submit-review <task-id> --json -m "## Review\n- Looks good"
 agentq submit-merge <task-id> --json -b <branch> -c <commit> --authors <authors>
 ```
 
+### Runners
+
+Runners take the "open the coding tool by hand" step out of the loop. A runner is a
+server-side worker with a role (planner, implementer, reviewer, senior, architect), an
+optional project and a tool. Every few seconds it claims the next eligible task and
+launches the tool headless in the project directory with the task and the phase skill as
+the prompt; the tool finishes with the normal `agentq submit-*` command.
+
+- Manage runners on the **Runners** page (or `/api/runners`): create, edit, start/stop,
+  delete, and follow each job's live output.
+- Supported tools: `claude`, `codex`, `opencode`, `gemini`, and `custom` (your own argv).
+- `safe` mode allows edits plus a fixed command allow-list; `full` mode skips all
+  permission prompts and sandboxes.
+- If the tool exits without submitting, the runner releases the task back to the queue
+  with a system note containing the last lines of output.
+
+See [docs/runner.md](docs/runner.md) for commands, permission modes, environment
+variables and a demo script.
+
 ### Agent Workflow
 
 ```
@@ -99,7 +119,7 @@ AgentQ consists of five core components:
 | Component | Description |
 |-----------|-------------|
 | **Web Portal** | React-based dashboard with Kanban board, task details, and monitoring |
-| **Web Server** | REST API + SSE + static UI serving (single port 3000) |
+| **Web Server** | REST API + SSE + runners + static UI serving (single port 3000) |
 | **CLI** | Command-line interface for agents to interact with the queue |
 | **Database** | Local SQLite for persistence |
 | **AI Skills** | Agent instructions for consistent workflow integration |
@@ -109,14 +129,25 @@ AgentQ consists of five core components:
 ```
 agent-task-queue/
 ├── packages/
-│   ├── cli/          # CLI tool for agents
-│   ├── web/          # API server + SSE
+│   ├── cli/          # CLI tool for agents (agentq claim / submit-*)
+│   ├── mcp/          # MCP server exposing the same protocol as typed tools
+│   ├── web/          # API server + SSE + runner engine (packages/web/src/runner)
 │   ├── web-ui/       # React dashboard
-│   ├── shared/       # Database, types, shared logic
-│   └── installer/    # Installation scripts
-├── openspec/         # Specifications and change proposals
-└── skills/           # AI agent skills
+│   ├── shared/       # Database, types, workflow rules (single source of truth)
+│   └── installer/    # Binary + skills + agents installers
+├── docs/             # architecture.md, runner.md, mcp.md, project-spec.md
+└── skills/           # Agent skills: agentq-claim (router) + agentq-plan/code/review/merge + agentq-create-task
 ```
+
+### Ways an agent can talk to AgentQ
+
+| Channel | When to use |
+|---------|-------------|
+| **Runner** (web UI → Runners) | Hands-free: the server claims tasks and launches `claude` / `codex` / `opencode` / `gemini` headless in the project directory. See `docs/runner.md`. |
+| **CLI + skills** | You open the coding tool yourself and invoke the `agentq-claim` skill; it claims and routes to the phase skill. Install with `bun run install:bin` and `bun run install:skills`. |
+| **MCP server** | Same operations as typed tools for any MCP-capable client. See `docs/mcp.md`. |
+
+All three share the same SQLite database and the same workflow code in `packages/shared`.
 
 ## Workflow
 
@@ -179,8 +210,11 @@ Example: `opencode@1.0|big-pickle`
 ## Development
 
 ```bash
-# Run tests
+# Run tests (never touches ~/agentq/agentq.db — tests use in-memory / temp databases)
 bun test
+
+# Typecheck every package
+bun run typecheck
 
 # Run specific package
 bun run --cwd packages/cli src/index.ts

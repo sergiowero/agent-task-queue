@@ -1,9 +1,10 @@
 ---
 name: agentq-create-task
 description: Instructions for creating well-structured tasks in AgentQ via the CLI. Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
+allowed-tools: Bash(agentq:*)
 metadata:
-  version: "1.0.0"
-  author: "agent-task-queue"
+  version: "2.0.0"
+  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Create Task Skill
@@ -129,7 +130,7 @@ When writing the description, use this structure:
 
 - **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq create`, `agentq projects`)
 - **DO NOT** claim or execute the task — this skill is only for creating tasks
-- **DO NOT** use `agentq claim` or `agentq submit-*` — those belong to the `agentq-workflow` skill
+- **DO NOT** use `agentq claim` or `agentq submit-*` — those belong to the `agentq-claim` skill
 - **DO** elaborate descriptions and acceptance criteria — always add value beyond what the user provided
 - **DO** respect user-specified priority and branch — only generate them when not given
 - **DO** verify the project exists before creating the task

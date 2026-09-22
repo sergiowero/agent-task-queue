@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { TaskStatus } from "./types.js";
 
-const taskStatusValues = Object.values(TaskStatus) as [string, ...string[]];
-
 export const createTaskSchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
   description: z.string().max(5000).default(""),
@@ -22,7 +20,7 @@ export const updateTaskSchema = z.object({
   description: z.string().max(5000).nullable().optional(),
   steerDetails: z.string().max(5000).nullable().optional(),
   guardrails: z.array(z.string()).optional(),
-  status: z.enum(taskStatusValues as [string, ...string[]]).optional(),
+  status: z.nativeEnum(TaskStatus).optional(),
   acceptanceCriteria: z.array(z.string()).optional(),
   priority: z.number().int().min(0).optional(),
   recommendedBranch: z.string().max(200).optional(),
@@ -62,7 +60,7 @@ export const transitionTaskSchema = z.object({
   ]),
   authorName: z.string().optional(),
   message: z.string().max(10000).optional(),
-  targetStatus: z.enum(taskStatusValues as [string, ...string[]]).optional(),
+  targetStatus: z.nativeEnum(TaskStatus).optional(),
 });
 
 export const createProjectSchema = z.object({
@@ -90,6 +88,25 @@ export const claimTaskSchema = z.object({
   role: z.enum(["planner", "implementer", "reviewer", "senior", "architect"]),
 });
 
+export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "custom"]);
+export const runnerRoleSchema = z.enum(["planner", "implementer", "reviewer", "senior", "architect"]);
+
+export const createRunnerSchema = z.object({
+  name: z.string().min(1).max(100),
+  tool: runnerToolSchema,
+  role: runnerRoleSchema,
+  projectId: z.string().min(1).max(200).nullable().optional(),
+  model: z.string().max(200).nullable().optional(),
+  effort: z.string().max(40).nullable().optional(),
+  concurrency: z.number().int().min(1).max(16).optional(),
+  pollIntervalSec: z.number().int().min(1).max(3600).optional(),
+  permissionMode: z.enum(["safe", "full"]).optional(),
+  extraArgs: z.array(z.string()).nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const updateRunnerSchema = createRunnerSchema.partial();
+
 export const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -102,4 +119,6 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type RegisterAgentInput = z.infer<typeof registerAgentSchema>;
 export type ClaimTaskInput = z.infer<typeof claimTaskSchema>;
+export type CreateRunnerInput = z.infer<typeof createRunnerSchema>;
+export type UpdateRunnerInput = z.infer<typeof updateRunnerSchema>;
 export type PaginationInput = z.infer<typeof paginationSchema>;

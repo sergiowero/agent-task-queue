@@ -11,10 +11,8 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-let validated: Env | null = null;
-
+// Not cached: the parse is trivial and tests change AGENTQ_DB_PATH between files.
 export function validateEnv(): Env {
-  if (validated) return validated;
   const result = envSchema.safeParse(process.env);
   if (!result.success) {
     console.error("Environment variable validation failed:");
@@ -23,13 +21,9 @@ export function validateEnv(): Env {
     }
     process.exit(1);
   }
-  validated = result.data;
-  return validated;
+  return result.data;
 }
 
 export function getEnv(): Env {
-  if (!validated) {
-    return validateEnv();
-  }
-  return validated;
+  return validateEnv();
 }

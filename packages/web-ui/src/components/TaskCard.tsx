@@ -1,11 +1,8 @@
-import { useState, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
 import { Badge } from "./Badge";
 
 const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
   plan_requested: "default",
-  ready: "info",
+  ready_for_code: "info",
   planning: "purple",
   coding: "info",
   reviewing: "warning",
@@ -31,93 +28,53 @@ const PRIORITY_COLORS: Record<number, string> = {
 interface TaskCardProps {
   task: any;
   onClick: () => void;
+  onDelete?: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }
 
-export function TaskCard({ task, onClick }: TaskCardProps) {
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(String(task.priority));
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
-
-  async function savePriority() {
-    const parsed = parseInt(editValue, 10);
-    if (isNaN(parsed)) {
-      setEditValue(String(task.priority));
-      setEditing(false);
-      return;
-    }
-    if (parsed === task.priority) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.updateTask(task.id, { priority: parsed });
-      setEditValue(String(parsed));
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-    } catch {
-      setEditValue(String(task.priority));
-    } finally {
-      setSaving(false);
-      setEditing(false);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      savePriority();
-    } else if (e.key === "Escape") {
-      setEditValue(String(task.priority));
-      setEditing(false);
-    }
-  }
-
-  function startEditing(e: React.MouseEvent) {
-    e.stopPropagation();
-    setEditValue(String(task.priority));
-    setEditing(true);
-    requestAnimationFrame(() => inputRef.current?.select());
-  }
-
-  function handleCardClick() {
-    if (!editing) onClick();
-  }
-
+export function TaskCard({ task, onClick, onDelete, selected, onToggleSelect }: TaskCardProps) {
   function stopProp(e: React.MouseEvent) {
     e.stopPropagation();
   }
 
   return (
     <div
-      onClick={handleCardClick}
-      className="bg-surface rounded-xl border border-border p-3 cursor-pointer hover:shadow-md hover:border-primary/30 hover:-translate-y-0.5 transition-all duration-150"
+      onClick={onClick}
+      className={`bg-surface rounded-xl border p-3 cursor-pointer hover:shadow-md hover:border-primary/30 hover:-translate-y-0.5 transition-all duration-150 ${
+        selected ? "border-primary/60 ring-1 ring-primary/40" : "border-border"
+      }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1.5">
-        <h4 className="text-sm font-semibold text-text line-clamp-2 leading-snug">{task.title}</h4>
-        {editing ? (
-          <span onMouseDown={stopProp} onClick={stopProp} className="shrink-0">
-            <input
-              ref={inputRef}
-              type="number"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={savePriority}
-              onKeyDown={handleKeyDown}
-              disabled={saving}
-              className="w-16 text-xs border border-primary rounded-lg px-1.5 py-0.5 text-right bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
-              autoFocus
-            />
-          </span>
-        ) : (
-          <span
-            onClick={startEditing}
-            className={`text-xs px-1.5 py-0.5 rounded shrink-0 cursor-pointer border font-medium hover:ring-2 hover:ring-primary/30 transition-all duration-150 ${saving ? "opacity-50" : ""} ${PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS[3]}`}
-          >
-            {saving ? "..." : `P${editValue}`}
-          </span>
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect()}
+            onClick={stopProp}
+            className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-primary"
+            title="Select task"
+          />
         )}
+        <h4 className="text-sm font-semibold text-text line-clamp-2 leading-snug">{task.title}</h4>
+        <div className="flex items-center gap-1 shrink-0">
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+              title="Delete task"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          )}
+          <span
+            className={`text-xs px-1.5 py-0.5 rounded shrink-0 border font-medium ${PRIORITY_COLORS[task.priority] ?? PRIORITY_COLORS[3]}`}
+          >
+            P{task.priority}
+          </span>
+        </div>
       </div>
 
       {task.recommendedBranch && (

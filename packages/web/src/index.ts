@@ -5,6 +5,7 @@ import type {
 import {
   createTask,
   getTasks,
+  getTasksUpdatedSince,
   getTaskById,
   updateTask,
   deleteTask,
@@ -23,16 +24,25 @@ import {
   addConversation,
   addActivity,
   CANCELED_CANT_CANCEL,
-  CANT_DELETE_STATUSES,
   createTaskSchema,
   updateTaskSchema,
   createProjectSchema,
   updateProjectSchema,
   transitionTaskSchema,
   paginationSchema,
+  createRunnerSchema,
+  updateRunnerSchema,
+  runnerToolSchema,
+  createRunner,
+  getRunners,
+  getRunnerById,
+  updateRunner,
+  deleteRunner,
   paginate,
   validateEnv,
 } from "@agentq/shared";
+import { getRunnerEngine, listTools } from "./runner/runner.js";
+import { discoverModels } from "./runner/models.js";
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
 import { readFile } from "fs/promises";
@@ -40,7 +50,7 @@ import { resolve, extname } from "path";
 
 const env = validateEnv();
 const PORT = env.PORT;
-const isDev = process.argv.includes("--dev");
+let isDev = process.argv.includes("--dev");
 
 let viteProcess: ChildProcess | null = null;
 let viteCrashTimer: Timer | null = null;
@@ -191,7 +201,42 @@ function stopKeepAlive() {
     clearInterval(sseKeepAlive);
     sseKeepAlive = null;
   }
+  stopDbWatcher();
 }
+
+// CLI / MCP / runner children write straight to SQLite, bypassing this process.
+// While someone is listening we poll tasks.updated_at and re-broadcast changes.
+const DB_WATCH_INTERVAL_MS = 1500;
+let dbWatcher: Timer | null = null;
+let dbWatchCursor = new Date().toISOString();
+
+function pollTaskChanges() {
+  if (sseClients.size === 0) return;
+  try {
+    const changed = getTasksUpdatedSince(dbWatchCursor);
+    for (const task of changed) {
+      broadcastSSE("task_updated", task);
+      if (task.updatedAt > dbWatchCursor) dbWatchCursor = task.updatedAt;
+    }
+  } catch (e) {
+    console.error("[sse] task watcher failed:", e);
+  }
+}
+
+function ensureDbWatcher() {
+  if (dbWatcher) return;
+  dbWatchCursor = new Date().toISOString();
+  dbWatcher = setInterval(pollTaskChanges, DB_WATCH_INTERVAL_MS);
+}
+
+function stopDbWatcher() {
+  if (dbWatcher) {
+    clearInterval(dbWatcher);
+    dbWatcher = null;
+  }
+}
+
+const runnerEngine = getRunnerEngine({ broadcast: broadcastSSE });
 
 function corsHeaders(): HeadersInit {
   if (isDev) {
@@ -235,6 +280,11 @@ function getSubAction(pathname: string): string | null {
   return match ? match[1] : null;
 }
 
+function getRunnerIdFromUrl(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/runners\/([a-z0-9-]+)/);
+  return match ? match[1] : null;
+}
+
 function getProjectIdFromUrl(pathname: string): string | null {
   const match = pathname.match(/\/api\/projects\/([a-z0-9-]+)/);
   return match ? match[1] : null;
@@ -263,24 +313,21 @@ function wrapHandler(
   };
 }
 
-async function main() {
-  if (isDev) {
-    console.log("[server] starting in dev mode, launching Vite...");
-    await startVite();
-    process.on("SIGINT", () => {
-      stopVite();
-      stopKeepAlive();
-      process.exit(0);
-    });
-    process.on("SIGTERM", () => {
-      stopVite();
-      stopKeepAlive();
-      process.exit(0);
-    });
-  }
+export interface StartServerOptions {
+  /** Port to listen on (0 = random free port). Defaults to env PORT. */
+  port?: number;
+  /** Enable dev-mode CORS headers and the Vite proxy. Defaults to `--dev` flag. */
+  dev?: boolean;
+}
+
+export function startServer(opts: StartServerOptions = {}) {
+  if (opts.dev !== undefined) isDev = opts.dev;
 
   const server = Bun.serve({
-    port: PORT,
+    port: opts.port ?? PORT,
+    // SSE streams idle between events; the default 10 s idle timeout would
+    // drop them before the 30 s keepalive comment goes out.
+    idleTimeout: 120,
     async fetch(req) {
       const url = new URL(req.url);
       const handlers: Array<(req: Request, url: URL) => Promise<Response | null>> = [
@@ -290,6 +337,10 @@ async function main() {
         handleProjects,
         handleProjectById,
         handleActivity,
+        handleRunnerTools,
+        handleRunnerToolModels,
+        handleRunners,
+        handleRunnerById,
         handleTasksList,
         handleCreateTask,
         handleTaskSubActions,
@@ -308,6 +359,30 @@ async function main() {
     },
   });
 
+  return server;
+}
+
+async function main() {
+  if (isDev) {
+    console.log("[server] starting in dev mode, launching Vite...");
+    await startVite();
+  }
+
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopVite();
+    stopKeepAlive();
+    await runnerEngine.shutdown();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+
+  const server = startServer();
+  runnerEngine.startEnabledRunners();
+
   console.log(`AgentQ Web Server running on http://localhost:${server.port}`);
 }
 
@@ -323,10 +398,16 @@ const handleSSE = wrapHandler(async (req, url) => {
   const stream = new ReadableStream({
     start(controller) {
       sseClients.add(controller);
+      // Flush headers right away so clients see the stream open before the first event.
+      controller.enqueue(new TextEncoder().encode(": connected\n\n"));
       ensureKeepAlive();
+      ensureDbWatcher();
       req.signal?.addEventListener("abort", () => {
         sseClients.delete(controller);
-        controller.close();
+        if (sseClients.size === 0) stopDbWatcher();
+        try {
+          controller.close();
+        } catch {}
       });
     },
   });
@@ -417,6 +498,116 @@ const handleActivity = wrapHandler(async (req, url) => {
   return jsonResponse(paginate(sliced, allEvents.length, { limit, offset }));
 });
 
+// ─── Runners ────────────────────────────────────────────────────────
+
+function runnerWithState(runner: NonNullable<ReturnType<typeof getRunnerById>>) {
+  return { ...runner, state: runnerEngine.getState(runner.id) };
+}
+
+const handleRunnerTools = wrapHandler(async (req, url) => {
+  if (url.pathname !== "/api/runners/tools" || req.method !== "GET") throw null;
+  return jsonResponse(await listTools());
+});
+
+// GET /api/runners/tools/:tool/models[?refresh=1] — models + effort levels a tool accepts.
+const handleRunnerToolModels = wrapHandler(async (req, url) => {
+  const match = url.pathname.match(/^\/api\/runners\/tools\/([a-z0-9-]+)\/models\/?$/);
+  if (!match || req.method !== "GET") throw null;
+  const parsedTool = runnerToolSchema.safeParse(match[1]);
+  if (!parsedTool.success) return errorResponse(`unknown tool: ${match[1]}`);
+  const tool = parsedTool.data;
+  const refresh = url.searchParams.get("refresh");
+  const force = refresh === "1" || refresh === "true";
+  try {
+    return jsonResponse(await discoverModels(tool, undefined, { force }));
+  } catch (e: any) {
+    console.error(`[runner] model discovery failed for ${tool}:`, e?.message ?? e);
+    return jsonResponse({ tool, source: "static", models: [], efforts: null, defaultEffort: null });
+  }
+});
+
+const handleRunners = wrapHandler(async (req, url) => {
+  if (url.pathname !== "/api/runners") throw null;
+  if (req.method === "GET") {
+    return jsonResponse(getRunners().map(runnerWithState));
+  }
+  if (req.method === "POST") {
+    const body = await parseBody(req);
+    const parsed = createRunnerSchema.safeParse(body);
+    if (!parsed.success) {
+      return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
+    }
+    if (parsed.data.projectId && !getProjectById(parsed.data.projectId)) {
+      return errorResponse("project not found", 404);
+    }
+    const runner = createRunner(parsed.data);
+    if (runner.enabled) runnerEngine.start(runner.id);
+    const result = runnerWithState(runner);
+    broadcastSSE("runner_updated", result.state);
+    return jsonResponse(result, 201);
+  }
+  return null;
+});
+
+const handleRunnerById = wrapHandler(async (req, url) => {
+  const id = getRunnerIdFromUrl(url.pathname);
+  // `/api/runners/tools` and `/api/runners/tools/<tool>/models` are not runner ids.
+  if (!id || id === "tools" || url.pathname.startsWith("/api/runners/tools/")) throw null;
+  const runner = getRunnerById(id);
+  if (!runner) return errorResponse("not found", 404);
+  const rest = url.pathname.slice(`/api/runners/${id}`.length);
+
+  if (rest === "" || rest === "/") {
+    if (req.method === "GET") return jsonResponse(runnerWithState(runner));
+    if (req.method === "PUT") {
+      const body = await parseBody(req);
+      const parsed = updateRunnerSchema.safeParse(body);
+      if (!parsed.success) {
+        return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
+      }
+      if (parsed.data.projectId && !getProjectById(parsed.data.projectId)) {
+        return errorResponse("project not found", 404);
+      }
+      const updated = updateRunner(id, parsed.data)!;
+      if (parsed.data.enabled === true && !runnerEngine.isRunning(id)) runnerEngine.start(id);
+      if (parsed.data.enabled === false && runnerEngine.isRunning(id)) await runnerEngine.stop(id);
+      return jsonResponse(runnerWithState(updated));
+    }
+    if (req.method === "DELETE") {
+      await runnerEngine.stop(id, "Runner deleted");
+      deleteRunner(id);
+      broadcastSSE("runner_deleted", { id });
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+    return null;
+  }
+
+  if (req.method === "POST" && rest === "/start") {
+    updateRunner(id, { enabled: true });
+    runnerEngine.start(id);
+    return jsonResponse(runnerWithState(getRunnerById(id)!));
+  }
+  if (req.method === "POST" && rest === "/stop") {
+    updateRunner(id, { enabled: false });
+    await runnerEngine.stop(id);
+    return jsonResponse(runnerWithState(getRunnerById(id)!));
+  }
+  if (req.method === "GET" && rest === "/jobs") {
+    return jsonResponse(runnerEngine.getJobs(id));
+  }
+  const logMatch = rest.match(/^\/jobs\/([a-z0-9-]+)\/log$/);
+  if (req.method === "GET" && logMatch) {
+    const job = runnerEngine.getJob(id, logMatch[1]);
+    if (!job) return errorResponse("not found", 404);
+    const tailParam = Number(url.searchParams.get("tail") ?? "200");
+    const tail = Number.isFinite(tailParam) && tailParam > 0 ? Math.min(tailParam, 5000) : 200;
+    return new Response(runnerEngine.readLog(job, tail), {
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache", ...corsHeaders() },
+    });
+  }
+  return null;
+});
+
 const handleTasksList = wrapHandler(async (req, url) => {
   if (url.pathname !== "/api/tasks" || req.method !== "GET") throw null;
   const pagination = paginationSchema.safeParse({
@@ -455,6 +646,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   const body = await parseBody(req);
   const actionMap: Record<string, string> = {
     "confirm-completion": "complete",
+    "add-comment": "comment",
   };
   const action = actionMap[subAction] ?? subAction.replace(/-/g, "_");
   const parsed = transitionTaskSchema.safeParse({ ...body, action });
@@ -558,7 +750,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         return errorResponse("task must be in Waiting Plan Review status");
       }
       updated = recordHistory(task, TaskStatus.ReadyForCode);
-      addConversation(updated!, "user", "Plan approved.", "user");
+      updated = addConversation(updated!, "user", "Plan approved.", "user");
       addActivity(taskId, "plan_approved", "user");
       broadcastSSE("task_updated", updated);
       break;
@@ -584,7 +776,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         return errorResponse("task must be in Waiting Code Review status");
       }
       updated = recordHistory(task, TaskStatus.Approved);
-      addConversation(updated!, "user", "Code approved.", "user");
+      updated = addConversation(updated!, "user", "Code approved.", "user");
       addActivity(taskId, "code_approved", "user");
       broadcastSSE("task_updated", updated);
       break;
@@ -610,7 +802,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         return errorResponse("task must be in Waiting Code Review status");
       }
       updated = recordHistory(task, TaskStatus.CodeReviewRequested);
-      addConversation(updated!, "user", "AI code review requested.", "user");
+      updated = addConversation(updated!, "user", "AI code review requested.", "user");
       addActivity(taskId, "ai_review_requested", "user");
       broadcastSSE("task_updated", updated);
       break;
@@ -621,7 +813,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         return errorResponse("task must be in Merged status");
       }
       updated = recordHistory(task, TaskStatus.Complete);
-      addConversation(updated!, "user", "Task completed.", "user");
+      updated = addConversation(updated!, "user", "Task completed.", "user");
       addActivity(taskId, "task_completed", "user");
       broadcastSSE("task_updated", updated);
       break;
@@ -701,10 +893,6 @@ const handleTaskById = wrapHandler(async (req, url) => {
     const task = getTaskById(taskId);
     if (!task) return errorResponse("not found", 404);
 
-    if (CANT_DELETE_STATUSES.has(task.status)) {
-      return errorResponse("Task has reached coding stage and cannot be deleted.");
-    }
-
     const hard = url.searchParams.get("hard") === "true";
     if (hard) {
       const deleted = deleteTask(taskId);
@@ -736,4 +924,4 @@ async function handleStatic(req: Request, url: URL): Promise<Response | null> {
   return staticResponse ?? null;
 }
 
-main();
+if (import.meta.main) main();
