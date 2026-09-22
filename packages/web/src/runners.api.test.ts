@@ -12,6 +12,7 @@ import {
   updateTask,
 } from "@agentq/shared";
 import { startServer } from "./index.js";
+import { clearModelCache, setModelExecForTests } from "./runner/models.js";
 
 // Set test DB before the first DB call (resolved lazily in getDb()).
 process.env.AGENTQ_DB_PATH = ":memory:";
@@ -105,6 +106,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  setModelExecForTests(null);
+  clearModelCache();
   for (const id of createdRunnerIds) {
     await json(`/api/runners/${id}`, "DELETE").catch(() => {});
     deleteRunner(id);
@@ -130,6 +133,62 @@ describe("GET /api/runners/tools", () => {
   });
 });
 
+describe("GET /api/runners/tools/:tool/models", () => {
+  const calls: string[][] = [];
+  beforeAll(() => {
+    clearModelCache();
+    // Never spawn the real CLIs from the test suite.
+    setModelExecForTests(async (cmd) => {
+      calls.push(cmd);
+      if (cmd.join(" ") === "opencode models") {
+        return { stdout: "opencode/big-pickle\ngithub-copilot/claude-opus-5\n", exitCode: 0 };
+      }
+      return { stdout: "", exitCode: 127 };
+    });
+  });
+
+  it("returns the discovered models, caches them and refreshes on demand", async () => {
+    let res = await api("/api/runners/tools/opencode/models");
+    expect(res.status).toBe(200);
+    let body = await res.json();
+    expect(body).toMatchObject({ tool: "opencode", source: "cli", efforts: ["minimal", "low", "medium", "high", "max"], defaultEffort: null });
+    expect(body.models).toEqual([
+      { id: "opencode/big-pickle", label: "big-pickle", description: "opencode" },
+      { id: "github-copilot/claude-opus-5", label: "claude-opus-5", description: "github-copilot" },
+    ]);
+    expect(calls).toEqual([["opencode", "models"]]);
+
+    res = await api("/api/runners/tools/opencode/models");
+    body = await res.json();
+    expect(body.source).toBe("cache");
+    expect(calls).toHaveLength(1);
+
+    res = await api("/api/runners/tools/opencode/models?refresh=1");
+    body = await res.json();
+    expect(body.source).toBe("cli");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("degrades to static data when the CLI is unavailable", async () => {
+    const res = await api("/api/runners/tools/codex/models");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.tool).toBe("codex");
+    expect(body.source).toBe("static");
+    expect(Array.isArray(body.models)).toBe(true);
+    expect(body.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+
+    const custom = await (await api("/api/runners/tools/custom/models")).json();
+    expect(custom).toEqual({ tool: "custom", source: "static", models: [], efforts: null, defaultEffort: null });
+  });
+
+  it("rejects unknown tools and does not treat the path as a runner id", async () => {
+    expect((await api("/api/runners/tools/vim/models")).status).toBe(400);
+    expect((await api("/api/runners/tools/opencode/nope")).status).toBe(404);
+    expect((await json("/api/runners/tools/opencode/models", "POST")).status).toBe(404);
+  });
+});
+
 describe("runners CRUD", () => {
   it("creates a runner with defaults and live state", async () => {
     const runner = await createRunnerViaApi({ name: "defaults" });
@@ -139,6 +198,7 @@ describe("runners CRUD", () => {
       role: "planner",
       projectId,
       model: null,
+      effort: null,
       concurrency: 1,
       pollIntervalSec: 1,
       permissionMode: "safe",
@@ -159,6 +219,26 @@ describe("runners CRUD", () => {
     expect(res.status).toBe(400);
     res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior", projectId: "missing" });
     expect(res.status).toBe(404);
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior", effort: "x".repeat(41) });
+    expect(res.status).toBe(400);
+  });
+
+  it("persists the effort on create and update", async () => {
+    const runner = await createRunnerViaApi({ name: "effort", tool: "claude", model: "sonnet", effort: "high", extraArgs: null });
+    expect(runner).toMatchObject({ tool: "claude", model: "sonnet", effort: "high" });
+
+    let res = await api(`/api/runners/${runner.id}`);
+    expect((await res.json()).effort).toBe("high");
+
+    res = await json(`/api/runners/${runner.id}`, "PUT", { effort: "max" });
+    expect(res.status).toBe(200);
+    expect((await res.json())).toMatchObject({ model: "sonnet", effort: "max" });
+
+    // Omitting the field keeps it; null clears it.
+    res = await json(`/api/runners/${runner.id}`, "PUT", { name: "effort-2" });
+    expect((await res.json()).effort).toBe("max");
+    res = await json(`/api/runners/${runner.id}`, "PUT", { effort: null });
+    expect((await res.json()).effort).toBeNull();
   });
 
   it("lists, reads, updates and deletes", async () => {

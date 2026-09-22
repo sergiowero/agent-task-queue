@@ -105,6 +105,8 @@ export interface Runner {
   role: string;
   projectId: string | null;
   model: string | null;
+  /** Reasoning effort passed to tools that support it (claude, codex, opencode). */
+  effort: string | null;
   concurrency: number;
   pollIntervalSec: number;
   permissionMode: RunnerPermissionMode;

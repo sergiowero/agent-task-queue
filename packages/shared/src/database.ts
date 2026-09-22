@@ -254,6 +254,12 @@ function runMigrations(): void {
     `);
     markMigrationApplied("007_add_runners");
   }
+
+  // Migration 8: Reasoning effort per runner (claude --effort, codex model_reasoning_effort, opencode --variant)
+  if (!isMigrationApplied("008_add_runner_effort")) {
+    try { d.exec("ALTER TABLE runners ADD COLUMN effort TEXT"); } catch {}
+    markMigrationApplied("008_add_runner_effort");
+  }
 }
 
 export function beginTransaction(): void {
@@ -290,6 +296,7 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
     "005_extract_history",
     "006_add_steer_details_guardrails",
     "007_add_runners",
+    "008_add_runner_effort",
   ];
   return migrationNames.map((name) => ({
     name,
@@ -299,6 +306,13 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
 
 export function rollbackMigration(name?: string): void {
   const d = getDb();
+
+  if (!name || name === "008_add_runner_effort") {
+    // SQLite cannot drop the column portably; nullify it instead.
+    try { d.exec("UPDATE runners SET effort = NULL"); } catch {}
+    d.exec("DELETE FROM _migrations WHERE name = '008_add_runner_effort'");
+    if (name === "008_add_runner_effort") return;
+  }
 
   if (!name || name === "007_add_runners") {
     d.exec("DROP TABLE IF EXISTS runners");
@@ -409,6 +423,7 @@ function rowToRunner(row: any): Runner {
     role: row.role,
     projectId: row.project_id ?? null,
     model: row.model ?? null,
+    effort: row.effort ?? null,
     concurrency: row.concurrency,
     pollIntervalSec: row.poll_interval_sec,
     permissionMode: row.permission_mode,
@@ -974,6 +989,7 @@ export function createRunner(data: {
   role: string;
   projectId?: string | null;
   model?: string | null;
+  effort?: string | null;
   concurrency?: number;
   pollIntervalSec?: number;
   permissionMode?: Runner["permissionMode"];
@@ -984,9 +1000,9 @@ export function createRunner(data: {
   const id = randomUUID();
   getDb()
     .prepare(
-      `INSERT INTO runners (id, name, tool, role, project_id, model, concurrency, poll_interval_sec,
+      `INSERT INTO runners (id, name, tool, role, project_id, model, effort, concurrency, poll_interval_sec,
         permission_mode, extra_args, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -995,6 +1011,7 @@ export function createRunner(data: {
       data.role,
       data.projectId ?? null,
       data.model ?? null,
+      data.effort ?? null,
       data.concurrency ?? 1,
       data.pollIntervalSec ?? 5,
       data.permissionMode ?? "safe",
@@ -1023,6 +1040,7 @@ export function updateRunner(
     role?: string;
     projectId?: string | null;
     model?: string | null;
+    effort?: string | null;
     concurrency?: number;
     pollIntervalSec?: number;
     permissionMode?: Runner["permissionMode"];
@@ -1039,6 +1057,7 @@ export function updateRunner(
     role: data.role ?? existing.role,
     projectId: data.projectId !== undefined ? data.projectId : existing.projectId,
     model: data.model !== undefined ? data.model : existing.model,
+    effort: data.effort !== undefined ? data.effort : existing.effort,
     concurrency: data.concurrency ?? existing.concurrency,
     pollIntervalSec: data.pollIntervalSec ?? existing.pollIntervalSec,
     permissionMode: data.permissionMode ?? existing.permissionMode,
@@ -1047,7 +1066,7 @@ export function updateRunner(
   };
   getDb()
     .prepare(
-      `UPDATE runners SET name = ?, tool = ?, role = ?, project_id = ?, model = ?, concurrency = ?,
+      `UPDATE runners SET name = ?, tool = ?, role = ?, project_id = ?, model = ?, effort = ?, concurrency = ?,
         poll_interval_sec = ?, permission_mode = ?, extra_args = ?, enabled = ?, updated_at = ? WHERE id = ?`,
     )
     .run(
@@ -1056,6 +1075,7 @@ export function updateRunner(
       updated.role,
       updated.projectId,
       updated.model,
+      updated.effort,
       updated.concurrency,
       updated.pollIntervalSec,
       updated.permissionMode,

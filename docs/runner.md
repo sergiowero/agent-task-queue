@@ -44,9 +44,9 @@ The runner writes the prompt to `~/agentq/runs/<taskId>/<jobId>.prompt.md` and r
 
 | Tool | Command |
 |------|---------|
-| `claude` | `claude -p <prompt> --output-format json` + permission flags + `--model <m>` + extra args |
-| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check [-m model] <extra args> <prompt>` |
-| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] <extra args> <prompt>` |
+| `claude` | `claude -p <prompt> --output-format json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
+| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` |
+| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` |
 | `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` |
 | `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$AGENTQ_PROMPT` |
 
@@ -55,6 +55,33 @@ environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner s
 from inside a Claude Code session does not trip the nested-session guard. The working
 directory is the project's `workingDirectory` (with `~` expanded); if it does not exist
 the task is released immediately and the job is marked reverted.
+
+### Model & effort discovery
+
+The runner form does not ask you to type a model name: `GET
+/api/runners/tools/<tool>/models` returns `{ tool, source, models, efforts, defaultEffort }`
+and the UI turns it into a select (plus a `Custom...` entry that reveals a free-text
+field) and, when the tool has an effort flag, an effort select. Each `models[]` entry is
+`{ id, label, description?, efforts?, defaultEffort? }`; a per-model `efforts` list
+overrides the tool-level one.
+
+| Tool | Models | Efforts |
+|------|--------|---------|
+| `claude` | Aliases quoted in `claude --help` (`fable`, `opus`, `sonnet`, plus `haiku`), the entries of `additionalModelOptionsCache` in `~/.claude.json`, then the static full IDs (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`) | Parsed from the `--effort <level>` line of `--help` → `--effort <e>` |
+| `codex` | `codex debug models` (only `visibility: "list"`, highest `priority` first) with each model's `supported_reasoning_levels`; the `model` / `model_reasoning_effort` set at the top of `~/.codex/config.toml` is prepended as `<model> (configured)` when the CLI does not list it | Union of every model's levels → `-c model_reasoning_effort="<e>"` |
+| `opencode` | `opencode models`, one `provider/model` per line, grouped by provider | Fixed `minimal, low, medium, high, max` → `--variant <e>` |
+| `gemini` | Static `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`; the `model` in `~/.gemini/settings.json` is prepended as `(configured)` | none |
+| `custom` | none (free text only) | none |
+
+`source` tells where the list came from: `cli` (the tool was executed), `cache` (served
+from the in-memory cache, kept per tool for 10 minutes) or `static` (the CLI is missing,
+timed out after 15 s or printed something unparsable, so only the built-in and configured
+entries are shown). The "Refresh" link under the model select calls the route with
+`?refresh=1`, which bypasses the cache. Discovery never fails the request: a broken CLI
+just degrades to `static`.
+
+The chosen effort is stored on the runner (`effort`, nullable) and only handed to tools
+that understand it; `gemini` and `custom` ignore it.
 
 ### Permission modes
 

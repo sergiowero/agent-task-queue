@@ -97,6 +97,7 @@ export const createRunnerSchema = z.object({
   role: runnerRoleSchema,
   projectId: z.string().min(1).max(200).nullable().optional(),
   model: z.string().max(200).nullable().optional(),
+  effort: z.string().max(40).nullable().optional(),
   concurrency: z.number().int().min(1).max(16).optional(),
   pollIntervalSec: z.number().int().min(1).max(3600).optional(),
   permissionMode: z.enum(["safe", "full"]).optional(),

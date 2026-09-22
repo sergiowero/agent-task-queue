@@ -373,6 +373,7 @@ export class RunnerEngine {
         taskId: task.id,
         role: effectiveRole,
         model: runner.model,
+        effort: runner.effort,
         permissionMode: runner.permissionMode,
         extraArgs: runner.extraArgs,
       });

@@ -359,6 +359,7 @@ describe("buildCommand", () => {
     taskId: "t1",
     role: "implementer",
     model: null,
+    effort: null,
     permissionMode: "safe" as const,
     extraArgs: null,
   };
@@ -391,6 +392,32 @@ describe("buildCommand", () => {
     expect(custom.cmd).toEqual(["bash", "-c", "echo hi", "PROMPT"]);
     expect(custom.env?.AGENTQ_PROMPT).toBe("PROMPT");
     expect(() => buildCommand("custom", ctx)).toThrow();
+  });
+
+  it("passes the effort only to tools that support it", () => {
+    const claude = buildCommand("claude", { ...ctx, model: "sonnet", effort: "high", extraArgs: ["--verbose"] });
+    expect(claude.cmd.slice(-5)).toEqual(["--model", "sonnet", "--effort", "high", "--verbose"]);
+    expect(buildCommand("claude", ctx).cmd).not.toContain("--effort");
+
+    expect(buildCommand("codex", { ...ctx, model: "gpt-5.5", effort: "xhigh", extraArgs: ["--json"] }).cmd).toEqual([
+      "codex", "exec", "--full-auto", "-C", "/repo", "--skip-git-repo-check",
+      "-m", "gpt-5.5", "-c", 'model_reasoning_effort="xhigh"', "--json", "PROMPT",
+    ]);
+    expect(buildCommand("codex", { ...ctx, effort: "low" }).cmd).toEqual([
+      "codex", "exec", "--full-auto", "-C", "/repo", "--skip-git-repo-check", "-c", 'model_reasoning_effort="low"', "PROMPT",
+    ]);
+
+    expect(buildCommand("opencode", { ...ctx, model: "opencode/big-pickle", effort: "max" }).cmd).toEqual([
+      "opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "opencode/big-pickle", "--variant", "max", "PROMPT",
+    ]);
+
+    // gemini and custom have no effort flag: the value is ignored.
+    expect(buildCommand("gemini", { ...ctx, model: "gemini-2.5-pro", effort: "high" }).cmd).toEqual([
+      "gemini", "-p", "PROMPT", "--yolo", "-m", "gemini-2.5-pro",
+    ]);
+    expect(buildCommand("custom", { ...ctx, effort: "high", extraArgs: ["bash", "-c", "echo hi"] }).cmd).toEqual([
+      "bash", "-c", "echo hi", "PROMPT",
+    ]);
   });
 
   it("strips YAML frontmatter from skills", () => {
