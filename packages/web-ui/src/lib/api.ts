@@ -64,6 +64,75 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
+export type RunnerRole = "planner" | "implementer" | "reviewer" | "senior" | "architect";
+export type RunnerPermissionMode = "safe" | "full";
+export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted";
+
+export interface RunnerJob {
+  id: string;
+  runnerId: string;
+  taskId: string;
+  taskTitle: string;
+  phase: "plan" | "code" | "review" | "merge";
+  pid: number | null;
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  status: RunnerJobStatus;
+  logPath: string;
+}
+
+export interface RunnerState {
+  id: string;
+  running: boolean;
+  activeJobs: number;
+  lastError: string | null;
+  lastJob: RunnerJob | null;
+  jobCount: number;
+}
+
+export interface Runner {
+  id: string;
+  name: string;
+  tool: RunnerTool;
+  role: RunnerRole;
+  projectId: string | null;
+  model: string | null;
+  concurrency: number;
+  pollIntervalSec: number;
+  permissionMode: RunnerPermissionMode;
+  extraArgs: string[] | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  state: RunnerState;
+}
+
+export interface RunnerInput {
+  name: string;
+  tool: RunnerTool;
+  role: RunnerRole;
+  projectId?: string | null;
+  model?: string | null;
+  concurrency?: number;
+  pollIntervalSec?: number;
+  permissionMode?: RunnerPermissionMode;
+  extraArgs?: string[] | null;
+  enabled?: boolean;
+}
+
+export interface ToolInfo {
+  tool: RunnerTool;
+  installed: boolean;
+  version: string | null;
+}
+
+/** Payload of the `runner_job` SSE event. */
+export type RunnerJobEvent =
+  | { type: "started" | "finished"; runnerId: string; jobId: string; job: RunnerJob }
+  | { type: "output"; runnerId: string; jobId: string; taskId: string; chunk: string };
+
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
@@ -157,4 +226,19 @@ export const api = {
     return request<PaginatedResponse<ActivityEvent>>(`/activity${qs ? `?${qs}` : ""}`);
   },
 
+  getRunners: () => request<Runner[]>("/runners"),
+  getRunnerTools: () => request<ToolInfo[]>("/runners/tools"),
+  createRunner: (data: RunnerInput) =>
+    request<Runner>("/runners", { method: "POST", body: JSON.stringify(data) }),
+  updateRunner: (id: string, data: Partial<RunnerInput>) =>
+    request<Runner>(`/runners/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteRunner: (id: string) => request<void>(`/runners/${id}`, { method: "DELETE" }),
+  startRunner: (id: string) => request<Runner>(`/runners/${id}/start`, { method: "POST" }),
+  stopRunner: (id: string) => request<Runner>(`/runners/${id}/stop`, { method: "POST" }),
+  getRunnerJobs: (id: string) => request<RunnerJob[]>(`/runners/${id}/jobs`),
+  getRunnerJobLog: async (runnerId: string, jobId: string, tail = 200) => {
+    const res = await fetch(`${API_BASE}/runners/${runnerId}/jobs/${jobId}/log?tail=${tail}`);
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    return res.text();
+  },
 };

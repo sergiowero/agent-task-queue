@@ -613,7 +613,8 @@ describe("GET /api/events (SSE)", () => {
   it("streams a task_created event when a task is posted", async () => {
     const controller = new AbortController();
     // Bun's fetch() only resolves once the first body byte arrives on a streaming
-    // response, so open the stream first and post tasks until it resolves.
+    // response. The server flushes a ": connected" comment on open, but keep
+    // posting tasks until it resolves so the test does not depend on that.
     const pending = api("/api/events", { signal: controller.signal });
     pending.catch(() => {});
 
@@ -635,8 +636,11 @@ describe("GET /api/events (SSE)", () => {
     const reader = res!.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    // Comment frames (": connected", keepalives) carry no event; wait for a real one.
+    const hasEvent = () =>
+      buffer.split("\n\n").some((block) => block.startsWith("event: "));
     try {
-      while (!buffer.includes("\n\n") && Date.now() < deadline + 2_000) {
+      while (!hasEvent() && Date.now() < deadline + 2_000) {
         const chunk = await Promise.race([
           reader.read(),
           new Promise<never>((_, reject) =>
@@ -651,7 +655,7 @@ describe("GET /api/events (SSE)", () => {
       reader.cancel().catch(() => {});
     }
 
-    const eventBlock = buffer.split("\n\n")[0];
+    const eventBlock = buffer.split("\n\n").find((block) => block.startsWith("event: "))!;
     expect(eventBlock).toContain("event: task_created");
     const dataLine = eventBlock.split("\n").find((l) => l.startsWith("data: "));
     expect(dataLine).toBeDefined();

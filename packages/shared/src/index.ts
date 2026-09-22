@@ -8,11 +8,15 @@ export {
   type Agent,
   type Project,
   type ActivityEvent,
+  type Runner,
+  type RunnerTool,
+  type RunnerPermissionMode,
 } from "./types.js";
 
 export {
   createTask,
   getTasks,
+  getTasksUpdatedSince,
   getTaskById,
   getNextClaimableTask,
   getClaimableTasks,
@@ -45,6 +49,12 @@ export {
   addConversationEntry,
   getStatusHistory,
   addStatusHistoryEntry,
+  createRunner,
+  getRunners,
+  getRunnerById,
+  updateRunner,
+  deleteRunner,
+  resetDb,
 } from "./database.js";
 
 export {
@@ -58,6 +68,8 @@ export {
   buildAgentRef,
   claimNextTask,
   releaseTask,
+  revertClaim,
+  REVERT_FALLBACK,
   appendContext,
   requireTaskInStatus,
   submitPlan,
@@ -88,6 +100,12 @@ export {
   registerAgentSchema,
   claimTaskSchema,
   paginationSchema,
+  createRunnerSchema,
+  updateRunnerSchema,
+  runnerToolSchema,
+  runnerRoleSchema,
+  type CreateRunnerInput,
+  type UpdateRunnerInput,
   type CreateTaskInput,
   type UpdateTaskInput,
   type TransitionTaskInput,

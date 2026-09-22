@@ -12,6 +12,9 @@ const TaskDetailPage = lazy(() =>
 const AgentsPage = lazy(() =>
   import("./pages/AgentsPage").then((m) => ({ default: m.AgentsPage })),
 );
+const RunnersPage = lazy(() =>
+  import("./pages/RunnersPage").then((m) => ({ default: m.RunnersPage })),
+);
 const ActivityPage = lazy(() =>
   import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })),
 );
@@ -49,6 +52,14 @@ export default function App() {
           element={
             <Page>
               <AgentsPage />
+            </Page>
+          }
+        />
+        <Route
+          path="/runners"
+          element={
+            <Page>
+              <RunnersPage />
             </Page>
           }
         />
