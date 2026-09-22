@@ -148,6 +148,8 @@ export interface ClaimNextTaskInput {
   };
   context?: string;
   projectId?: string;
+  /** Tasks to skip (e.g. a runner backing off after a failed attempt). */
+  excludeTaskIds?: string[];
 }
 
 export interface ClaimNextTaskResult {
@@ -163,7 +165,12 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
   }
 
   return withTransaction(() => {
-    const candidates = getClaimableTasks(claimableStatuses, input.projectId, MAX_CLAIM_ATTEMPTS);
+    const candidates = getClaimableTasks(
+      claimableStatuses,
+      input.projectId,
+      MAX_CLAIM_ATTEMPTS,
+      input.excludeTaskIds ?? [],
+    );
     for (const candidate of candidates) {
       const effectiveRole = getEffectiveRole(candidate.status, input.role);
       const newStatus = getClaimTransition(candidate.status, effectiveRole);
@@ -194,6 +201,50 @@ export function releaseTask(
   patch?: Omit<Parameters<typeof updateTask>[1], "assignedAgent">,
 ): Task | null {
   return updateTask(taskId, { ...patch, assignedAgent: null });
+}
+
+/** Active statuses (an agent holds the task) and where a revert lands if history is unusable. */
+export const REVERT_FALLBACK: Partial<Record<TaskStatus, TaskStatus>> = {
+  [TaskStatus.Planning]: TaskStatus.PlanRequested,
+  [TaskStatus.Coding]: TaskStatus.ReadyForCode,
+  [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
+  [TaskStatus.Merging]: TaskStatus.Approved,
+};
+
+const CLAIMABLE_FROM: Partial<Record<TaskStatus, TaskStatus[]>> = {
+  [TaskStatus.Planning]: [TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested],
+  [TaskStatus.Coding]: [TaskStatus.ReadyForCode, TaskStatus.ChangesRequested],
+  [TaskStatus.Reviewing]: [TaskStatus.CodeReviewRequested],
+  [TaskStatus.Merging]: [TaskStatus.Approved],
+};
+
+/**
+ * Releases a task whose agent went away without submitting (e.g. the runner's
+ * child process exited). The task returns to the status it was claimed from
+ * (the last history entry's pre_status when it is a valid origin, otherwise a
+ * per-status fallback). Returns null when the task is not in an active status
+ * any more, i.e. the agent already submitted or the user intervened.
+ */
+export function revertClaim(taskId: string, reason: string): Task | null {
+  return withTransaction(() => {
+    const task = getTaskById(taskId);
+    if (!task) return null;
+    const fallback = REVERT_FALLBACK[task.status];
+    if (!fallback) return null;
+
+    const last = task.history[task.history.length - 1];
+    const valid = CLAIMABLE_FROM[task.status] ?? [];
+    const target =
+      last && last.new_status === task.status && valid.includes(last.pre_status as TaskStatus)
+        ? (last.pre_status as TaskStatus)
+        : fallback;
+
+    let updated = recordHistory(task, target);
+    updated = releaseTask(updated.id)!;
+    updated = addConversation(updated, "system", reason, "system");
+    addActivity(taskId, "task_reverted", "runner", reason);
+    return getTaskById(updated.id);
+  });
 }
 
 export function appendContext(task: Task, context?: string): Task {

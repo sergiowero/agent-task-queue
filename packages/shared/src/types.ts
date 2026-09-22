@@ -94,3 +94,22 @@ export interface ActivityEvent {
   details: string | null;
   createdAt: string;
 }
+
+export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
+export type RunnerPermissionMode = "safe" | "full";
+
+export interface Runner {
+  id: string;
+  name: string;
+  tool: RunnerTool;
+  role: string;
+  projectId: string | null;
+  model: string | null;
+  concurrency: number;
+  pollIntervalSec: number;
+  permissionMode: RunnerPermissionMode;
+  extraArgs: string[] | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
