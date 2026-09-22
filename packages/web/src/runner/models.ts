@@ -190,7 +190,7 @@ async function discoverOpencode(exec: ExecFn): Promise<ModelDiscovery> {
 
 // ─── codex ──────────────────────────────────────────────────────────
 
-/** `codex debug models` JSON → listed models, highest priority first. */
+/** `codex debug models` JSON → listed models, lowest priority number first (newest, as in the codex picker). */
 export function parseCodexModels(stdout: string): ModelOption[] {
   let json: any;
   try {
@@ -201,7 +201,7 @@ export function parseCodexModels(stdout: string): ModelOption[] {
   const list: any[] = Array.isArray(json?.models) ? json.models : [];
   return list
     .filter((m) => m && typeof m.slug === "string" && m.visibility === "list")
-    .sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0) || String(a.slug).localeCompare(String(b.slug)))
+    .sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0) || String(a.slug).localeCompare(String(b.slug)))
     .map((m) => {
       const efforts = (Array.isArray(m.supported_reasoning_levels) ? m.supported_reasoning_levels : [])
         .map((l: any) => (typeof l?.effort === "string" ? l.effort : null))

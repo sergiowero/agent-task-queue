@@ -118,9 +118,9 @@ describe("parsers", () => {
     expect(models[2]).toEqual({ id: "github-copilot/claude-opus-5", label: "claude-opus-5", description: "github-copilot" });
   });
 
-  it("keeps only listed codex models, highest priority first", () => {
+  it("keeps only listed codex models, lowest priority number first", () => {
     const models = parseCodexModels(CODEX_OUTPUT);
-    expect(models.map((m) => m.id)).toEqual(["gpt-5.5", "gpt-5.6-terra"]);
+    expect(models.map((m) => m.id)).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
     expect(models[1]).toEqual({
       id: "gpt-5.6-terra",
       label: "GPT-5.6-Terra",
@@ -174,7 +174,7 @@ describe("discoverModels", () => {
     writeFileSync(join(HOME, ".codex", "config.toml"), `model = "gpt-5.6-sol"\nmodel_reasoning_effort = "max"\n\n[mcp_servers.x]\ncommand = "y"\n`);
     const result = await discoverModels("codex", fakeExec({ "codex debug models": CODEX_OUTPUT }), { homeDir: HOME });
     expect(result.source).toBe("cli");
-    expect(result.models.map((m) => m.id)).toEqual(["gpt-5.6-sol", "gpt-5.5", "gpt-5.6-terra"]);
+    expect(result.models.map((m) => m.id)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"]);
     expect(result.models[0]).toMatchObject({ label: "gpt-5.6-sol (configured)", defaultEffort: "max" });
     expect(result.models[0].efforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
     expect(result.models[1]).toMatchObject({ label: "GPT-5.5", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "high" });
@@ -187,7 +187,7 @@ describe("discoverModels", () => {
     mkdirSync(join(HOME, ".codex"), { recursive: true });
     writeFileSync(join(HOME, ".codex", "config.toml"), `model = "gpt-5.5"\n`);
     const result = await discoverModels("codex", fakeExec({ "codex debug models": CODEX_OUTPUT }), { homeDir: HOME });
-    expect(result.models.map((m) => m.id)).toEqual(["gpt-5.5", "gpt-5.6-terra"]);
+    expect(result.models.map((m) => m.id)).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
     expect(result.defaultEffort).toBeNull();
   });
 
