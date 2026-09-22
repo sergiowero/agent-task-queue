@@ -15,6 +15,7 @@ export {
 
 export {
   createTask,
+  defaultBranchName,
   getTasks,
   getTasksUpdatedSince,
   getTaskById,

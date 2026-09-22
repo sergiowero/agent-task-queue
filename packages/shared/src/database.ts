@@ -432,6 +432,19 @@ function rowToActivity(row: any): ActivityEvent {
 
 // ─── Tasks ────────────────────────────────────────────────────────────
 
+// Agents need a feature branch name; derive one when the creator did not pick it.
+export function defaultBranchName(id: string, title: string): string {
+  const slug = title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return `task/${id.slice(0, 8)}${slug ? `-${slug}` : ""}`;
+}
+
 export function createTask(data: {
   title: string;
   description: string;
@@ -446,15 +459,16 @@ export function createTask(data: {
   contexts?: string[];
 }): Task {
   const now = new Date().toISOString();
+  const id = randomUUID();
   const task: Task = {
-    id: randomUUID(),
+    id,
     title: data.title,
     description: data.description,
     steerDetails: data.steerDetails ?? null,
     guardrails: data.guardrails ?? [],
     acceptanceCriteria: data.acceptanceCriteria ?? [],
     priority: data.priority ?? 0,
-    recommendedBranch: data.recommendedBranch ?? "",
+    recommendedBranch: data.recommendedBranch?.trim() || defaultBranchName(id, data.title),
     realBranch: null,
     requiresPlan: data.requiresPlan ?? false,
     mergeBranch: data.mergeBranch ?? "develop",
