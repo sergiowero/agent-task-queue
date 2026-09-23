@@ -47,6 +47,7 @@ export {
   MessageSquareWarning as RequestChangesIcon,
   Sparkles as AiReviewIcon,
   CheckCheck as CompleteIcon,
+  Archive as ArchiveIcon,
   LockOpen as UnblockIcon,
   Ban as CancelTaskIcon,
   Send as SendIcon,

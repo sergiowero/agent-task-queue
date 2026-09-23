@@ -13,6 +13,7 @@ import {
   submitReview,
   submitMerge,
   postComment,
+  archiveTask,
   WorkflowError,
 } from "@agentq/shared";
 
@@ -358,6 +359,51 @@ export function createAgentQMcpServer(): McpServer {
       run(() => {
         const task = postComment(input.taskId, { message: input.message, author: input.author });
         return { success: true, task: withProject(task) };
+      }),
+  );
+
+  server.registerTool(
+    "archive_task",
+    {
+      title: "Archive task",
+      description:
+        "Archive a task in `complete` status: writes `<name>.summary.md` (description + what was done) and `<name>.detailed.md` (every message, status change, agent session and activity event, with PR and branch) to {project.workingDirectory}/archive/, then takes the task off the board. Same as the board's Archive button and `agentq archive --json`.",
+      inputSchema: {
+        taskId: taskIdSchema,
+        pullRequests: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "PR URLs or refs to record; PR URLs in the conversation are found automatically",
+          ),
+        overview: z
+          .string()
+          .optional()
+          .describe("Markdown overview of what was done, placed at the top of the summary file"),
+        force: z
+          .boolean()
+          .optional()
+          .describe("Archive again a task that is already archived (rewrites its files)"),
+        author: authorSchema,
+      },
+    },
+    (input) =>
+      run(() => {
+        const result = archiveTask(input.taskId, {
+          pullRequests: input.pullRequests,
+          overview: input.overview,
+          force: input.force,
+          actor: input.author ?? "agent",
+        });
+        return {
+          success: true,
+          taskId: result.task.id,
+          archivedAt: result.task.archivedAt,
+          directory: result.directory,
+          summaryPath: result.summaryPath,
+          detailedPath: result.detailedPath,
+          pullRequests: result.pullRequests,
+        };
       }),
   );
 

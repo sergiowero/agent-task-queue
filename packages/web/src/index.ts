@@ -1,8 +1,11 @@
 import type {
   Task,
   PaginatedResponse,
+  ArchiveRunnerJob,
 } from "@agentq/shared";
 import {
+  archiveTask,
+  WorkflowError,
   createTask,
   getTasks,
   getTasksUpdatedSince,
@@ -504,6 +507,25 @@ function runnerWithState(runner: NonNullable<ReturnType<typeof getRunnerById>>) 
   return { ...runner, state: runnerEngine.getState(runner.id) };
 }
 
+/** Runner jobs (still in this server's job history) that worked on a task, for its archive. */
+function runnerJobsForTask(taskId: string): ArchiveRunnerJob[] {
+  return getRunners().flatMap((runner) =>
+    runnerEngine
+      .getJobs(runner.id)
+      .filter((job) => job.taskId === taskId)
+      .map((job) => ({
+        runnerName: runner.name,
+        tool: runner.tool,
+        phase: job.phase,
+        status: job.status,
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt ?? null,
+        exitCode: job.exitCode ?? null,
+        logPath: job.logPath,
+      })),
+  );
+}
+
 const handleRunnerTools = wrapHandler(async (req, url) => {
   if (url.pathname !== "/api/runners/tools" || req.method !== "GET") throw null;
   return jsonResponse(await listTools());
@@ -616,7 +638,8 @@ const handleTasksList = wrapHandler(async (req, url) => {
   });
   const { limit, offset } = pagination.success ? pagination.data : { limit: 50, offset: 0 };
   const projectId = url.searchParams.get("projectId") ?? undefined;
-  const allTasks = getTasks(projectId);
+  const includeArchived = url.searchParams.get("includeArchived") === "true";
+  const allTasks = getTasks(projectId, { includeArchived });
   const sliced = allTasks.slice(offset, offset + limit);
   return jsonResponse(paginate(sliced, allTasks.length, { limit, offset }));
 });
@@ -857,6 +880,23 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
       addActivity(taskId, "task_unblocked", "user", `Reverted to ${target}`);
       broadcastSSE("task_updated", updated);
       break;
+    }
+
+    case "archive": {
+      try {
+        const result = archiveTask(taskId, {
+          force: parsed.data.force,
+          pullRequests: parsed.data.pullRequests,
+          overview: parsed.data.overview,
+          actor: parsed.data.authorName ?? "user",
+          runnerJobs: runnerJobsForTask(taskId),
+        });
+        broadcastSSE("task_updated", result.task);
+        return jsonResponse(result);
+      } catch (e) {
+        if (e instanceof WorkflowError) return errorResponse(e.message);
+        throw e;
+      }
     }
 
     default:

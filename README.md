@@ -14,6 +14,7 @@ AgentQ is a local task queue system for managing coding-agent work across multip
 - **CLI for agents** - Structured commands for agents to interact with the queue
 - **Runners** - Launch Claude Code, Codex, OpenCode or Gemini headless on claimed tasks, no manual prompting
 - **Plan → Code → Review → Merge** - Full workflow with approval gates and feedback loops
+- **Archive** - Save complete tasks in the project's `archive/` folder as Markdown (a summary and a full record), from the board or with the `agentq-archive` skill
 
 ## Quick Start
 
@@ -51,7 +52,7 @@ Open `http://localhost:3000` for both the API and the web UI (single port).
 
 The web interface provides:
 
-- **Task Board** - Kanban columns: Pending, In Progress, Need Review, Done
+- **Task Board** - Kanban columns: Pending, In Progress, Need Review, Done. Complete cards have an **Archive** button
 - **Task Details** - Full task info, conversation thread, and history
 - **Agents View** - Monitor active agents and their current tasks
 - **Activity Feed** - Real-time event stream of all task lifecycle events
@@ -81,7 +82,26 @@ agentq submit-review <task-id> --json -m "## Review\n- Looks good"
 
 # Submit merge
 agentq submit-merge <task-id> --json -b <branch> -c <commit> --authors <authors>
+
+# Archive a complete task into {project}/archive/ (what the board's Archive button does)
+agentq list --status complete --json
+agentq archive <task-id> --json [--pr <url>] [--summary "<markdown overview>"]
 ```
+
+### Archive
+
+Archiving a task in `complete` status writes two Markdown files to `{project.workingDirectory}/archive/`
+and takes the task off the board (`agentq get` and the task page still show it):
+
+| File | Content |
+|------|---------|
+| `<date>-<id8>-<slug>.summary.md` | Key facts (branch, merge target, PR, commit, authors, agents, dates), the description, acceptance criteria, what was done (latest plan, implementation, review and merge messages), agent sessions and the status path |
+| `<date>-<id8>-<slug>.detailed.md` | Everything: every field, steer details, guardrails, context notes, each agent and claim, the full status history, every conversation message, the activity log and the raw task JSON |
+
+Use the **Archive** button on a complete card (or on the task page), `agentq archive`, the MCP
+`archive_task` tool, or the `agentq-archive` skill. The skill also finds the PR with `gh` when the
+conversation does not mention it and writes an overview of what was done. The files are left
+uncommitted.
 
 ### Runners
 
@@ -136,7 +156,7 @@ agent-task-queue/
 │   ├── shared/       # Database, types, workflow rules (single source of truth)
 │   └── installer/    # Binary + skills + agents installers
 ├── docs/             # architecture.md, runner.md, mcp.md, project-spec.md
-└── skills/           # Agent skills: agentq-claim (router) + agentq-plan/code/review/merge + agentq-create-task
+└── skills/           # Agent skills: agentq-claim (router) + agentq-plan/code/review/merge + agentq-create-task + agentq-archive
 ```
 
 ### Ways an agent can talk to AgentQ
@@ -188,6 +208,7 @@ New → Planning → Waiting Plan Review → Ready for Code
 - **Request AI review** - Trigger automated code review
 - **Cancel task** - Stop work on task (any active state)
 - **Confirm completion** - Mark merged task as Complete
+- **Archive** - Save a complete task to `{project}/archive/` as Markdown and take it off the board
 
 ## Configuration
 

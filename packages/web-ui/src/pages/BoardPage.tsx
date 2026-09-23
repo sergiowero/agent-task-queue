@@ -27,6 +27,7 @@ import { cn } from "../lib/cn";
 import { TaskCard } from "../components/TaskCard";
 import { CreateTaskModal } from "../components/CreateTaskModal";
 import { DeleteTaskModal } from "../components/DeleteTaskModal";
+import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
 import { Skeleton } from "../components/Skeleton";
 import { PageHeader, CountPill } from "../components/PageHeader";
@@ -111,6 +112,7 @@ export function BoardPage() {
   const [hiddenColumns] = useState<Set<string>>(new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
+  const [archivingTask, setArchivingTask] = useState<Task | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
@@ -441,6 +443,11 @@ export function BoardPage() {
                               task={task}
                               onClick={() => navigate(`/tasks/${task.id}/details`)}
                               onDelete={editable ? () => setDeletingTask(task) : undefined}
+                              onArchive={
+                                task.status === "complete"
+                                  ? () => setArchivingTask(task)
+                                  : undefined
+                              }
                               selected={selectedTaskIds.has(task.id)}
                               onToggleSelect={editable ? () => toggleSelect(task.id) : undefined}
                             />
@@ -506,6 +513,14 @@ export function BoardPage() {
               return next;
             });
           }}
+        />
+      )}
+
+      {archivingTask && (
+        <ArchiveTaskModal
+          task={archivingTask}
+          project={projects.find((p) => p.id === archivingTask.projectId)}
+          onClose={() => setArchivingTask(null)}
         />
       )}
 

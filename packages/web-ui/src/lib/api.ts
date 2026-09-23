@@ -20,6 +20,19 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /** Set once the task was written to its project's archive/ folder (it then leaves the board). */
+  archivedAt: string | null;
+  /** Absolute path of the archive summary file; the detailed record sits next to it. */
+  archivePath: string | null;
+}
+
+/** Response of `POST /tasks/:id/archive`. */
+export interface ArchiveResult {
+  task: Task;
+  directory: string;
+  summaryPath: string;
+  detailedPath: string;
+  pullRequests: string[];
 }
 
 export interface ConversationEntry {
@@ -210,6 +223,8 @@ export const api = {
   confirmCompletion: (id: string) =>
     request<Task>(`/tasks/${id}/confirm-completion`, { method: "POST" }),
   cancel: (id: string) => request<Task>(`/tasks/${id}/cancel`, { method: "POST" }),
+  archiveTask: (id: string, data: { force?: boolean } = {}) =>
+    request<ArchiveResult>(`/tasks/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
   unblock: (id: string) => request<Task>(`/tasks/${id}/unblock`, { method: "POST" }),
   addComment: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/add-comment`, { method: "POST", body: JSON.stringify(data) }),

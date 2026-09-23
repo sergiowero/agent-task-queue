@@ -16,6 +16,8 @@ export {
 export {
   createTask,
   defaultBranchName,
+  slugify,
+  setTaskArchive,
   getTasks,
   getTasksUpdatedSince,
   getTaskById,
@@ -91,6 +93,27 @@ export {
   CANCELED_CANT_CANCEL,
   CANT_DELETE_STATUSES,
 } from "./workflow.js";
+
+export {
+  archiveTask,
+  buildArchiveDocuments,
+  resolveArchiveDirectory,
+  archiveBaseName,
+  extractAgentSessions,
+  findPullRequests,
+  parseMergeRecord,
+  embedMarkdown,
+  statusLabel,
+  ARCHIVE_DIR_NAME,
+  ARCHIVABLE_STATUSES,
+  type ArchiveTaskOptions,
+  type ArchiveTaskResult,
+  type ArchiveRunnerJob,
+  type ArchiveDocuments,
+  type ArchiveDocumentsInput,
+  type AgentSession,
+  type MergeRecord,
+} from "./archive.js";
 
 export {
   createTaskSchema,

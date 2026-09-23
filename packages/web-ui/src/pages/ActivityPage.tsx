@@ -11,6 +11,7 @@ import {
   AgentsIcon,
   AiReviewIcon,
   ApproveIcon,
+  ArchiveIcon,
   CancelTaskIcon,
   ChevronRightIcon,
   CompleteIcon,
@@ -43,6 +44,7 @@ interface EventMeta {
 const EVENT_META: Record<string, EventMeta> = {
   task_created: { label: "Task created", icon: AddIcon, tone: "primary" },
   task_completed: { label: "Task completed", icon: CompleteIcon, tone: "success" },
+  task_archived: { label: "Task archived", icon: ArchiveIcon, tone: "neutral" },
   task_canceled: { label: "Task canceled", icon: CancelTaskIcon, tone: "danger" },
   task_reverted: { label: "Task reverted", icon: RevertedIcon, tone: "warning" },
   task_unblocked: { label: "Task unblocked", icon: UnblockIcon, tone: "info" },

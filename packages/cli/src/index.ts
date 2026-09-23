@@ -13,6 +13,7 @@ import {
   submitCode,
   submitReview,
   submitMerge,
+  archiveTask,
   WorkflowError,
 } from "@agentq/shared";
 
@@ -26,7 +27,10 @@ interface JsonOption {
   json?: boolean;
 }
 
-interface ListOptions extends JsonOption {}
+interface ListOptions extends JsonOption {
+  status?: string;
+  project?: string;
+}
 
 interface ProjectsOptions extends JsonOption {}
 
@@ -83,6 +87,14 @@ interface SubmitMergeOptions extends JsonOption {
   message?: string;
   author?: string;
   context?: string;
+}
+
+interface ArchiveOptions extends JsonOption {
+  pr: string[];
+  summary?: string;
+  dir?: string;
+  force?: boolean;
+  author?: string;
 }
 
 // ─── JSON Output Helpers ───────────────────────────────────────────────
@@ -191,11 +203,18 @@ function printTask(task: {
 
 program
   .command("list")
-  .description("List all tasks")
-  .addHelpText("after", "\nExamples:\n  agentq list\n  agentq list --json")
+  .description("List all tasks (archived tasks are left out)")
+  .addHelpText(
+    "after",
+    "\nExamples:\n  agentq list\n  agentq list --json\n  agentq list --status complete --project <id> --json",
+  )
+  .option("--status <status>", "Only tasks in this status (e.g. complete)")
+  .option("--project <id>", "Only tasks of this project")
   .option("--json", "Output as JSON")
   .action((options: ListOptions) => {
-    const tasks = getTasks();
+    const tasks = getTasks(options.project).filter(
+      (task) => !options.status || task.status === options.status,
+    );
     if (options.json) {
       const tasksWithProjects = tasks.map((task) => {
         const project = task.projectId ? getProjectByTaskId(task.id) : null;
@@ -463,6 +482,61 @@ program
       options.json,
     );
     printSubmitResult(result, options.json);
+  });
+
+// ─── Archive command ───────────────────────────────────────────────────
+
+program
+  .command("archive <taskId>")
+  .description(
+    "Archive a complete task: write a summary and a detailed Markdown record to {project}/archive/ and take it off the board",
+  )
+  .addHelpText(
+    "after",
+    "\nExamples:\n  agentq archive <task-id> --json\n  agentq archive <task-id> --pr https://github.com/org/repo/pull/42 --summary \"## Overview\\n- ...\" --json",
+  )
+  .option(
+    "--pr <url>",
+    "Pull request URL or ref to record (repeatable; PRs in the conversation are found automatically)",
+    (value: string, previous: string[]) => [...previous, value],
+    [] as string[],
+  )
+  .option("--summary <markdown>", "Overview of what was done, placed at the top of the summary file")
+  .option("--dir <path>", "Write the files here instead of {project}/archive")
+  .option("--force", "Archive again a task that is already archived (rewrites its files)")
+  .option("-a, --author <author>", "Author recorded on the task", "agent")
+  .option("--json", "Output as JSON")
+  .action((taskId: string, options: ArchiveOptions) => {
+    const result = runWorkflow(
+      () =>
+        archiveTask(taskId, {
+          pullRequests: options.pr,
+          overview: options.summary,
+          directory: options.dir,
+          force: options.force,
+          actor: options.author,
+        }),
+      options.json,
+    );
+    if (options.json) {
+      jsonOutput(
+        {
+          success: true,
+          taskId: result.task.id,
+          archivedAt: result.task.archivedAt,
+          directory: result.directory,
+          summaryPath: result.summaryPath,
+          detailedPath: result.detailedPath,
+          pullRequests: result.pullRequests,
+        },
+        true,
+      );
+      return;
+    }
+    console.log(`Task archived: ${result.task.title}`);
+    console.log(`  Summary:       ${result.summaryPath}`);
+    console.log(`  Full record:   ${result.detailedPath}`);
+    console.log(`  Pull requests: ${result.pullRequests.join(", ") || "(none found)"}`);
   });
 
 program.parse();

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { randomUUID } from "crypto";
-import { existsSync, unlinkSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -351,5 +351,103 @@ describe("agentq claim + submit workflow", () => {
     expect(out.task.id).toBe(planTaskId);
     expect(out.task.status).toBe("planning");
     expect(out.agent.role).toBe("planner");
+  });
+});
+
+describe("agentq archive", () => {
+  const archiveRoot = mkdtempSync(join(tmpdir(), "agentq-cli-archive-"));
+  const archiveProjectId = randomUUID();
+  let completeTaskId: string;
+  let pendingTaskId: string;
+
+  beforeAll(async () => {
+    const res = await withShared(
+      `shared.createProject({
+         id: ${JSON.stringify(archiveProjectId)},
+         displayName: "CLI Archive Project",
+         workingDirectory: ${JSON.stringify(archiveRoot)},
+       });
+       console.log(JSON.stringify({ ok: true }));`,
+    );
+    expect(res.stderr).toBe("");
+    expect(res.code).toBe(0);
+
+    const done = await cliOk(
+      "create",
+      "Finished work",
+      "--project",
+      archiveProjectId,
+      "-d",
+      "All done",
+      "--json",
+    );
+    completeTaskId = done.task.id;
+    await setStatus(completeTaskId, "complete");
+    const pending = await cliOk(
+      "create",
+      "Still pending",
+      "--project",
+      archiveProjectId,
+      "-d",
+      "d",
+      "--json",
+    );
+    pendingTaskId = pending.task.id;
+  });
+
+  afterAll(() => {
+    rmSync(archiveRoot, { recursive: true, force: true });
+  });
+
+  it("list --status / --project filter the tasks", async () => {
+    const out = await cliOk(
+      "list",
+      "--status",
+      "complete",
+      "--project",
+      archiveProjectId,
+      "--json",
+    );
+    expect(out.tasks.map((t: { id: string }) => t.id)).toEqual([completeTaskId]);
+  });
+
+  it("refuses a task that is not complete", async () => {
+    const res = await cli("archive", pendingTaskId, "--json");
+    expect(res.code).toBe(1);
+    expect(res.json.success).toBe(false);
+    expect(res.json.error).toContain("Only complete tasks can be archived");
+  });
+
+  it("writes the summary and detailed files and takes the task off the list", async () => {
+    const out = await cliOk(
+      "archive",
+      completeTaskId,
+      "--pr",
+      "https://github.com/org/repo/pull/5",
+      "--pr",
+      "#6",
+      "--summary",
+      "- Shipped it.",
+      "--json",
+    );
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(completeTaskId);
+    expect(out.directory).toBe(join(archiveRoot, "archive"));
+    expect(out.pullRequests).toEqual(["https://github.com/org/repo/pull/5", "#6"]);
+    const summary = readFileSync(out.summaryPath, "utf8");
+    expect(summary).toStartWith("# Finished work\n");
+    expect(summary).toContain("## Overview\n\n- Shipped it.");
+    expect(summary).toContain("<https://github.com/org/repo/pull/5>, #6");
+    expect(readFileSync(out.detailedPath, "utf8")).toContain("# Finished work — full record");
+
+    const listed = await cliOk("list", "--project", archiveProjectId, "--json");
+    expect(listed.tasks.map((t: { id: string }) => t.id)).toEqual([pendingTaskId]);
+    const got = await cliOk("get", completeTaskId, "--json");
+    expect(got.task.archivePath).toBe(out.summaryPath);
+    expect(got.task.conversation.at(-1).authorName).toBe("agent");
+
+    const again = await cli("archive", completeTaskId, "--json");
+    expect(again.code).toBe(1);
+    expect(again.json.error).toContain("already archived");
   });
 });

@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { randomUUID } from "crypto";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { Task, Project } from "@agentq/shared";
 import { TaskStatus, createTask, beginTransaction, rollbackTransaction } from "@agentq/shared";
 import { startServer } from "./index.js";
@@ -499,6 +502,74 @@ describe("workflow sub-actions (requiresPlan task)", () => {
   it("cancel is rejected once the task is complete", async () => {
     const res = await subAction(taskId, "cancel");
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/tasks/:id/archive", () => {
+  const archiveRoot = mkdtempSync(join(tmpdir(), "agentq-api-archive-"));
+  const archiveProjectId = randomUUID();
+
+  beforeAll(async () => {
+    const res = await json("/api/projects", "POST", {
+      id: archiveProjectId,
+      displayName: "Archive API Project",
+      workingDirectory: archiveRoot,
+    });
+    expect(res.status).toBe(201);
+  });
+
+  afterAll(() => {
+    rmSync(archiveRoot, { recursive: true, force: true });
+  });
+
+  it("rejects tasks that are not complete", async () => {
+    const task = await createTaskViaApi({ projectId: archiveProjectId });
+    const res = await subAction(task.id, "archive");
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("Only complete tasks can be archived");
+  });
+
+  it("writes both files, hides the task from the board list and refuses a second archive", async () => {
+    const task = await createTaskViaApi({ title: "Archive me", projectId: archiveProjectId });
+    await setStatus(task.id, TaskStatus.Merging);
+    await expectTransition(task.id, "submit-merge", TaskStatus.Merged, {
+      branch: "develop",
+      commit: "abc123",
+      authors: "dev1",
+      message: "PR: https://github.com/org/repo/pull/7",
+    });
+    await expectTransition(task.id, "confirm-completion", TaskStatus.Complete);
+
+    const res = await subAction(task.id, "archive", {
+      pullRequests: ["https://github.com/org/repo/pull/8"],
+    });
+    expect(res.status).toBe(200);
+    const result = await res.json();
+    expect(result.directory).toBe(join(archiveRoot, "archive"));
+    expect(result.pullRequests).toEqual([
+      "https://github.com/org/repo/pull/8",
+      "https://github.com/org/repo/pull/7",
+    ]);
+    expect(result.task.archivedAt).toBeTruthy();
+    expect(result.task.archivePath).toBe(result.summaryPath);
+    expect(readFileSync(result.summaryPath, "utf8")).toStartWith("# Archive me\n");
+    expect(readFileSync(result.detailedPath, "utf8")).toContain("Task completed.");
+
+    const listed = await (await api(`/api/tasks?projectId=${archiveProjectId}`)).json();
+    expect(listed.data.map((t: Task) => t.id)).not.toContain(task.id);
+    const withArchived = await (
+      await api(`/api/tasks?projectId=${archiveProjectId}&includeArchived=true`)
+    ).json();
+    expect(withArchived.data.map((t: Task) => t.id)).toContain(task.id);
+    expect((await getTask(task.id)).archivedAt).toBe(result.task.archivedAt);
+
+    const again = await subAction(task.id, "archive");
+    expect(again.status).toBe(400);
+    expect((await again.json()).error).toContain("already archived");
+
+    const forced = await subAction(task.id, "archive", { force: true });
+    expect(forced.status).toBe(200);
+    expect((await forced.json()).summaryPath).toBe(result.summaryPath);
   });
 });
 

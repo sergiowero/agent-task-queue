@@ -260,6 +260,14 @@ function runMigrations(): void {
     try { d.exec("ALTER TABLE runners ADD COLUMN effort TEXT"); } catch {}
     markMigrationApplied("008_add_runner_effort");
   }
+
+  // Migration 9: Task archive (record written to {project}/archive, task hidden from the board)
+  if (!isMigrationApplied("009_add_task_archive")) {
+    try { d.exec("ALTER TABLE tasks ADD COLUMN archived_at TEXT"); } catch {}
+    try { d.exec("ALTER TABLE tasks ADD COLUMN archive_path TEXT"); } catch {}
+    d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at)");
+    markMigrationApplied("009_add_task_archive");
+  }
 }
 
 export function beginTransaction(): void {
@@ -297,6 +305,7 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
     "006_add_steer_details_guardrails",
     "007_add_runners",
     "008_add_runner_effort",
+    "009_add_task_archive",
   ];
   return migrationNames.map((name) => ({
     name,
@@ -306,6 +315,14 @@ export function getMigrationStatus(): { name: string; applied: boolean }[] {
 
 export function rollbackMigration(name?: string): void {
   const d = getDb();
+
+  if (!name || name === "009_add_task_archive") {
+    // SQLite cannot drop the columns portably; nullify them instead.
+    try { d.exec("UPDATE tasks SET archived_at = NULL, archive_path = NULL"); } catch {}
+    try { d.exec("DROP INDEX IF EXISTS idx_tasks_archived_at"); } catch {}
+    d.exec("DELETE FROM _migrations WHERE name = '009_add_task_archive'");
+    if (name === "009_add_task_archive") return;
+  }
 
   if (!name || name === "008_add_runner_effort") {
     // SQLite cannot drop the column portably; nullify it instead.
@@ -386,6 +403,8 @@ function rowToTask(row: any): Task {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
+    archivedAt: row.archived_at ?? null,
+    archivePath: row.archive_path ?? null,
   };
 }
 
@@ -447,16 +466,21 @@ function rowToActivity(row: any): ActivityEvent {
 
 // ─── Tasks ────────────────────────────────────────────────────────────
 
-// Agents need a feature branch name; derive one when the creator did not pick it.
-export function defaultBranchName(id: string, title: string): string {
-  const slug = title
+/** Lowercase ASCII kebab-case, accents stripped, at most `maxLength` characters. */
+export function slugify(text: string, maxLength = 40): string {
+  return text
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
+    .slice(0, maxLength)
     .replace(/-+$/g, "");
+}
+
+// Agents need a feature branch name; derive one when the creator did not pick it.
+export function defaultBranchName(id: string, title: string): string {
+  const slug = slugify(title);
   return `task/${id.slice(0, 8)}${slug ? `-${slug}` : ""}`;
 }
 
@@ -497,6 +521,8 @@ export function createTask(data: {
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    archivedAt: null,
+    archivePath: null,
   };
 
   const stmt = getDb().prepare(
@@ -545,7 +571,7 @@ export function getClaimableTasks(
 ): Task[] {
   if (statuses.length === 0) return [];
   const placeholders = statuses.map(() => "?").join(", ");
-  let sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL`;
+  let sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL AND archived_at IS NULL`;
   const params: any[] = [...statuses];
   if (projectId) {
     sql += " AND project_id = ?";
@@ -674,8 +700,18 @@ export function softDeleteTask(id: string): boolean {
   return result.changes > 0;
 }
 
-export function getTasks(projectId?: string): Task[] {
+/** Records that the task was written to the archive (and takes it off the board). */
+export function setTaskArchive(id: string, archivedAt: string, archivePath: string): boolean {
+  const result = getDb()
+    .prepare("UPDATE tasks SET archived_at = ?, archive_path = ?, updated_at = ? WHERE id = ?")
+    .run(archivedAt, archivePath, new Date().toISOString(), id);
+  return result.changes > 0;
+}
+
+/** Live tasks; archived ones are left out unless `includeArchived` is set. */
+export function getTasks(projectId?: string, options: { includeArchived?: boolean } = {}): Task[] {
   let sql = "SELECT * FROM tasks WHERE deleted_at IS NULL";
+  if (!options.includeArchived) sql += " AND archived_at IS NULL";
   const params: any[] = [];
   if (projectId) {
     sql += " AND project_id = ?";

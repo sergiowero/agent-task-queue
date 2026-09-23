@@ -57,10 +57,15 @@ export const transitionTaskSchema = z.object({
     "comment",
     "unblock",
     "set_status",
+    "archive",
   ]),
   authorName: z.string().optional(),
   message: z.string().max(10000).optional(),
   targetStatus: z.nativeEnum(TaskStatus).optional(),
+  // archive
+  force: z.boolean().optional(),
+  pullRequests: z.array(z.string().min(1).max(500)).max(20).optional(),
+  overview: z.string().max(20000).optional(),
 });
 
 export const createProjectSchema = z.object({
