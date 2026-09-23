@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach } from "bun:test";
+import { homedir } from "os";
+import { join } from "path";
 import {
   createTask,
   getNextClaimableTask,
@@ -16,6 +18,7 @@ import {
   getStatusHistory,
   addStatusHistoryEntry,
   getMigrationStatus,
+  getDbPath,
 } from "./database.js";
 import { TaskStatus, normalizeStatus } from "./types.js";
 import {
@@ -382,6 +385,17 @@ describe("Env Validation", () => {
     const env = validateEnv();
     expect(env.PORT).toBe(3000);
     expect(env.AGENTQ_DB_PATH).toBe(":memory:");
+  });
+
+  it("defaults the database to ~/.agentq/agentq.db", () => {
+    const previous = process.env.AGENTQ_DB_PATH;
+    delete process.env.AGENTQ_DB_PATH;
+    try {
+      expect(getDbPath()).toBe(join(homedir(), ".agentq", "agentq.db"));
+      expect(validateEnv().AGENTQ_DB_PATH).toBe("~/.agentq/agentq.db");
+    } finally {
+      process.env.AGENTQ_DB_PATH = previous;
+    }
   });
 });
 

@@ -110,7 +110,7 @@ Agent instruction files that define the exact protocol for interacting with Agen
 
 ### Installer
 Scripts for one-click setup:
-- **MCP setup** — `bun run install:mcp` registers the AgentQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI) on macOS, Linux and Windows; safe to run again
+- **MCP setup** — `bun run install:mcp` registers the AgentQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) on macOS, Linux and Windows; safe to run again
 - **Skills installer** — Copies the workflow skill to all supported agent config directories
 
 ---

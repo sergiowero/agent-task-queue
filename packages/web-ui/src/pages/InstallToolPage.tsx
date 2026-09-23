@@ -7,7 +7,7 @@ const INSTALL_STEPS = [
   {
     title: "Register the MCP Server",
     description:
-      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI) to the AgentQ MCP server. Safe to run again.",
+      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) to the AgentQ MCP server. Safe to run again.",
     command: "bun run install:mcp",
   },
   {

@@ -16,5 +16,8 @@
   "dependencies": {
     "@agentq/mcp": "workspace:*",
     "@agentq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }

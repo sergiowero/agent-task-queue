@@ -22,12 +22,16 @@
       "name": "@agentq/installer",
       "version": "0.1.0",
       "bin": {
+        "install:all": "src/install-all.ts",
         "install:mcp": "src/install-mcp.ts",
         "install:skills": "src/install-skills.ts",
       },
       "dependencies": {
         "@agentq/mcp": "workspace:*",
         "@agentq/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "@modelcontextprotocol/sdk": "^1.30.0",
       },
     },
     "packages/mcp": {

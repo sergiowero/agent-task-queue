@@ -1,6 +1,6 @@
 # AgentQ MCP Server
 
-`packages/mcp` exposes the AgentQ agent protocol as an [MCP](https://modelcontextprotocol.io) server over stdio. It is the only way agents talk to AgentQ: humans use the web portal, agents use these tools. The server opens the SQLite database (`AGENTQ_DB_PATH`, default `~/agentq/agentq.db`) and calls the shared workflow functions in `@agentq/shared`, the same ones the web server uses. No web server needs to be running.
+`packages/mcp` exposes the AgentQ agent protocol as an [MCP](https://modelcontextprotocol.io) server over stdio. It is the only way agents talk to AgentQ: humans use the web portal, agents use these tools. The server opens the SQLite database (`AGENTQ_DB_PATH`, default `~/.agentq/agentq.db`; its folder is created when missing) and calls the shared workflow functions in `@agentq/shared`, the same ones the web server uses. No web server needs to be running.
 
 Run it directly from the repo:
 
@@ -12,23 +12,27 @@ The server prints nothing on stdout except the protocol; diagnostics go to stder
 
 ## Setup
 
-One command registers the server with every coding tool installed on the machine (Claude Code, Codex, OpenCode, Gemini CLI), on macOS, Linux and Windows:
+One command registers the server with every coding tool installed on the machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code), on macOS, Linux and Windows:
 
 ```bash
-bun run install:mcp                 # database from AGENTQ_DB_PATH, default ~/agentq/agentq.db
+bun run install:mcp                 # database from AGENTQ_DB_PATH, default ~/.agentq/agentq.db
 bun run install:mcp --db <path>     # another database
 ```
 
-It adds (or updates) a user-level `agentq` server entry that starts `bun run <checkout>/packages/mcp/src/index.ts` with `AGENTQ_DB_PATH` set to the database's absolute path. Everything else in each config file is kept, and an entry that is already up to date is not rewritten, so it is safe to run again (for example after moving the checkout or changing the database). Restart the coding tools afterwards.
+It adds (or updates) a user-level `agentq` server entry that starts `bun run <checkout>/packages/mcp/src/index.ts` with `AGENTQ_DB_PATH` set to the database's absolute path (`~` is expanded, `~\` too on Windows, and a relative path is resolved against the current folder). Everything else in each config file is kept, and an entry that is already up to date is not rewritten, so it is safe to run again (for example after moving the checkout or changing the database). Restart the coding tools afterwards.
 
-| Tool        | File it edits                                                                | Entry                              |
-| ----------- | ---------------------------------------------------------------------------- | ---------------------------------- |
-| Claude Code | `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`)                      | `mcpServers.agentq` (user scope)   |
-| Codex       | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`)                        | `[mcp_servers.agentq]`             |
-| OpenCode    | `~/.config/opencode/opencode.json` (or `$XDG_CONFIG_HOME/opencode/…`, `.jsonc`) | `mcp.agentq` (`type: "local"`)  |
-| Gemini CLI  | `~/.gemini/settings.json`                                                    | `mcpServers.agentq`                |
+| Tool                     | File it edits                                                                                                                                         | Entry                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Claude Code              | `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`)                                                                                               | `mcpServers.agentq` (user scope)                 |
+| Codex                    | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`)                                                                                                 | `[mcp_servers.agentq]`                           |
+| OpenCode                 | `~/.config/opencode/opencode.json` (or `$XDG_CONFIG_HOME/opencode/…`, `.jsonc`)                                                                       | `mcp.agentq` (`type: "local"`)                   |
+| Gemini CLI               | `~/.gemini/settings.json`                                                                                                                             | `mcpServers.agentq`                              |
+| GitHub Copilot CLI       | `~/.copilot/mcp-config.json` (or `$COPILOT_HOME/mcp-config.json`)                                                                                     | `mcpServers.agentq` (`type: "local"`, all tools) |
+| GitHub Copilot (VS Code) | `mcp.json` in the VS Code user folder: `%APPDATA%\Code\User` (Windows), `~/Library/Application Support/Code/User` (macOS), `~/.config/Code/User` (Linux) | `servers.agentq` (`type: "stdio"`)               |
 
-A tool counts as installed when its binary is on `PATH` or its config folder exists. A file that cannot be edited safely (for example a JSON file with comments) is left untouched: the command prints the block to paste by hand and exits with code 1.
+A tool counts as installed when its binary is on `PATH` (`copilot` for the Copilot CLI, `code` for VS Code) or its config folder exists. The VS Code entry goes in the default profile's user configuration (the file **MCP: Open User Configuration** opens), so the server is available in every workspace; VS Code asks you to trust it the first time it starts. VS Code does not read `~/.copilot/mcp-config.json` unless `chat.mcp.discovery.enabled` is on, which is why it gets its own entry. A file that cannot be edited safely (for example a JSON file with comments) is left untouched: the command prints the block to paste by hand and exits with code 1. Files saved on Windows with a UTF-8 BOM or CRLF line endings are read normally.
+
+`bun test packages/installer` includes an end-to-end test that runs the real `install:all` against a throwaway home folder and starts the registered server like an MCP client would; the `Installer` GitHub Actions workflow runs it on Linux, macOS and Windows.
 
 Runners do not need this step: every runner job gets its own server config (see [runner.md](runner.md)).
 
@@ -94,4 +98,4 @@ bun test packages/mcp                       # in-memory + stdio tests
 bun x tsc --project packages/mcp --noEmit   # typecheck (also part of `bun run typecheck`)
 ```
 
-Tests never touch `~/agentq/agentq.db`: they set `AGENTQ_DB_PATH=:memory:` in-process and a temp file for the spawned stdio server.
+Tests never touch `~/.agentq/agentq.db`: they set `AGENTQ_DB_PATH=:memory:` in-process and a temp file for the spawned stdio server.
