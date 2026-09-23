@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -11,7 +11,7 @@ metadata:
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit tool) live in the phase skills.
 
-**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task` and the `submit_*` tools; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Pass `context` ("<short summary of current state, findings, or blockers>") on every `claim_task` and `submit_*` call so the next agent has context. Every `message` MUST be Markdown (templates are in the phase skills).
+**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task` and the `submit_*` tools; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tool rejects a submit without it) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
 
 If the `agentq` tools are missing, the server is not registered: tell the user to run `bun run install:mcp` from the AgentQ checkout, then restart the tool. Do not work around it.
 
@@ -29,7 +29,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<summary>" }
+  "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
 **Result (success)**: the full task plus `project` and your `agent` identity. Keep `task.id`: the phase skills need it for the `submit_*` tools.
@@ -79,6 +79,15 @@ After claiming, read the skill for the phase and follow it. Do not read the othe
 Before working on a task, read `task.description` (functional requirements only — what needs to be accomplished), `task.steerDetails` (technical recommendations, implementation hints, preferred approaches), `task.guardrails` (behavioral constraints, do's and don'ts for agents), `task.acceptanceCriteria` (specific, testable conditions that define completion), `task.conversation[]` (previous discussion) and `task.contexts[]` (additional context).
 
 Agents MUST respect guardrails — they define hard constraints that must not be violated during implementation. If a guardrail conflicts with other requirements, the guardrail takes precedence.
+
+## Context Handoff
+
+`task.contexts[]` is how agents pass knowledge to the agent of the next phase (planner → coder → reviewer → coder → merger). Each `submit_*` call appends its `context` to it; it is **required** on every submit and must not be blank.
+
+- Write what the next agent needs and cannot get cheaply from the diff or the `message`: decisions and why, gotchas, where to look first, what is left or risky. Do not repeat the `message`.
+- Keep it short (1–5 sentences) and concrete: file paths, function names, commands.
+- Each phase skill says what its handoff should contain.
+- `context` on `claim_task` is optional — pass it only if you already know something worth recording.
 
 ## Autonomy
 

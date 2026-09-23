@@ -3,13 +3,13 @@ name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
 allowed-tools: mcp__agentq__submit_plan, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Plan Skill
 
-Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 
@@ -39,7 +39,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` and `task.contexts[]` (see Context Reading in `agentq-claim`)
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, and the decisions taken
-5. Submit it (see Submit Plan), then stop and wait for the next claim
+5. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
 
 ### Revising a plan (`plan_changes_requested`)
 
@@ -50,8 +50,10 @@ The feedback is in the task conversation (`task.conversation[]`). Read it, revis
 Call the `submit_plan` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "message": "<markdown plan>", "context": "<summary>" }
+{ "taskId": "<task.id>", "message": "<markdown plan>", "context": "<handoff notes>" }
 ```
+
+`context` is required (see Context Handoff in `agentq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 
 It moves the task to `waiting_plan_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 

@@ -3,13 +3,13 @@ name: agentq-merge
 description: Merging phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with the `submit_merge` MCP tool. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
 allowed-tools: mcp__agentq__submit_merge, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Merge Skill
 
-Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 
@@ -111,7 +111,7 @@ Call the `submit_merge` MCP tool:
   "commit": "<feature-branch-head-sha>",
   "authors": "<implementer>,<co-authors>",
   "worktree": "<task.worktreePath>",
-  "context": "<summary>",
+  "context": "<handoff notes: PR URL, base/head, anything left for the user>",
   "message": "## PR Created\n- **PR**: <PR URL or number>\n- **Base / Merge branch**: <task.mergeBranch>\n- **Head / Feature branch**: <task.recommendedBranch>\n- **Commit**: <feature-branch-head-sha>\n- **Authors**: <implementer>,<co-authors>\n\n### Changes\n- <what the PR delivers>" }
 ```
 
@@ -133,6 +133,7 @@ It moves the task to `merged` and releases it. On `{ "success": false, "error": 
 | `commit` | The **feature-branch head commit SHA** pushed to `origin` (from `git rev-parse HEAD` on the feature branch) | Passing a merge commit SHA — there is no local merge commit anymore |
 | `authors` | Comma-separated names of everyone who wrote the code (implementing agent + human co-authors) | Passing only the merge-phase agent |
 | `worktree` | Path where the code was implemented (`task.worktreePath`) | Omitting it |
+| `context` | Required handoff notes: the PR URL/number, base and head branches, and anything left for the user after the merge | Omitting it (the tool rejects the submit) |
 | `message` | The Merge Template below, with the PR URL/number from `gh pr create` — it becomes part of the task conversation | Leaving the PR out |
 
 ## Merge Template
