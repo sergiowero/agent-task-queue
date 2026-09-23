@@ -1,247 +1,359 @@
+<div align="center">
+
+<img src="design-system/assets/Logos/agentq-mark.svg" alt="AgentQ logo" width="80" />
+
 # AgentQ
 
-> If you want to be a 100x engineer, stop prompting and start queueing.
+### If you want to be a 100x engineer, stop prompting and start queueing.
 
-AgentQ is a local task queue system for managing coding-agent work across multiple projects. It provides a centralized backlog that allows AI agents (OpenCode, Codex, Claude, and others) to pull work items, complete them, and continue from well-defined context.
+**A local-first task queue and Kanban board for AI coding agents.**
+Write the task once. Claude Code, Codex, OpenCode, Gemini CLI or Copilot plan it, code it, review it and open the PR.
+You approve at every gate.
+
+[![Installer CI](https://github.com/sergiowero/agent-task-queue/actions/workflows/installer.yml/badge.svg)](https://github.com/sergiowero/agent-task-queue/actions/workflows/installer.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![MCP](https://img.shields.io/badge/MCP-server-6366f1)](https://modelcontextprotocol.io)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-a855f7)](#requirements)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-22c55e)](#contributing)
+[![GitHub stars](https://img.shields.io/github/stars/sergiowero/agent-task-queue?style=social)](https://github.com/sergiowero/agent-task-queue/stargazers)
+
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Workflow](#the-workflow) · [Runners](#runners-hands-free-mode) · [MCP tools](#mcp-tools) · [FAQ](#faq) · [Docs](#documentation)
+
+</div>
+
+<!-- TODO: add a screenshot or a short GIF of the board here, e.g. docs/assets/board.png -->
+
+---
+
+## Why AgentQ?
+
+Coding agents are great at single tasks. Running **many** of them across **many** repositories is where things fall apart:
+
+- Five terminals open, each with an agent doing *something*, and no single place to see what.
+- Every session starts cold. The agent that reviews the code has no idea why the planner made the choices it made.
+- Nobody is sure which agent touched which branch, or whether that "done" actually means merged.
+- You end up babysitting prompts instead of reviewing outcomes.
+
+AgentQ turns that chaos into a **queue**. You write well-scoped tasks on a board. Agents **claim** them, work in isolated git worktrees, and **submit** their output back with handoff notes for the next agent. You review plans and code in a single dashboard and approve, reject, or ask for another pass. The merge phase opens a pull request; it never touches your main branch by itself.
+
+It all runs on your machine: one Bun process, one SQLite file, no accounts, no cloud.
 
 ## Features
 
-- **Multi-project task management** - Manage tasks across multiple repositories from a single dashboard
-- **Agent orchestration** - Let multiple AI agents claim, work on, and complete tasks autonomously
-- **Real-time updates** - SSE-powered live updates on the web UI as agents claim and submit
-- **Role-based workflows** - Planner, implementer, reviewer, and senior roles with proper access control
-- **Web dashboard** - Kanban-style board with task details, agent monitoring, and activity feed
-- **MCP server for agents** - Typed tools (claim, submit, get, create, archive...) for Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot and any other MCP client
-- **Runners** - Launch Claude Code, Codex, OpenCode or Gemini headless on claimed tasks, no manual prompting
-- **Plan → Code → Review → Merge** - Full workflow with approval gates and feedback loops
-- **Archive** - Save complete tasks in the project's `archive/` folder as Markdown (a summary and a full record), from the board or with the `agentq-archive` skill
+|  |  |
+|---|---|
+| **Plan → Code → Review → Merge** | A 15-state workflow with human approval gates and feedback loops at every phase. |
+| **Works with the agents you already use** | Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot (CLI and VS Code), or any MCP client. |
+| **One-command setup** | `bun run install:all` registers the MCP server and the workflow skills with every coding tool it finds, on macOS, Linux and Windows. |
+| **Hands-free runners** | The server claims tasks and launches `claude`, `codex`, `opencode` or `gemini` headless in the right repo. No manual prompting. |
+| **Role-based agents** | Planner, implementer, reviewer, senior (all three) and architect (plan + review). Mix models per role. |
+| **Context handoff** | Every submission carries notes for the next agent: decisions taken, gotchas, what to check next. No more cold starts. |
+| **Isolated git worktrees** | One worktree and feature branch per task, so parallel agents never step on each other. |
+| **Atomic claims** | Claims run in a SQLite transaction. Two agents never get the same task. |
+| **Live Kanban dashboard** | React board with task details, conversation thread, status history, agents, runners with live logs, and an activity feed, all updated over SSE. |
+| **Safe by default** | Runners use an allow-list of tools and commands. Merge means push + `gh pr create`, never a local merge or a force-push. |
+| **Archive to Markdown** | Finished tasks are saved into the repo as a summary and a full record: plan, code notes, review, PR, agents and timeline. |
+| **Local-first** | A single SQLite file at `~/.agentq/agentq.db`. Your code and your tasks stay on your machine. |
 
-## Quick Start
+## How it works
 
-### Prerequisites
+```mermaid
+flowchart LR
+    you([You]) -->|write tasks, approve, request changes| ui["Web dashboard<br/>React · SSE"]
+    ui <--> server["Web server<br/>Bun · REST · runners"]
+    server <--> db[("SQLite<br/>~/.agentq/agentq.db")]
+    server -->|launches headless| agents["Coding agents<br/>claude · codex · opencode · gemini"]
+    ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|agentq-claim skill| mcp
+    agents <-->|claim_task · submit_*| mcp["AgentQ MCP server<br/>stdio"]
+    mcp <--> db
+    agents -->|worktree · commits · PR| repo[("Your repositories")]
+    ide -->|worktree · commits · PR| repo
+```
 
-- [Bun](https://bun.sh/) runtime
+1. **You** create a project (a local git repo) and write tasks with a description, guardrails and acceptance criteria.
+2. **An agent claims** the highest-priority task its role can work on, through the `claim_task` MCP tool.
+3. **It does the phase's work** (plan, code, review or merge), guided by a phase skill, in the project directory or in the task's worktree.
+4. **It submits** with a Markdown message plus handoff notes. The task moves to the next status and is released.
+5. **You review** in the dashboard. Approve, request changes, or ask for an AI code review. The next agent picks it up.
+
+Agents talk to AgentQ **only** through the MCP server, which writes straight to SQLite. The web server does not even need to be running for agents to work; the board catches up as soon as you open it.
+
+## Quick start
+
+### Requirements
+
+- [Bun](https://bun.sh) 1.2 or newer
 - Git
+- [GitHub CLI](https://cli.github.com) (`gh`), authenticated, for the merge phase (it opens the pull request)
+- At least one coding agent: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [OpenCode](https://opencode.ai), [Gemini CLI](https://github.com/google-gemini/gemini-cli) or [GitHub Copilot](https://github.com/features/copilot)
 
-### Installation
+### Install
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+git clone https://github.com/sergiowero/agent-task-queue.git
 cd agent-task-queue
-
-# Install dependencies
 bun install
+```
 
-# Connect your coding tools to AgentQ: MCP server + workflow skills
+Connect your coding tools (MCP server + workflow skills). Safe to run again at any time:
+
+```bash
 bun run install:all
 ```
 
-`install:all` runs `install:mcp` (registers the AgentQ MCP server with every coding tool installed
-on the machine: Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI and GitHub Copilot in
-VS Code on macOS, Linux and Windows) and
-`install:skills`. It is safe to run again. Runners do not need it: each runner job gets the
-server automatically.
-
-### Running the System
+Start AgentQ:
 
 ```bash
-# Production mode (builds UI + starts server on single port)
 bun run start
-
-# Development mode (with Vite HMR on a single port)
-bun run dev
 ```
 
-Open `http://localhost:3000` for both the API and the web UI (single port).
+Open **http://localhost:3000**. The API and the dashboard share that single port.
 
-## Usage
+### Your first task in two minutes
 
-### Web Dashboard
+1. **Projects → New project.** Give it a name and the absolute path of a local git repository.
+2. **Board → New task.** Describe what you want, add acceptance criteria, and choose whether it needs a plan first.
+3. **Put an agent on it.** Pick one of the two modes:
+   - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`), role `senior`, mode `safe`, and start it. It claims the task within seconds.
+   - **Interactive:** open your coding tool in any folder and say:
+     > Work the AgentQ queue as a senior.
 
-The web interface provides:
+     The `agentq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty.
+4. **Review.** The plan lands in *Needs review*. Approve it, and an agent writes the code in its own worktree. Approve the code, and an agent pushes the branch and opens a PR.
+5. **Finish.** Confirm completion, then **Archive** to save the whole story as Markdown in the repo.
 
-- **Task Board** - Kanban columns: Pending, In Progress, Need Review, Done. Complete cards have an **Archive** button
-- **Task Details** - Full task info, conversation thread, and history
-- **Agents View** - Monitor active agents and their current tasks
-- **Activity Feed** - Real-time event stream of all task lifecycle events
+## Two ways to run agents
 
-### Agents (MCP)
+| Mode | What happens | Best for |
+|---|---|---|
+| **Runners** (hands-free) | The server polls the queue with a role and launches the coding tool headless in the project directory, with the task and the phase skill as the prompt. Each job gets the MCP server automatically. | Background work, overnight queues, parallel agents |
+| **MCP + skills** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and invoke the `agentq-claim` skill. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
 
-Agents work the queue through the tools of the `agentq` MCP server (in Claude Code they are
-named `mcp__agentq__<tool>`). Humans use the portal; agents use MCP.
+Both go through the same MCP server, the same SQLite database and the same workflow rules in `packages/shared`.
 
-| Tool | What an agent does with it |
-|------|----------------------------|
-| `claim_task` | Claim the next task for its role (`toolName`, `version`, `model`, `role`, `sessionId`, optional `projectId` and `context`) |
-| `submit_plan` / `submit_code` / `submit_review` / `submit_merge` | Finish a phase with a Markdown `message` and a required `context` (handoff notes for the next agent) (`submit_code` also takes the `worktree`, `submit_merge` the `mergeBranch`, `commit` and `authors`) |
-| `get_task`, `post_comment` | Re-read or annotate the claimed task |
-| `list_projects`, `create_task` | Create well-formed tasks (the `agentq-create-task` skill) |
-| `list_tasks`, `archive_task` | Archive complete tasks (the `agentq-archive` skill) |
+### Supported tools
 
-Invoke the `agentq-claim` skill in your coding tool (for example "work the AgentQ queue as a
-senior") and it claims, routes to the phase skill and submits until no tasks are left. See
-[docs/mcp.md](docs/mcp.md) for every tool, its inputs and the setup details.
+| Tool | MCP server registered by `install:mcp` | Skills installed by `install:skills` | Runner |
+|---|:---:|:---:|:---:|
+| Claude Code | ✅ | ✅ | ✅ `claude` |
+| Codex | ✅ | ✅ | ✅ `codex` |
+| OpenCode | ✅ | ✅ | ✅ `opencode` |
+| Gemini CLI | ✅ | | ✅ `gemini` |
+| GitHub Copilot CLI | ✅ | | via `custom` |
+| GitHub Copilot in VS Code | ✅ | | |
+| Kimi Code, Junie | manual | ✅ | via `custom` |
+| Any other MCP client | manual (`bun run mcp`) | | via `custom` |
 
-### Archive
+## The workflow
 
-Archiving a task in `complete` status writes two Markdown files to `{project.workingDirectory}/archive/`
-and takes the task off the board (the task page and `get_task` still show it):
-
-| File | Content |
-|------|---------|
-| `<date>-<id8>-<slug>.summary.md` | Key facts (branch, merge target, PR, commit, authors, agents, dates), the description, acceptance criteria, what was done (latest plan, implementation, review and merge messages), agent sessions and the status path |
-| `<date>-<id8>-<slug>.detailed.md` | Everything: every field, steer details, guardrails, context notes, each agent and claim, the full status history, every conversation message, the activity log and the raw task JSON |
-
-Use the **Archive** button on a complete card (or on the task page), the MCP `archive_task` tool,
-or the `agentq-archive` skill. The skill also finds the PR with `gh` when the
-conversation does not mention it and writes an overview of what was done. The files are left
-uncommitted.
-
-### Runners
-
-Runners take the "open the coding tool by hand" step out of the loop. A runner is a
-server-side worker with a role (planner, implementer, reviewer, senior, architect), an
-optional project and a tool. Every few seconds it claims the next eligible task and
-launches the tool headless in the project directory with the task and the phase skill as
-the prompt. Each job gets the AgentQ MCP server, bound to the server's database, and the tool
-finishes by calling the phase's `submit_*` tool.
-
-- Manage runners on the **Runners** page (or `/api/runners`): create, edit, start/stop,
-  delete, and follow each job's live output.
-- Supported tools: `claude`, `codex`, `opencode`, `gemini`, and `custom` (your own argv).
-- `safe` mode allows edits, a fixed command allow-list and the AgentQ tools a claimed job
-  needs; `full` mode skips all permission prompts and sandboxes.
-- If the tool exits without submitting, the runner releases the task back to the queue
-  with a system note containing the last lines of output.
-
-See [docs/runner.md](docs/runner.md) for commands, permission modes, environment
-variables and a demo script.
-
-### Agent Workflow
-
+```mermaid
+stateDiagram-v2
+    [*] --> plan_requested: needs a plan
+    [*] --> ready_for_code: no plan
+    plan_requested --> planning: planner claims
+    planning --> waiting_plan_review: submit_plan
+    waiting_plan_review --> ready_for_code: you approve
+    waiting_plan_review --> plan_changes_requested: you request changes
+    plan_changes_requested --> planning: planner claims
+    ready_for_code --> coding: implementer claims
+    coding --> waiting_code_review: submit_code
+    waiting_code_review --> code_review_requested: you request an AI review
+    code_review_requested --> reviewing: reviewer claims
+    reviewing --> waiting_code_review: submit_review
+    waiting_code_review --> changes_requested: you request changes
+    changes_requested --> coding: implementer claims
+    waiting_code_review --> approved: you approve
+    approved --> merging: implementer claims
+    merging --> merged: submit_merge (PR opened)
+    merged --> complete: you confirm
+    complete --> [*]
 ```
-1. Claim task        → Agent picks up work
-2. Read task context → Understand requirements
-3. Work on task      → Plan, code, or review
-4. Submit work       → Update task status
-5. Repeat            → Pick next task
-```
+
+Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page.
+
+### Roles
+
+| Role | Claims tasks in | Does |
+|---|---|---|
+| `planner` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the implementation plan |
+| `implementer` | `ready_for_code`, `changes_requested`, `approved` | Codes in the task worktree, commits, and later pushes and opens the PR |
+| `reviewer` | `code_review_requested` | Reviews the commits against the acceptance criteria and guardrails |
+| `senior` | all of the above | Planner + implementer + reviewer |
+| `architect` | planner + reviewer statuses | Plans and reviews, never writes code |
+
+Run a cheap, fast model as implementer and a stronger one as reviewer, or one `senior` agent for everything. Agents are identified as `<tool>@<version>|<model>`, so every plan, commit and review is traceable to the exact tool and model that produced it.
+
+### The board
+
+| Column | Statuses |
+|---|---|
+| **Pending** | `plan_requested`, `plan_changes_requested`, `ready_for_code`, `changes_requested`, `code_review_requested`, `approved` |
+| **In progress** | `planning`, `coding`, `reviewing`, `merging` |
+| **Needs review** | `waiting_plan_review`, `waiting_code_review` |
+| **Done** | `merged`, `complete` |
+
+### Writing a good task
+
+A task is the prompt. The more precise it is, the better the result:
+
+- **Description**: what to build and why.
+- **Steer details**: technical direction (libraries to use, files to touch, patterns to follow).
+- **Guardrails**: hard constraints. They win any conflict (`Do not change the public API`, `No new dependencies`).
+- **Acceptance criteria**: the checklist the reviewer verifies.
+- **Priority, branch and merge branch**: which task goes first, where the work lives and where the PR targets.
+
+Let an agent write tasks for you with the `agentq-create-task` skill: *"Create an AgentQ task to add rate limiting to the API."*
+
+## Runners (hands-free mode)
+
+A runner is a worker inside the web server with a **tool**, a **role**, an optional **project**, a **model**, a **concurrency** and a **permission mode**. Every few seconds it claims the next eligible task and launches the tool headless in the project directory.
+
+- **Model and effort pickers** are discovered from the installed CLIs (`claude --help`, `codex debug models`, `opencode models`...).
+- **Live logs**: follow every job's output from the Runners page.
+- **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
+- **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
+- **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
+- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`.
+
+Everything is also available over REST (`/api/runners`). See [docs/runner.md](docs/runner.md) for the exact commands, environment variables and a scripted demo.
+
+## MCP tools
+
+The `agentq` MCP server exposes the whole agent protocol as typed tools. In Claude Code they appear as `mcp__agentq__<tool>`.
+
+| Tool | Purpose |
+|---|---|
+| `claim_task` | Atomically claim the highest-priority task eligible for your role |
+| `submit_plan` | Submit a plan and move the task to plan review |
+| `submit_code` | Submit the worktree and move the task to code review |
+| `submit_review` | Submit review findings with an approve or request-changes verdict |
+| `submit_merge` | Record the pushed branch, commit, authors and PR |
+| `get_task` | Read a task with its project, conversation and handoff notes |
+| `post_comment` | Add a note to a task without changing its status |
+| `list_projects`, `create_task` | Create well-formed tasks |
+| `list_tasks`, `archive_task` | Find complete tasks and archive them to Markdown |
+
+Every `submit_*` call requires a `context`: short handoff notes for the agent of the next phase. Resources `agentq://task/{taskId}` and `agentq://projects` are also available. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
+
+## Skills
+
+Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders.
+
+| Skill | What it does |
+|---|---|
+| `agentq-claim` | Entry point. Claims a task and routes to the phase skill that matches its status, then loops until the queue is empty |
+| `agentq-plan` | Reads the repo read-only and writes or revises the plan |
+| `agentq-code` | Implements in `{project}/.agentq/worktrees/{taskId}` and commits after every round. Never pushes |
+| `agentq-review` | Reviews the commits read-only against acceptance criteria and guardrails |
+| `agentq-merge` | Pushes the feature branch and opens a PR with `gh`. Never merges locally, never force-pushes |
+| `agentq-create-task` | Turns a loose request into a well-structured task |
+| `agentq-archive` | Archives complete tasks, finds the PR with `gh`, and writes an overview of what was done |
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `3000` | Port for the API and the dashboard |
+| `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database used by the server, the MCP server and every runner job |
+| `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
+| `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
+
+Point the MCP server at another database with `bun run install:mcp --db <path>`.
 
 ## Architecture
-
-AgentQ consists of five core components:
-
-| Component | Description |
-|-----------|-------------|
-| **Web Portal** | React-based dashboard with Kanban board, task details, and monitoring |
-| **Web Server** | REST API + SSE + runners + static UI serving (single port 3000) |
-| **MCP Server** | The agents' channel: claim, submit, read and create tasks as typed tools |
-| **Database** | Local SQLite for persistence |
-| **AI Skills** | Agent instructions for consistent workflow integration |
-
-### Project Structure
 
 ```
 agent-task-queue/
 ├── packages/
-│   ├── mcp/          # MCP server: the agent protocol as typed tools (claim_task, submit_*...)
-│   ├── web/          # API server + SSE + runner engine (packages/web/src/runner)
-│   ├── web-ui/       # React dashboard
-│   ├── shared/       # Database, types, workflow rules (single source of truth)
-│   └── installer/    # MCP setup (install:mcp) + skills installers
-├── docs/             # architecture.md, runner.md, mcp.md, project-spec.md
-└── skills/           # Agent skills: agentq-claim (router) + agentq-plan/code/review/merge + agentq-create-task + agentq-archive
+│   ├── shared/      # SQLite database, types, workflow rules: the single source of truth
+│   ├── mcp/         # MCP server (stdio): the agent protocol as typed tools
+│   ├── web/         # Bun HTTP server: REST API, SSE, static UI, runner engine
+│   ├── web-ui/      # React dashboard
+│   └── installer/   # install:mcp and install:skills for every supported tool
+├── skills/          # agentq-claim, -plan, -code, -review, -merge, -create-task, -archive
+├── design-system/   # Tokens, components and logos used by the dashboard
+└── docs/            # Architecture, MCP, runners
 ```
 
-### Ways an agent can talk to AgentQ
-
-| Channel | When to use |
-|---------|-------------|
-| **Runner** (web UI → Runners) | Hands-free: the server claims tasks and launches `claude` / `codex` / `opencode` / `gemini` headless in the project directory. See `docs/runner.md`. |
-| **MCP + skills** | You open the coding tool yourself and invoke the `agentq-claim` skill; it claims through the MCP tools and routes to the phase skill. Set up once with `bun run install:mcp` and `bun run install:skills`. See `docs/mcp.md`. |
-
-Both go through the AgentQ MCP server, over the same SQLite database and the same workflow code in `packages/shared`.
-
-## Workflow
-
-### Task States
-
-```
-New → Planning → Waiting Plan Review → Ready for Code
-                                           ↓
-                                       Coding
-                                           ↓
-                                   Waiting Code Review
-                                      ↓         ↓
-                          Code Review    Approved
-                             ↓              ↓
-                          Reviewing      Merging
-                             ↓              ↓
-                      Waiting Code      Merged
-                        Review            ↓
-                                      Complete
-```
-
-### Roles
-
-| Role | Responsibilities |
-|------|------------------|
-| **Planner** | Create implementation plans for tasks requiring planning |
-| **Implementer** | Code and implement tasks |
-| **Reviewer** | Review submitted code and provide feedback |
-| **Senior** | All of the above (planner + implementer + reviewer) |
-| **Architect** | Planning + reviewing (no implementation) |
-
-### User Actions
-
-- **Approve plan** - Move task from Waiting Plan Review → Ready for Code
-- **Request plan changes** - Move task back to Planning
-- **Approve code** - Move task to Approved
-- **Request code changes** - Move task back to Coding
-- **Request AI review** - Trigger automated code review
-- **Cancel task** - Stop work on task (any active state)
-- **Confirm completion** - Mark merged task as Complete
-- **Archive** - Save a complete task to `{project}/archive/` as Markdown and take it off the board
-
-## Configuration
-
-### Agent ID Format
-
-Agent IDs follow the pattern: `<tool>@<version>|<model>`
-
-Example: `opencode@1.0|big-pickle`
-
-### Role-to-Status Mapping
-
-| Role | Can Claim Tasks In |
-|------|-------------------|
-| planner | New, Plan Changes Requested |
-| implementer | Ready for Code, Changes Requested, Approved |
-| reviewer | Code Review Requested |
-| senior | All states |
-| architect | New, Plan Changes Requested, Code Review Requested |
+**Stack:** Bun · TypeScript · SQLite (`bun:sqlite`) · Zod · MCP TypeScript SDK · React 19 · Vite · Tailwind CSS · TanStack Query · Server-Sent Events.
 
 ## Development
 
 ```bash
-# Run tests (never touches ~/.agentq/agentq.db — tests use in-memory / temp databases)
-bun test
-
-# Typecheck every package
-bun run typecheck
-
-# Run the MCP server on stdio (what coding tools start)
-bun run mcp
+bun run dev          # server + Vite HMR on a single port
+bun test             # all tests; they use in-memory or temp databases, never ~/.agentq/agentq.db
+bun run typecheck    # every package
+bun run lint         # ESLint
+bun run format       # Prettier
+bun run mcp          # the MCP server on stdio, as coding tools start it
 ```
+
+The installer's end-to-end test runs the real `install:all` against a throwaway home folder on Linux, macOS and Windows in CI.
+
+## FAQ
+
+<details>
+<summary><b>Does AgentQ send my code or tasks anywhere?</b></summary>
+
+No. AgentQ is a local Bun process and a SQLite file. The only network traffic comes from the coding agents themselves (calls to their model provider) and from `git push` / `gh pr create` in the merge phase.
+</details>
+
+<details>
+<summary><b>Do agents need the web server running?</b></summary>
+
+No. The MCP server writes directly to the database. The dashboard picks up agent changes as soon as it is open. Runners do need the server, because they live inside it.
+</details>
+
+<details>
+<summary><b>Can several agents work at the same time?</b></summary>
+
+Yes. Claims are atomic, each task gets its own git worktree and feature branch, and every runner has a configurable concurrency.
+</details>
+
+<details>
+<summary><b>What happens if an agent crashes halfway through?</b></summary>
+
+With a runner, the task is released back to its previous status automatically, with the tail of the output attached as a note. In interactive mode, click **Unblock** on the task page. There are no heartbeats or leases by design: the process exiting is the signal.
+</details>
+
+<details>
+<summary><b>Will an agent merge into my main branch?</b></summary>
+
+No. The merge phase pushes the feature branch and opens a pull request into the task's merge branch. Merging the PR is up to you.
+</details>
+
+<details>
+<summary><b>Can I use a model or tool that is not listed?</b></summary>
+
+Yes. Any MCP client can use the `agentq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want.
+</details>
+
+## Documentation
+
+- [docs/mcp.md](docs/mcp.md): MCP server setup, every tool and its inputs
+- [docs/runner.md](docs/runner.md): runners, commands per tool, permission modes, REST API, demo script
+- [docs/architecture.md](docs/architecture.md): features, components, domain entities and task states
+- [design-system/README.md](design-system/README.md): the dashboard's design system
 
 ## Contributing
 
-1. Create a feature branch from `develop`
-2. Make your changes
-3. Submit a pull request
-4. Wait for review approval
+Contributions are welcome, from typo fixes to new runner tools.
+
+1. Fork the repository and create a branch from `main`.
+2. Make your change, with tests when it touches behavior.
+3. Run `bun test`, `bun run typecheck` and `bun run lint`.
+4. Open a pull request describing what changed and why.
+
+Found a bug or have an idea? [Open an issue](https://github.com/sergiowero/agent-task-queue/issues).
+
+## Support the project
+
+If AgentQ saves you from babysitting agents, **give it a star**. It helps other developers find it.
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sergiowero/agent-task-queue&type=Date)](https://star-history.com/#sergiowero/agent-task-queue&Date)
 
 ## License
 
-[Add your license here]
+AgentQ is released under the [MIT License](LICENSE).
