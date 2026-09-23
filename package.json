@@ -11,6 +11,7 @@
     "start": "bun run --cwd packages/web-ui build && bun run packages/web/src/index.ts",
     "dev": "bun --watch run packages/web/src/index.ts --dev",
     "design-system:build": "bun run design-system/scripts/build.ts",
+    "research:build": "bun run research/build.ts",
     "mcp": "bun run packages/mcp/src/index.ts",
     "install:all": "bun run packages/installer/src/install-all.ts",
     "install:mcp": "bun run packages/installer/src/install-mcp.ts",

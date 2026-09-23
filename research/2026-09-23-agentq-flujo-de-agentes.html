@@ -1,0 +1,1786 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Auditoría del flujo AgentQ</title>
+    <meta
+      name="description"
+      content="Análisis del flujo plan → código → revisión → merge de AgentQ y plan para que los agentes se verifiquen entre sí con el humano en el bucle."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <!-- report-css:start -->
+<style>
+*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }
+
+/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.visible{visibility:visible}.fixed{position:fixed}.col-span-1{grid-column:span 1/span 1}.col-span-12{grid-column:span 12/span 12}.col-span-2{grid-column:span 2/span 2}.col-span-3{grid-column:span 3/span 3}.col-span-4{grid-column:span 4/span 4}.col-span-6{grid-column:span 6/span 6}.my-0{margin-top:0;margin-bottom:0}.my-1{margin-top:.25rem;margin-bottom:.25rem}.my-10{margin-top:2.5rem;margin-bottom:2.5rem}.my-12{margin-top:3rem;margin-bottom:3rem}.my-2{margin-top:.5rem;margin-bottom:.5rem}.my-3{margin-top:.75rem;margin-bottom:.75rem}.my-4{margin-top:1rem;margin-bottom:1rem}.my-6{margin-top:1.5rem;margin-bottom:1.5rem}.my-8{margin-top:2rem;margin-bottom:2rem}.mb-0{margin-bottom:0}.mb-1{margin-bottom:.25rem}.mb-10{margin-bottom:2.5rem}.mb-12{margin-bottom:3rem}.mb-2{margin-bottom:.5rem}.mb-3{margin-bottom:.75rem}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.mt-0{margin-top:0}.mt-1{margin-top:.25rem}.mt-10{margin-top:2.5rem}.mt-12{margin-top:3rem}.mt-2{margin-top:.5rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-8{margin-top:2rem}.block{display:block}.inline-block{display:inline-block}.flex{display:flex}.inline-flex{display:inline-flex}.table{display:table}.grid{display:grid}.contents{display:contents}.hidden{display:none}.w-1\/2{width:50%}.w-1\/3{width:33.333333%}.w-2\/3{width:66.666667%}.w-full{width:100%}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.grid-cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}.flex-wrap{flex-wrap:wrap}.items-start{align-items:flex-start}.items-end{align-items:flex-end}.items-center{align-items:center}.justify-start{justify-content:flex-start}.justify-end{justify-content:flex-end}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-1{gap:.25rem}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.gap-4{gap:1rem}.gap-5{gap:1.25rem}.gap-6{gap:1.5rem}.gap-8{gap:2rem}.gap-x-1{-moz-column-gap:.25rem;column-gap:.25rem}.gap-x-2{-moz-column-gap:.5rem;column-gap:.5rem}.gap-x-3{-moz-column-gap:.75rem;column-gap:.75rem}.gap-x-4{-moz-column-gap:1rem;column-gap:1rem}.gap-x-5{-moz-column-gap:1.25rem;column-gap:1.25rem}.gap-x-6{-moz-column-gap:1.5rem;column-gap:1.5rem}.gap-x-8{-moz-column-gap:2rem;column-gap:2rem}.gap-y-1{row-gap:.25rem}.gap-y-2{row-gap:.5rem}.gap-y-3{row-gap:.75rem}.gap-y-4{row-gap:1rem}.gap-y-5{row-gap:1.25rem}.gap-y-6{row-gap:1.5rem}.gap-y-8{row-gap:2rem}.border-accent{--tw-border-opacity:1;border-color:rgb(var(--accent)/var(--tw-border-opacity,1))}.border-danger{--tw-border-opacity:1;border-color:rgb(var(--danger)/var(--tw-border-opacity,1))}.border-info{--tw-border-opacity:1;border-color:rgb(var(--info)/var(--tw-border-opacity,1))}.border-primary{--tw-border-opacity:1;border-color:rgb(var(--primary)/var(--tw-border-opacity,1))}.border-success{--tw-border-opacity:1;border-color:rgb(var(--success)/var(--tw-border-opacity,1))}.border-warning{--tw-border-opacity:1;border-color:rgb(var(--warning)/var(--tw-border-opacity,1))}.bg-accent{--tw-bg-opacity:1;background-color:rgb(var(--accent)/var(--tw-bg-opacity,1))}.bg-accent\/10{background-color:rgb(var(--accent)/.1)}.bg-accent\/15{background-color:rgb(var(--accent)/.15)}.bg-accent\/20{background-color:rgb(var(--accent)/.2)}.bg-accent\/5{background-color:rgb(var(--accent)/.05)}.bg-danger{--tw-bg-opacity:1;background-color:rgb(var(--danger)/var(--tw-bg-opacity,1))}.bg-danger\/10{background-color:rgb(var(--danger)/.1)}.bg-danger\/15{background-color:rgb(var(--danger)/.15)}.bg-danger\/20{background-color:rgb(var(--danger)/.2)}.bg-danger\/5{background-color:rgb(var(--danger)/.05)}.bg-info{--tw-bg-opacity:1;background-color:rgb(var(--info)/var(--tw-bg-opacity,1))}.bg-info\/10{background-color:rgb(var(--info)/.1)}.bg-info\/15{background-color:rgb(var(--info)/.15)}.bg-info\/20{background-color:rgb(var(--info)/.2)}.bg-info\/5{background-color:rgb(var(--info)/.05)}.bg-primary{--tw-bg-opacity:1;background-color:rgb(var(--primary)/var(--tw-bg-opacity,1))}.bg-primary\/10{background-color:rgb(var(--primary)/.1)}.bg-primary\/15{background-color:rgb(var(--primary)/.15)}.bg-primary\/20{background-color:rgb(var(--primary)/.2)}.bg-primary\/5{background-color:rgb(var(--primary)/.05)}.bg-success{--tw-bg-opacity:1;background-color:rgb(var(--success)/var(--tw-bg-opacity,1))}.bg-success\/10{background-color:rgb(var(--success)/.1)}.bg-success\/15{background-color:rgb(var(--success)/.15)}.bg-success\/20{background-color:rgb(var(--success)/.2)}.bg-success\/5{background-color:rgb(var(--success)/.05)}.bg-warning{--tw-bg-opacity:1;background-color:rgb(var(--warning)/var(--tw-bg-opacity,1))}.bg-warning\/10{background-color:rgb(var(--warning)/.1)}.bg-warning\/15{background-color:rgb(var(--warning)/.15)}.bg-warning\/20{background-color:rgb(var(--warning)/.2)}.bg-warning\/5{background-color:rgb(var(--warning)/.05)}.p-0{padding:0}.p-1{padding:.25rem}.p-10{padding:2.5rem}.p-12{padding:3rem}.p-2{padding:.5rem}.p-3{padding:.75rem}.p-4{padding:1rem}.p-6{padding:1.5rem}.p-8{padding:2rem}.px-0{padding-left:0;padding-right:0}.px-1{padding-left:.25rem;padding-right:.25rem}.px-10{padding-left:2.5rem;padding-right:2.5rem}.px-12{padding-left:3rem;padding-right:3rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-4{padding-left:1rem;padding-right:1rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}.px-8{padding-left:2rem;padding-right:2rem}.py-0{padding-top:0;padding-bottom:0}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-10{padding-top:2.5rem;padding-bottom:2.5rem}.py-12{padding-top:3rem;padding-bottom:3rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-6{padding-top:1.5rem;padding-bottom:1.5rem}.py-8{padding-top:2rem;padding-bottom:2rem}.pb-0{padding-bottom:0}.pb-1{padding-bottom:.25rem}.pb-10{padding-bottom:2.5rem}.pb-12{padding-bottom:3rem}.pb-2{padding-bottom:.5rem}.pb-3{padding-bottom:.75rem}.pb-4{padding-bottom:1rem}.pb-6{padding-bottom:1.5rem}.pb-8{padding-bottom:2rem}.pt-0{padding-top:0}.pt-1{padding-top:.25rem}.pt-10{padding-top:2.5rem}.pt-12{padding-top:3rem}.pt-2{padding-top:.5rem}.pt-3{padding-top:.75rem}.pt-4{padding-top:1rem}.pt-6{padding-top:1.5rem}.pt-8{padding-top:2rem}.font-mono{font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace}.text-2xl{font-size:1.5rem;line-height:2rem}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-base{font-size:1rem;line-height:1.5rem}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-normal{font-weight:400}.font-semibold{font-weight:600}.text-accent{--tw-text-opacity:1;color:rgb(var(--accent-text)/var(--tw-text-opacity,1))}.text-danger{--tw-text-opacity:1;color:rgb(var(--danger-text)/var(--tw-text-opacity,1))}.text-info{--tw-text-opacity:1;color:rgb(var(--info-text)/var(--tw-text-opacity,1))}.text-primary{--tw-text-opacity:1;color:rgb(var(--primary-text)/var(--tw-text-opacity,1))}.text-success{--tw-text-opacity:1;color:rgb(var(--success-text)/var(--tw-text-opacity,1))}.text-warning{--tw-text-opacity:1;color:rgb(var(--warning-text)/var(--tw-text-opacity,1))}:root{color-scheme:light;--canvas:246 246 248;--surface:255 255 255;--surface-secondary:244 244 246;--surface-tertiary:233 233 237;--border:228 228 232;--border-light:239 239 242;--border-strong:208 208 215;--text:24 24 27;--text-secondary:82 82 91;--text-muted:113 113 122;--primary:79 70 229;--primary-fg:255 255 255;--primary-text:79 70 229;--danger:220 38 38;--danger-fg:255 255 255;--danger-text:185 28 28;--success:22 163 74;--success-fg:255 255 255;--success-text:21 128 61;--warning:217 119 6;--warning-fg:255 255 255;--warning-text:180 83 9;--info:37 99 235;--info-fg:255 255 255;--info-text:29 78 216;--accent:124 58 237;--accent-fg:255 255 255;--accent-text:109 40 217;--neutral:113 113 122;--neutral-text:82 82 91;--shadow-xs:0 1px 2px 0 rgba(16,16,24,.04);--shadow-sm:0 1px 2px 0 rgba(16,16,24,.05),0 1px 3px 0 rgba(16,16,24,.04);--shadow-md:0 4px 12px -2px rgba(16,16,24,.08),0 2px 4px -2px rgba(16,16,24,.04);--tone:var(--neutral);--tone-text:var(--neutral-text)}@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--canvas:9 9 11;--surface:17 17 20;--surface-secondary:26 26 30;--surface-tertiary:36 36 41;--border:39 39 44;--border-light:30 30 34;--border-strong:63 63 70;--text:244 244 245;--text-secondary:170 170 180;--text-muted:128 128 138;--primary:99 102 241;--primary-text:165 170 252;--danger-text:248 113 113;--success:34 197 94;--success-fg:5 46 22;--success-text:74 222 128;--warning:245 158 11;--warning-fg:69 26 3;--warning-text:251 191 36;--info:59 130 246;--info-text:96 165 250;--accent:139 92 246;--accent-text:167 139 250;--neutral:161 161 170;--neutral-text:190 190 198;--shadow-xs:0 1px 2px 0 rgba(0,0,0,.3);--shadow-sm:0 1px 2px 0 rgba(0,0,0,.4),0 1px 3px 0 rgba(0,0,0,.3);--shadow-md:0 4px 12px -2px rgba(0,0,0,.5),0 2px 4px -2px rgba(0,0,0,.3)}}:root[data-theme=dark]{color-scheme:dark;--canvas:9 9 11;--surface:17 17 20;--surface-secondary:26 26 30;--surface-tertiary:36 36 41;--border:39 39 44;--border-light:30 30 34;--border-strong:63 63 70;--text:244 244 245;--text-secondary:170 170 180;--text-muted:128 128 138;--primary:99 102 241;--primary-text:165 170 252;--danger-text:248 113 113;--success:34 197 94;--success-fg:5 46 22;--success-text:74 222 128;--warning:245 158 11;--warning-fg:69 26 3;--warning-text:251 191 36;--info:59 130 246;--info-text:96 165 250;--accent:139 92 246;--accent-text:167 139 250;--neutral:161 161 170;--neutral-text:190 190 198;--shadow-xs:0 1px 2px 0 rgba(0,0,0,.3);--shadow-sm:0 1px 2px 0 rgba(0,0,0,.4),0 1px 3px 0 rgba(0,0,0,.3);--shadow-md:0 4px 12px -2px rgba(0,0,0,.5),0 2px 4px -2px rgba(0,0,0,.3)}html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:1.5rem}body{margin:0;background:rgb(var(--canvas));color:rgb(var(--text));font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-size:15px;line-height:1.6;font-feature-settings:"cv02","cv03","cv04","cv11";text-rendering:optimizeLegibility}::-moz-selection{background:rgb(var(--primary)/.2)}::selection{background:rgb(var(--primary)/.2)}:focus-visible{outline:2px solid rgb(var(--primary));outline-offset:2px;border-radius:4px}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation-duration:.01ms!important;transition-duration:.01ms!important}}.r-tone-neutral{--tone:var(--neutral);--tone-text:var(--neutral-text)}.r-tone-primary{--tone:var(--primary);--tone-text:var(--primary-text)}.r-tone-danger{--tone:var(--danger);--tone-text:var(--danger-text)}.r-tone-success{--tone:var(--success);--tone-text:var(--success-text)}.r-tone-warning{--tone:var(--warning);--tone-text:var(--warning-text)}.r-tone-info{--tone:var(--info);--tone-text:var(--info-text)}.r-tone-accent{--tone:var(--accent);--tone-text:var(--accent-text)}.r-page{max-width:1200px;margin-inline:auto;padding-inline:16px;padding-block:32px 96px}@media (min-width:640px){.r-page{padding-inline:24px}}.r-shell{display:grid;gap:40px}@media (min-width:1024px){.r-shell{grid-template-columns:220px minmax(0,1fr);gap:56px}}.r-main{min-width:0;gap:72px}.r-header,.r-main{display:flex;flex-direction:column}.r-header{gap:16px;padding-bottom:32px;border-bottom:1px solid rgb(var(--border));margin-bottom:40px}.r-header__bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}.r-brand{display:inline-flex;align-items:center;gap:10px;font-weight:600;font-size:14px;color:rgb(var(--text-secondary))}.r-brand__mark{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:rgb(var(--primary));color:rgb(var(--primary-fg));font-weight:700;font-size:13px;letter-spacing:-.02em}.r-meta{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;color:rgb(var(--text-muted))}.r-meta b{font-weight:500;color:rgb(var(--text-secondary))}.r-eyebrow{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:rgb(var(--text-muted))}.r-h1{margin:0;font-size:clamp(28px,4.2vw,40px);line-height:1.12;font-weight:700;letter-spacing:-.03em;text-wrap:balance;max-width:24ch}.r-h2{font-size:24px;line-height:1.25;letter-spacing:-.025em}.r-h2,.r-h3{margin:0;font-weight:600;text-wrap:balance}.r-h3{line-height:1.35;letter-spacing:-.015em}.r-h3,.r-lead{font-size:17px}.r-lead{margin:0;line-height:1.6;color:rgb(var(--text-secondary));max-width:68ch}.r-muted{color:rgb(var(--text-muted))}.r-small{font-size:13px}.r-prose{max-width:72ch;color:rgb(var(--text))}.r-prose :where(p,ul,ol){margin-block:0}.r-prose :where(ul,ol){padding-left:1.3em}.r-prose>*+*{margin-top:.85em}.r-prose li+li{margin-top:.35em}.r-prose li::marker{color:rgb(var(--text-muted))}.r-prose strong{font-weight:600}.r-link,.r-prose a{color:rgb(var(--primary-text));text-decoration:underline;text-decoration-color:rgb(var(--primary-text)/.35);text-underline-offset:2px}.r-code-inline,code{font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;font-size:.86em;padding:.1em .35em;border-radius:5px;background:rgb(var(--surface-tertiary)/.7);color:rgb(var(--text));overflow-wrap:anywhere}pre code{padding:0;background:none;font-size:inherit;overflow-wrap:normal}.r-section{gap:20px;scroll-margin-top:24px}.r-section,.r-section__head{display:flex;flex-direction:column}.r-section__head{gap:8px}.r-stack{gap:16px}.r-stack,.r-stack-lg{display:flex;flex-direction:column}.r-stack-lg{gap:28px}.r-toc{font-size:13px}@media (min-width:1024px){.r-toc{position:sticky;top:24px;align-self:start;max-height:calc(100vh - 48px);overflow-y:auto}}.r-toc summary{cursor:pointer;list-style:none;font-weight:600;padding:10px 12px;border:1px solid rgb(var(--border));border-radius:10px;background:rgb(var(--surface))}.r-toc summary::-webkit-details-marker{display:none}@media (min-width:1024px){.r-toc summary{display:none}}.r-toc ol{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}.r-toc a{display:block;padding:6px 10px;border-radius:8px;color:rgb(var(--text-secondary));text-decoration:none;transition:background-color .15s,color .15s}.r-toc a:hover{background:rgb(var(--surface-secondary));color:rgb(var(--text))}.r-toc a[aria-current=true]{background:rgb(var(--primary)/.1);color:rgb(var(--primary-text));font-weight:500}.r-card{background:rgb(var(--surface));border:1px solid rgb(var(--border));border-radius:14px;padding:20px;box-shadow:var(--shadow-xs)}.r-card--flat{box-shadow:none;background:rgb(var(--surface-secondary)/.6)}.r-grid-2,.r-grid-3{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}@media (min-width:720px){.r-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}.r-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}}.r-callout{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:12px;border:1px solid rgb(var(--tone)/.28);background:rgb(var(--tone)/.07)}.r-callout__title{font-weight:600;color:rgb(var(--tone-text))}.r-verdict{display:grid;gap:20px;padding:24px;border-radius:18px;background:rgb(var(--surface));border:1px solid rgb(var(--border));box-shadow:var(--shadow-md)}@media (min-width:860px){.r-verdict{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:32px;padding:32px}}.r-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding-inline:8px;border-radius:999px;font-size:11.5px;font-weight:500;line-height:1;white-space:nowrap;color:rgb(var(--tone-text));background:rgb(var(--tone)/.1);box-shadow:inset 0 0 0 1px rgb(var(--tone)/.22)}.r-chip:before{content:"";width:6px;height:6px;border-radius:999px;background:rgb(var(--tone))}.r-chip--plain:before{display:none}.r-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.r-stat{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:12px;background:rgb(var(--surface-secondary)/.7);border:1px solid rgb(var(--border-light))}.r-stat__value{font-size:26px;font-weight:600;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1;color:rgb(var(--tone-text))}.r-stat__label{font-size:12.5px;line-height:1.4;color:rgb(var(--text-secondary))}.r-table-wrap{overflow-x:auto;border:1px solid rgb(var(--border));border-radius:12px;background:rgb(var(--surface))}.r-table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.5}.r-table th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:rgb(var(--text-muted));background:rgb(var(--surface-secondary)/.7);padding:10px 14px;border-bottom:1px solid rgb(var(--border));white-space:nowrap}.r-table td{padding:11px 14px;vertical-align:top;border-bottom:1px solid rgb(var(--border-light))}.r-table tr:last-child td{border-bottom:0}.r-table td.r-num{font-variant-numeric:tabular-nums;text-align:right}.r-table .r-nowrap,.r-table td.r-num{white-space:nowrap}.r-pre{margin:0;overflow-x:auto;padding:16px 18px;border-radius:12px;border:1px solid rgb(var(--border));background:rgb(var(--surface-secondary));font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.65;color:rgb(var(--text));-moz-tab-size:2;-o-tab-size:2;tab-size:2}.r-pre .c{color:rgb(var(--text-muted))}.r-pre .k{color:rgb(var(--accent-text))}.r-pre .s{color:rgb(var(--success-text))}.r-pre .t{color:rgb(var(--info-text))}.r-pre-label{font-size:11.5px;color:rgb(var(--text-muted));margin-bottom:-8px}.r-pre-label,.r-ref{font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace}.r-ref{font-size:12px;color:rgb(var(--text-secondary));overflow-wrap:anywhere}.r-findings{display:flex;flex-direction:column;border:1px solid rgb(var(--border));border-radius:14px;background:rgb(var(--surface));overflow:hidden}.r-finding{display:grid;gap:8px;padding:16px 18px;border-top:1px solid rgb(var(--border-light))}.r-finding:first-child{border-top:0}.r-finding__head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}.r-finding__id{font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;font-size:11.5px;color:rgb(var(--text-muted))}.r-finding__title{font-weight:600;letter-spacing:-.01em}.r-finding__body{font-size:14px;color:rgb(var(--text-secondary));max-width:80ch}.r-finding__body strong{color:rgb(var(--text));font-weight:600}.r-flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px}.r-step{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 128px;max-width:220px;padding:10px 12px;border-radius:10px;border:1px solid rgb(var(--tone)/.35);background:rgb(var(--tone)/.08)}.r-step__actor{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:rgb(var(--tone-text))}.r-step__name{font-weight:600;font-size:13.5px;line-height:1.3}.r-step__note{font-size:12px;color:rgb(var(--text-secondary));line-height:1.4}.r-step--human{--tone:var(--warning);--tone-text:var(--warning-text);border-style:dashed;border-width:1.5px}.r-step--agent{--tone:var(--info);--tone-text:var(--info-text)}.r-step--check{--tone:var(--success);--tone-text:var(--success-text)}.r-step--critic{--tone:var(--accent);--tone-text:var(--accent-text)}.r-arrow{display:grid;place-items:center;flex:0 0 auto;color:rgb(var(--text-muted));font-size:14px}.r-lane{display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:14px;border:1px solid rgb(var(--border));background:rgb(var(--surface))}.r-legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12.5px;color:rgb(var(--text-secondary))}.r-legend span{display:inline-flex;align-items:center;gap:6px}.r-legend i{width:12px;height:12px;border-radius:4px;border:1px solid rgb(var(--tone)/.5);background:rgb(var(--tone)/.15)}.r-details{border:1px solid rgb(var(--border));border-radius:12px;background:rgb(var(--surface))}.r-details>summary{cursor:pointer;padding:12px 16px;font-weight:600;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px}.r-details>summary::-webkit-details-marker{display:none}.r-details>summary:after{content:"+";font-family:JetBrains Mono,ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;color:rgb(var(--text-muted))}.r-details[open]>summary:after{content:"−"}.r-details__body{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}.r-phase{display:grid;gap:14px;padding:20px;border-radius:14px;border:1px solid rgb(var(--border));background:rgb(var(--surface))}.r-phase__head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 16px}.r-task{display:grid;gap:6px;padding:14px 16px;border-radius:10px;background:rgb(var(--surface-secondary)/.6);border:1px solid rgb(var(--border-light))}.r-task__title{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:600;font-size:14px}.r-task ul{margin:0;padding-left:1.2em;font-size:13.5px;color:rgb(var(--text-secondary))}.r-task li+li{margin-top:.25em}.r-btn{display:inline-flex;align-items:center;gap:8px;height:32px;padding-inline:12px;border-radius:8px;border:1px solid rgb(var(--border));background:rgb(var(--surface));color:rgb(var(--text-secondary));font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s,transform .15s}.r-btn:hover{background:rgb(var(--surface-secondary));color:rgb(var(--text))}.r-btn:active{transform:scale(.97)}.r-footer{margin-top:24px;padding-top:24px;border-top:1px solid rgb(var(--border));font-size:13px;color:rgb(var(--text-muted))}@media (min-width:640px){.sm\:col-span-1{grid-column:span 1/span 1}.sm\:col-span-12{grid-column:span 12/span 12}.sm\:col-span-2{grid-column:span 2/span 2}.sm\:col-span-3{grid-column:span 3/span 3}.sm\:col-span-4{grid-column:span 4/span 4}.sm\:col-span-6{grid-column:span 6/span 6}.sm\:block{display:block}.sm\:inline-block{display:inline-block}.sm\:flex{display:flex}.sm\:inline-flex{display:inline-flex}.sm\:grid{display:grid}.sm\:hidden{display:none}.sm\:grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.sm\:grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.sm\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.sm\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.sm\:grid-cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}}@media (min-width:768px){.md\:col-span-1{grid-column:span 1/span 1}.md\:col-span-12{grid-column:span 12/span 12}.md\:col-span-2{grid-column:span 2/span 2}.md\:col-span-3{grid-column:span 3/span 3}.md\:col-span-4{grid-column:span 4/span 4}.md\:col-span-6{grid-column:span 6/span 6}.md\:block{display:block}.md\:inline-block{display:inline-block}.md\:flex{display:flex}.md\:inline-flex{display:inline-flex}.md\:grid{display:grid}.md\:hidden{display:none}.md\:grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.md\:grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.md\:grid-cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}}@media (min-width:1024px){.lg\:col-span-1{grid-column:span 1/span 1}.lg\:col-span-12{grid-column:span 12/span 12}.lg\:col-span-2{grid-column:span 2/span 2}.lg\:col-span-3{grid-column:span 3/span 3}.lg\:col-span-4{grid-column:span 4/span 4}.lg\:col-span-6{grid-column:span 6/span 6}.lg\:block{display:block}.lg\:inline-block{display:inline-block}.lg\:flex{display:flex}.lg\:inline-flex{display:inline-flex}.lg\:grid{display:grid}.lg\:hidden{display:none}.lg\:grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.lg\:grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.lg\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.lg\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.lg\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.lg\:grid-cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}}
+</style>
+<!-- report-css:end -->
+    <!-- report-js:start -->
+<script>
+// AgentQ research reports: theme toggle + table-of-contents highlight.
+// Plain script (no modules) so reports work from file:// with no server.
+(function () {
+  var KEY = "agentq-report-theme";
+  var root = document.documentElement;
+
+  function readTheme() {
+    try {
+      return localStorage.getItem(KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeTheme(value) {
+    try {
+      localStorage.setItem(KEY, value);
+    } catch (e) {
+      /* storage blocked: the toggle still works for this visit */
+    }
+  }
+
+  function currentTheme() {
+    var stamped = root.getAttribute("data-theme");
+    if (stamped) return stamped;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+
+  var saved = readTheme();
+  if (saved === "dark" || saved === "light") root.setAttribute("data-theme", saved);
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var toggle = document.querySelector("[data-theme-toggle]");
+    if (toggle) {
+      var label = function () {
+        toggle.textContent = currentTheme() === "dark" ? "Tema claro" : "Tema oscuro";
+      };
+      label();
+      toggle.addEventListener("click", function () {
+        var next = currentTheme() === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        writeTheme(next);
+        label();
+      });
+    }
+
+    // The table of contents starts collapsed on narrow screens (it sits above the content there).
+    var tocDetails = document.querySelector(".r-toc details");
+    if (tocDetails && window.innerWidth < 1024) tocDetails.removeAttribute("open");
+
+    // Highlight the section being read in the table of contents.
+    var links = Array.prototype.slice.call(document.querySelectorAll(".r-toc a[href^='#']"));
+    if (!links.length || !("IntersectionObserver" in window)) return;
+    var byId = {};
+    links.forEach(function (a) {
+      byId[a.getAttribute("href").slice(1)] = a;
+    });
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          links.forEach(function (a) {
+            a.removeAttribute("aria-current");
+          });
+          var link = byId[entry.target.id];
+          if (link) link.setAttribute("aria-current", "true");
+        });
+      },
+      { rootMargin: "-10% 0px -80% 0px" },
+    );
+    Object.keys(byId).forEach(function (id) {
+      var section = document.getElementById(id);
+      if (section) observer.observe(section);
+    });
+  });
+})();
+</script>
+<!-- report-js:end -->
+  </head>
+  <body>
+    <div class="r-page">
+      <header class="r-header">
+        <div class="r-header__bar">
+          <span class="r-brand"><span class="r-brand__mark">AQ</span>AgentQ · Investigación</span>
+          <button type="button" class="r-btn" data-theme-toggle id="theme-toggle">Tema oscuro</button>
+        </div>
+        <p class="r-eyebrow">Auditoría de flujo · 23 sep 2026</p>
+        <h1 class="r-h1">Menos puertas humanas, más evidencia de agentes</h1>
+        <p class="r-lead">
+          Cómo funciona hoy el flujo plan → código → revisión → merge de AgentQ, si cumple su objetivo de acelerar a
+          los desarrolladores con el humano en el bucle, dónde se atasca, y un plan concreto para que los agentes se
+          verifiquen entre sí y el humano solo decida lo que importa.
+        </p>
+        <div class="r-meta">
+          <span><b>Commit</b> <code>2859af1</code> (main)</span>
+          <span><b>Alcance</b> packages/shared, mcp, web, runner, skills, docs</span>
+          <span><b>Tests</b> 230 de 230 pasan</span>
+          <span><b>Lectura</b> ~25 min</span>
+        </div>
+      </header>
+
+      <div class="r-shell">
+        <nav class="r-toc" aria-label="Contenido">
+          <details open id="toc-details">
+            <summary>Contenido</summary>
+            <ol>
+              <li><a href="#veredicto">Veredicto</a></li>
+              <li><a href="#hoy">Cómo funciona hoy</a></li>
+              <li><a href="#toques">Dónde se va el tiempo humano</a></li>
+              <li><a href="#hallazgos">Hallazgos</a></li>
+              <li><a href="#datos">La información de la tarea</a></li>
+              <li><a href="#modelo">Modelo propuesto</a></li>
+              <li><a href="#roles">Roles y granularidad</a></li>
+              <li><a href="#contratos">Contratos de datos</a></li>
+              <li><a href="#mcp">MCP y skills</a></li>
+              <li><a href="#portal">Portal</a></li>
+              <li><a href="#roadmap">Hoja de ruta</a></li>
+              <li><a href="#metricas">Métricas y riesgos</a></li>
+              <li><a href="#evidencias">Evidencias</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <main class="r-main">
+          <!-- ─── 1. Veredicto ─────────────────────────────────────────── -->
+          <section class="r-section" id="veredicto">
+            <div class="r-verdict">
+              <div class="r-stack">
+                <p class="r-eyebrow">Veredicto</p>
+                <h2 class="r-h2">¿Cumple su cometido? En parte.</h2>
+                <div class="r-prose">
+                  <p>
+                    <strong>Como cola y orquestador, sí.</strong> La máquina de estados es clara, el claim es atómico,
+                    los runners lanzan herramientas headless con reversión y backoff, el MCP es el único canal de los
+                    agentes y cada fase deja notas de handoff obligatorias.
+                  </p>
+                  <p>
+                    <strong>Como acelerador con el humano en el bucle, todavía no.</strong> Solo el humano puede mover
+                    una tarea entre fases, así que cada tarea espera entre 3 y 7 clics humanos. La revisión por IA no
+                    ahorra trabajo, lo añade: su veredicto no cambia el estado, y el humano tiene que leerlo, decidir y
+                    volver a pulsar.
+                  </p>
+                  <p>
+                    Tu intuición es correcta, con un matiz: el problema no es que haya demasiadas revisiones, sino que
+                    <strong>todas las puertas son humanas y ninguna produce evidencia verificable</strong>. La
+                    propuesta: los agentes revisan y verifican (con otro modelo y ejecutando comandos reales), la tarea
+                    avanza sola mientras la evidencia sea verde, y el humano aprueba dos cosas: la intención (el plan,
+                    solo si hay riesgo) y el resultado (el PR).
+                  </p>
+                </div>
+              </div>
+              <div class="r-stack">
+                <div class="r-stats">
+                  <div class="r-stat r-tone-warning">
+                    <span class="r-stat__value">3–7</span>
+                    <span class="r-stat__label">clics humanos por tarea hoy</span>
+                  </div>
+                  <div class="r-stat r-tone-success">
+                    <span class="r-stat__value">1–2</span>
+                    <span class="r-stat__label">clics humanos con la propuesta (más escaladas)</span>
+                  </div>
+                  <div class="r-stat r-tone-danger">
+                    <span class="r-stat__value">0</span>
+                    <span class="r-stat__label">comandos que el sistema ejecuta para verificar</span>
+                  </div>
+                  <div class="r-stat r-tone-danger">
+                    <span class="r-stat__value">0</span>
+                    <span class="r-stat__label">estados que dependen del veredicto del revisor</span>
+                  </div>
+                </div>
+                <div class="r-callout r-tone-primary">
+                  <span class="r-callout__title">Lo más rentable primero</span>
+                  <ol class="r-small" style="margin: 0; padding-left: 1.2em">
+                    <li>Veredicto estructurado en <code>submit_review</code> que enruta la tarea solo.</li>
+                    <li>Revisión IA automática tras <code>submit_code</code>, con un modelo distinto al del coder.</li>
+                    <li>Un único gate humano al final: el PR, y <code>complete</code> automático al fusionarse.</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── 2. Cómo funciona hoy ─────────────────────────────────── -->
+          <section class="r-section" id="hoy">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Estado actual</p>
+              <h2 class="r-h2">Cómo funciona hoy</h2>
+              <p class="r-lead">
+                Recorrido de una tarea con <code>requiresPlan = true</code> y revisión por IA. Cada caja discontinua es
+                una espera: nada avanza hasta que un humano entra al portal.
+              </p>
+            </div>
+
+            <div class="r-lane">
+              <div class="r-legend">
+                <span class="r-tone-info"><i></i>Agente</span>
+                <span class="r-tone-accent"><i></i>Revisor IA</span>
+                <span class="r-tone-warning"><i></i>Puerta humana</span>
+              </div>
+              <div class="r-flow" role="list" aria-label="Flujo actual">
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Planner</span><span class="r-step__name">Plan</span>
+                  <span class="r-step__note">submit_plan</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Aprobar plan</span>
+                  <span class="r-step__note">waiting_plan_review</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Implementer</span><span class="r-step__name">Código</span>
+                  <span class="r-step__note">submit_code</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Pedir revisión IA</span>
+                  <span class="r-step__note">waiting_code_review</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--critic" role="listitem">
+                  <span class="r-step__actor">Reviewer</span><span class="r-step__name">Revisión</span>
+                  <span class="r-step__note">veredicto en texto libre</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Leer y aprobar código</span>
+                  <span class="r-step__note">vuelve a waiting_code_review</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Implementer</span><span class="r-step__name">Push + PR</span>
+                  <span class="r-step__note">estado merged</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Fusionar PR</span>
+                  <span class="r-step__note">en GitHub, fuera de AgentQ</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Confirmar completado</span>
+                  <span class="r-step__note">complete</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="r-grid-3">
+              <div class="r-callout r-tone-warning">
+                <span class="r-callout__title">El revisor necesita un botón</span>
+                <p class="r-small" style="margin: 0">
+                  Solo <code>request_ai_review</code> lleva a <code>code_review_requested</code>. Ningún rol reclama
+                  <code>waiting_code_review</code>, así que un runner reviewer nunca tiene trabajo por sí solo.
+                </p>
+              </div>
+              <div class="r-callout r-tone-warning">
+                <span class="r-callout__title">El veredicto no decide</span>
+                <p class="r-small" style="margin: 0">
+                  <code>submitReview</code> devuelve siempre la tarea a <code>waiting_code_review</code>, apruebe o
+                  pida cambios el revisor.
+                </p>
+              </div>
+              <div class="r-callout r-tone-warning">
+                <span class="r-callout__title">«Merged» es «PR abierto»</span>
+                <p class="r-small" style="margin: 0">
+                  <code>submit_merge</code> se llama tras <code>gh pr create</code>. Nadie comprueba que el PR se fusionó
+                  antes de «Confirm completion».
+                </p>
+              </div>
+            </div>
+
+            <div class="r-card r-card--flat r-stack">
+              <h3 class="r-h3">Lo que ya está bien y hay que conservar</h3>
+              <ul class="r-prose" style="margin: 0; padding-left: 1.2em">
+                <li>
+                  Una sola máquina de estados en <code>packages/shared</code>, con claim atómico
+                  (<code>UPDATE … WHERE assigned_agent_id IS NULL AND status = ?</code> dentro de una transacción).
+                </li>
+                <li>Runners headless con timeout, reversión al salir sin submit y backoff exponencial por tarea.</li>
+                <li>MCP como único canal de los agentes, con instrucciones del servidor y <code>context</code> obligatorio en cada submit.</li>
+                <li>Un worktree por tarea y reglas de git por fase: el push solo ocurre en la fase de merge.</li>
+                <li>
+                  Campos de tarea bien separados: <code>description</code> (qué), <code>steerDetails</code> (cómo),
+                  <code>guardrails</code> (límites) y <code>acceptanceCriteria</code> (cuándo está hecho).
+                </li>
+                <li>Archivo en Markdown de cada tarea terminada y una suite de 230 tests que pasa entera.</li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ─── 3. Toques humanos ────────────────────────────────────── -->
+          <section class="r-section" id="toques">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Coste humano</p>
+              <h2 class="r-h2">Dónde se va el tiempo humano</h2>
+              <p class="r-lead">
+                Cada clic es además un cambio de contexto: abrir la tarea, leer el plan o la revisión en Markdown y
+                decidir. Y el mismo código se revisa dos veces: en AgentQ («Approve code») y en GitHub (el PR).
+              </p>
+            </div>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Escenario</th>
+                    <th>Clics humanos hoy</th>
+                    <th class="r-num">Hoy</th>
+                    <th class="r-num">Propuesta (L2)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Sin plan, sin revisión IA</td>
+                    <td>Aprobar código · fusionar PR · confirmar</td>
+                    <td class="r-num">3</td>
+                    <td class="r-num">1</td>
+                  </tr>
+                  <tr>
+                    <td>Con plan</td>
+                    <td>+ aprobar plan</td>
+                    <td class="r-num">4</td>
+                    <td class="r-num">1–2</td>
+                  </tr>
+                  <tr>
+                    <td>Con plan y revisión IA</td>
+                    <td>+ pedir revisión IA</td>
+                    <td class="r-num">5</td>
+                    <td class="r-num">1–2</td>
+                  </tr>
+                  <tr>
+                    <td>Con una ronda de cambios</td>
+                    <td>+ pedir cambios · pedir revisión IA otra vez</td>
+                    <td class="r-num">7</td>
+                    <td class="r-num">1–2</td>
+                  </tr>
+                  <tr>
+                    <td>Falla el push o el PR en un runner</td>
+                    <td>La tarea vuelve a <code>approved</code> y se reintenta con backoff hasta que alguien cancela</td>
+                    <td class="r-num">∞</td>
+                    <td class="r-num">1</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="r-small r-muted">
+              «Propuesta (L2)»: el humano revisa y fusiona el PR; aprueba el plan solo si el riesgo es medio o alto o el
+              plan trae preguntas bloqueantes; responde a las escaladas <code>needs_human</code>.
+            </p>
+          </section>
+
+          <!-- ─── 4. Hallazgos ─────────────────────────────────────────── -->
+          <section class="r-section" id="hallazgos">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Diagnóstico</p>
+              <h2 class="r-h2">Hallazgos</h2>
+              <p class="r-lead">
+                Dieciocho hallazgos en cuatro grupos. Cada uno cita el código que lo demuestra; el apéndice los reúne.
+              </p>
+            </div>
+
+            <h3 class="r-h3">Flujo y humano en el bucle</h3>
+            <div class="r-findings">
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F1</span><span class="r-chip r-tone-danger">Alta</span>
+                  <span class="r-finding__title">El veredicto del revisor no tiene efecto</span>
+                </div>
+                <p class="r-finding__body">
+                  <code>submit_review</code> no acepta un <code>verdict</code>; la skill dice que el veredicto es «una
+                  recomendación» que aplica el usuario. Toda revisión IA termina en una espera humana.
+                </p>
+                <span class="r-ref">packages/shared/src/workflow.ts:344 · skills/agentq-review/SKILL.md:53</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F2</span><span class="r-chip r-tone-danger">Alta</span>
+                  <span class="r-finding__title">La revisión IA depende de un botón</span>
+                </div>
+                <p class="r-finding__body">
+                  Solo la acción humana <code>request_ai_review</code> lleva a <code>code_review_requested</code>. Sin
+                  ese clic, un runner reviewer no tiene nada que reclamar.
+                </p>
+                <span class="r-ref">packages/web/src/index.ts:824 · packages/shared/src/workflow.ts:13</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F3</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">El mismo código se revisa dos veces</span>
+                </div>
+                <p class="r-finding__body">
+                  «Approve code» en AgentQ y después la revisión y fusión del PR en GitHub. Con «Confirm completion» son
+                  tres puertas humanas después del código.
+                </p>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F4</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">«Merged» no significa fusionado</span>
+                </div>
+                <p class="r-finding__body">
+                  <code>submitMerge</code> mueve a <code>merged</code> cuando el PR se abre. El humano confirma
+                  <code>complete</code> sin ninguna señal del estado real del PR.
+                </p>
+                <span class="r-ref">packages/shared/src/workflow.ts:362 · skills/agentq-merge/SKILL.md</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F5</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">No hay niveles de riesgo ni de autonomía</span>
+                </div>
+                <p class="r-finding__body">
+                  Todas las tareas pasan por las mismas puertas: un cambio de documentación cuesta los mismos clics que
+                  una migración de base de datos. <code>requiresPlan</code> es el único control y es binario.
+                </p>
+              </article>
+            </div>
+
+            <h3 class="r-h3">Verificación</h3>
+            <div class="r-findings">
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F6</span><span class="r-chip r-tone-danger">Alta</span>
+                  <span class="r-finding__title">Nadie ejecuta nada</span>
+                </div>
+                <p class="r-finding__body">
+                  Las pruebas son texto libre en la sección «Testing» del mensaje de <code>submit_code</code>. Ni el
+                  sistema ni el revisor están obligados a reproducirlas, y no hay comandos de proyecto registrados:
+                  <code>Project</code> solo tiene <code>displayName</code> y <code>workingDirectory</code>.
+                </p>
+                <span class="r-ref">packages/shared/src/types.ts:84 · skills/agentq-code/SKILL.md</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F7</span><span class="r-chip r-tone-danger">Alta</span>
+                  <span class="r-finding__title">El plan no dice cómo se validará</span>
+                </div>
+                <p class="r-finding__body">
+                  La plantilla de <code>agentq-plan</code> pide pasos, archivos y decisiones, pero no un plan de
+                  validación por criterio de aceptación. El revisor no tiene contra qué comparar y el coder decide solo
+                  qué probar.
+                </p>
+                <span class="r-ref">skills/agentq-plan/SKILL.md (Plan Template)</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F8</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">Un agente puede revisar su propio código</span>
+                </div>
+                <p class="r-finding__body">
+                  Un runner <code>senior</code> reclama la revisión del código que acaba de escribir (misma herramienta,
+                  mismo modelo). <code>claimNextTask</code> no mira quién produjo el artefacto.
+                </p>
+                <span class="r-ref">packages/shared/src/workflow.ts:161</span>
+              </article>
+            </div>
+
+            <h3 class="r-h3">Datos y continuidad</h3>
+            <div class="r-findings">
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F9</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">El plan aprobado no es un campo</span>
+                </div>
+                <p class="r-finding__body">
+                  El coder tiene que deducir cuál de los mensajes <code>plan</code> de la conversación es el aprobado;
+                  tras varias rondas de <code>plan_changes_requested</code> puede haber varios.
+                </p>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F10</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">Los handoffs no dicen de quién ni de cuándo son</span>
+                </div>
+                <p class="r-finding__body">
+                  <code>contexts</code> es un <code>string[]</code> sin autor, fase ni ronda. Tras dos rondas de revisión
+                  el coder no sabe qué nota sigue vigente.
+                </p>
+                <span class="r-ref">packages/shared/src/types.ts:59</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F11</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">Los hallazgos de revisión no se pueden seguir</span>
+                </div>
+                <p class="r-finding__body">
+                  Son Markdown libre: el coder no puede marcar «arreglado» cada hallazgo y el siguiente revisor tiene que
+                  redescubrir qué quedó abierto.
+                </p>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F12</span><span class="r-chip r-tone-neutral">Baja</span>
+                  <span class="r-finding__title">El contexto crece sin límite</span>
+                </div>
+                <p class="r-finding__body">
+                  El prompt del runner y <code>claim_task</code> incluyen la conversación completa. Crece con cada ronda
+                  y se paga en tokens en cada fase.
+                </p>
+                <span class="r-ref">packages/web/src/runner/prompt.ts:109</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F13</span><span class="r-chip r-tone-neutral">Baja</span>
+                  <span class="r-finding__title">Los datos de git no están estructurados</span>
+                </div>
+                <p class="r-finding__body">
+                  <code>realBranch</code> nunca se escribe; los SHA y la URL del PR solo viven en texto (el archivo los
+                  extrae con expresiones regulares).
+                </p>
+                <span class="r-ref">packages/shared/src/database.ts:541 · packages/shared/src/archive.ts</span>
+              </article>
+            </div>
+
+            <h3 class="r-h3">Robustez y deuda técnica</h3>
+            <div class="r-findings">
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F14</span><span class="r-chip r-tone-danger">Alta</span>
+                  <span class="r-finding__title">Un fallo de merge en un runner se reintenta sin fin</span>
+                </div>
+                <p class="r-finding__body">
+                  La skill de merge manda «parar y avisar al usuario» sin llamar a <code>submit_merge</code>, pero en un
+                  runner no hay usuario: el proceso termina, <code>revertClaim</code> devuelve la tarea a
+                  <code>approved</code> y el runner la reintenta con backoff. El prompt del runner dice lo contrario
+                  («still submit with a message explaining what blocks you»). <strong>Falta un estado «necesita
+                  humano».</strong>
+                </p>
+                <span class="r-ref"
+                  >skills/agentq-merge/SKILL.md:83, 102 · packages/web/src/runner/prompt.ts:156 ·
+                  packages/web/src/runner/runner.ts:470</span
+                >
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F15</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">La lógica de transición está duplicada y tiene un atajo</span>
+                </div>
+                <p class="r-finding__body">
+                  El API web reimplementa los <code>submit_*</code> sin <code>appendContext</code> y con mensajes
+                  distintos a los de <code>workflow.ts</code>. Además <code>PUT /api/tasks/:id</code> acepta
+                  <code>status</code>, <code>history</code> y <code>conversation</code>, saltándose la máquina de
+                  estados.
+                </p>
+                <span class="r-ref"
+                  >packages/web/src/index.ts:684–770, 921 · packages/shared/src/schemas.ts:23</span
+                >
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F16</span><span class="r-chip r-tone-warning">Media</span>
+                  <span class="r-finding__title">Las skills instaladas están desactualizadas</span>
+                </div>
+                <p class="r-finding__body">
+                  En esta máquina <code>~/.claude/skills/agentq-claim</code> es la versión 2.0.0 (usa el CLI
+                  <code>agentq</code>, que ya no existe) y el repo va por la 3.1.0 (MCP). Un agente abierto a mano sigue
+                  instrucciones que ya no funcionan y nada lo detecta.
+                </p>
+                <span class="r-ref">~/.claude/skills/agentq-claim/SKILL.md · packages/installer/src/install-skills.ts</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F17</span><span class="r-chip r-tone-neutral">Baja</span>
+                  <span class="r-finding__title">Unblock no cubre merging y los submits no comprueban al agente</span>
+                </div>
+                <p class="r-finding__body">
+                  El mapa de <code>unblock</code> solo tiene planning, coding y reviewing. Y
+                  <code>requireTaskInStatus</code> valida el estado pero no que quien envía sea el agente asignado.
+                </p>
+                <span class="r-ref">packages/web/src/index.ts:868 · packages/shared/src/workflow.ts:297</span>
+              </article>
+              <article class="r-finding">
+                <div class="r-finding__head">
+                  <span class="r-finding__id">F18</span><span class="r-chip r-tone-neutral">Baja</span>
+                  <span class="r-finding__title">La rama destino por defecto está fija en develop</span>
+                </div>
+                <p class="r-finding__body">
+                  <code>develop</code> está escrito en tres sitios, aunque este mismo repo usa <code>main</code>. Debería
+                  salir del proyecto.
+                </p>
+                <span class="r-ref"
+                  >packages/shared/src/database.ts:543 · packages/mcp/src/server.ts:376 ·
+                  packages/web-ui/src/components/CreateTaskModal.tsx:42</span
+                >
+              </article>
+            </div>
+          </section>
+
+          <!-- ─── 5. Datos de la tarea ─────────────────────────────────── -->
+          <section class="r-section" id="datos">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Información de la tarea</p>
+              <h2 class="r-h2">¿La tarea tiene lo que un agente necesita?</h2>
+              <p class="r-lead">
+                Para empezar, la tarea está bien pensada. Para continuar entre rondas y para verificarse a sí misma, le
+                falta estructura: casi todo el estado vive en la conversación y hay que releerla entera.
+              </p>
+            </div>
+
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Campo</th>
+                    <th>Para empezar</th>
+                    <th>Para continuar</th>
+                    <th>Qué falta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="r-nowrap"><code>title</code>, <code>description</code></td>
+                    <td><span class="r-chip r-tone-success">Bien</span> separa el qué del cómo</td>
+                    <td>—</td>
+                    <td>Tipo de tarea (feature, bug, refactor, docs, chore) y no-objetivos</td>
+                  </tr>
+                  <tr>
+                    <td><code>steerDetails</code></td>
+                    <td><span class="r-chip r-tone-success">Bien</span></td>
+                    <td>—</td>
+                    <td>Referencias estructuradas: archivos, issues, enlaces</td>
+                  </tr>
+                  <tr>
+                    <td><code>guardrails</code></td>
+                    <td><span class="r-chip r-tone-success">Bien</span> ganan en conflicto</td>
+                    <td>—</td>
+                    <td>Guardrails de proyecto heredados; hoy se repiten en cada tarea</td>
+                  </tr>
+                  <tr>
+                    <td><code>acceptanceCriteria</code></td>
+                    <td><span class="r-chip r-tone-warning">Parcial</span> texto libre</td>
+                    <td><span class="r-chip r-tone-danger">Falta</span> sin estado por criterio</td>
+                    <td>Objeto con id, cómo se verifica, estado y evidencia</td>
+                  </tr>
+                  <tr>
+                    <td><code>requiresPlan</code></td>
+                    <td><span class="r-chip r-tone-warning">Parcial</span> binario</td>
+                    <td>—</td>
+                    <td>Riesgo (low, medium, high) y nivel de autonomía; el plan se deriva de ahí</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>recommendedBranch</code>, <code>mergeBranch</code></td>
+                    <td><span class="r-chip r-tone-success">Bien</span></td>
+                    <td><span class="r-chip r-tone-warning">Parcial</span> <code>realBranch</code> vacío</td>
+                    <td>Rama destino por defecto del proyecto; <code>headSha</code> por ronda</td>
+                  </tr>
+                  <tr>
+                    <td><code>conversation</code></td>
+                    <td>Historial completo</td>
+                    <td><span class="r-chip r-tone-warning">Parcial</span> hay que leerla entera</td>
+                    <td>Vistas derivadas: plan aprobado, hallazgos abiertos, último handoff</td>
+                  </tr>
+                  <tr>
+                    <td><code>contexts</code></td>
+                    <td>Opcional al crear</td>
+                    <td><span class="r-chip r-tone-danger">Falta</span> sin autor, fase ni ronda</td>
+                    <td>Handoff estructurado</td>
+                  </tr>
+                  <tr>
+                    <td><code>worktreePath</code></td>
+                    <td>Vacío hasta <code>submit_code</code></td>
+                    <td><span class="r-chip r-tone-success">Bien</span></td>
+                    <td>—</td>
+                  </tr>
+                  <tr>
+                    <td><code>history</code></td>
+                    <td>—</td>
+                    <td><span class="r-chip r-tone-warning">Parcial</span> sin actor</td>
+                    <td>Actor en cada transición</td>
+                  </tr>
+                  <tr>
+                    <td><code>project</code></td>
+                    <td><span class="r-chip r-tone-danger">Falta</span> solo nombre y ruta</td>
+                    <td>—</td>
+                    <td>Perfil: comandos, rama por defecto, ficheros de convenciones, política de autonomía</td>
+                  </tr>
+                  <tr>
+                    <td><span class="r-muted">no existe</span></td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td><code>parentId</code> y <code>blockedBy</code> para dividir el trabajo; contador de rondas</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="r-grid-2">
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Para empezar sin preguntar</h3>
+                <p class="r-small r-muted" style="margin: 0">«Definition of Ready» que debería validar la creación de la tarea.</p>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Qué y por qué, con no-objetivos explícitos.</li>
+                  <li>Cómo se verifica cada criterio: un comando, un test o una comprobación manual.</li>
+                  <li>Comandos del proyecto: instalar, compilar, test, lint, typecheck.</li>
+                  <li>Dónde mirar primero y qué convenciones seguir (<code>CLAUDE.md</code>, <code>AGENTS.md</code>).</li>
+                  <li>Riesgo y nivel de autonomía, para saber qué puertas habrá.</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Para continuar sin releer todo</h3>
+                <p class="r-small r-muted" style="margin: 0">Lo que debe devolver <code>get_task_brief</code> en cada fase.</p>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>El plan aprobado y su plan de validación, inmutables.</li>
+                  <li>Los hallazgos abiertos, cada uno con id y severidad.</li>
+                  <li>El último handoff de cada fase.</li>
+                  <li>El estado de cada criterio con su evidencia.</li>
+                  <li>La ronda actual y cuántas quedan antes de escalar.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── 6. Modelo propuesto ──────────────────────────────────── -->
+          <section class="r-section" id="modelo">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Propuesta</p>
+              <h2 class="r-h2">Modelo propuesto: los agentes producen evidencia, el humano decide</h2>
+            </div>
+
+            <div class="r-callout r-tone-primary">
+              <span class="r-callout__title">Principio</span>
+              <p style="margin: 0">
+                Los humanos deciden la intención y aceptan el riesgo. Los agentes producen evidencia y se revisan entre
+                sí. La tarea avanza sola mientras la evidencia sea verde y se detiene, con una pregunta concreta, cuando
+                no lo es.
+              </p>
+            </div>
+
+            <div class="r-lane">
+              <div class="r-legend">
+                <span class="r-tone-info"><i></i>Agente</span>
+                <span class="r-tone-accent"><i></i>Crítico IA (otro modelo)</span>
+                <span class="r-tone-success"><i></i>Verificación automática</span>
+                <span class="r-tone-warning"><i></i>Puerta humana</span>
+              </div>
+              <div class="r-flow" role="list" aria-label="Flujo propuesto en nivel L2">
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Tarea</span>
+                  <span class="r-step__note">intención y criterios</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Planner</span><span class="r-step__name">Plan + validación</span>
+                  <span class="r-step__note">cómo se prueba cada criterio</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--critic" role="listitem">
+                  <span class="r-step__actor">Plan reviewer</span><span class="r-step__name">Crítica del plan</span>
+                  <span class="r-step__note">máx. 2 rondas</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano · condicional</span><span class="r-step__name">Aprobar plan</span>
+                  <span class="r-step__note">solo riesgo ≥ medio o preguntas</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Implementer</span><span class="r-step__name">Código + tests</span>
+                  <span class="r-step__note">con evidencia por criterio</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--check" role="listitem">
+                  <span class="r-step__actor">Runner</span><span class="r-step__name">Verificación</span>
+                  <span class="r-step__note">comandos del proyecto</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--critic" role="listitem">
+                  <span class="r-step__actor">Reviewer</span><span class="r-step__name">Revisión</span>
+                  <span class="r-step__note">veredicto que enruta</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--agent" role="listitem">
+                  <span class="r-step__actor">Integrator</span><span class="r-step__name">PR</span>
+                  <span class="r-step__note">cuerpo con evidencia</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--human" role="listitem">
+                  <span class="r-step__actor">Humano</span><span class="r-step__name">Revisar y fusionar PR</span>
+                  <span class="r-step__note">única puerta fija</span>
+                </div>
+                <span class="r-arrow" aria-hidden="true">→</span>
+                <div class="r-step r-step--check" role="listitem">
+                  <span class="r-step__actor">Servidor</span><span class="r-step__name">Complete</span>
+                  <span class="r-step__note">al detectar el merge</span>
+                </div>
+              </div>
+              <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                <li>Verificación roja → vuelve a código con el log, sin humano.</li>
+                <li>Revisión <code>request_changes</code> → vuelve a código con los hallazgos por id, máximo 3 rondas.</li>
+                <li>Crítica del plan <code>request_changes</code> → vuelve al planner, máximo 2 rondas.</li>
+                <li>Cualquier tope superado, pregunta bloqueante o <code>report_blocker</code> → <code>needs_human</code>.</li>
+              </ul>
+            </div>
+
+            <h3 class="r-h3">Niveles de autonomía</h3>
+            <p class="r-prose" style="margin: 0">
+              Por proyecto, con excepción por tarea. En todos los niveles un humano fusiona el PR: el humano no sale del
+              bucle, sale de los pasos intermedios.
+            </p>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Nivel</th>
+                    <th>Plan</th>
+                    <th>Código</th>
+                    <th>PR</th>
+                    <th>Para qué</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="r-nowrap"><strong>L0</strong> Supervisado</td>
+                    <td>Humano</td>
+                    <td>Humano (como hoy)</td>
+                    <td>Humano</td>
+                    <td>Alto riesgo, repos nuevos, periodo de confianza</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><strong>L1</strong> Plan humano</td>
+                    <td>Humano</td>
+                    <td>Agentes: verificación y revisión</td>
+                    <td>Humano</td>
+                    <td>Features medianas</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><strong>L2</strong> PR humano <span class="r-chip r-tone-primary r-chip--plain">Por defecto</span></td>
+                    <td>Crítico IA; humano si riesgo ≥ medio</td>
+                    <td>Agentes</td>
+                    <td>Humano</td>
+                    <td>La mayoría de tareas</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><strong>L3</strong> Autónomo</td>
+                    <td>Crítico IA</td>
+                    <td>Agentes</td>
+                    <td>Humano fusiona; auto-merge opcional si CI verde y riesgo low</td>
+                    <td>Docs, tests, chores, dependencias menores</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 class="r-h3">Escaladas: cuándo se detiene y pregunta</h3>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Disparador</th>
+                    <th>Qué pasa</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Rondas de revisión &gt; <code>maxReviewRounds</code> (3)</td>
+                    <td><code>needs_human</code> con los hallazgos que siguen abiertos</td>
+                  </tr>
+                  <tr>
+                    <td>Verificación roja 2 veces seguidas</td>
+                    <td><code>needs_human</code> con el log resumido</td>
+                  </tr>
+                  <tr>
+                    <td>El plan trae preguntas marcadas como bloqueantes</td>
+                    <td><code>needs_human</code> con las preguntas; la respuesta vuelve al planner</td>
+                  </tr>
+                  <tr>
+                    <td>El agente llama a <code>report_blocker</code> (push rechazado, credenciales, ambigüedad)</td>
+                    <td><code>needs_human</code> con la causa; se acaba el bucle de reintentos</td>
+                  </tr>
+                  <tr>
+                    <td>Revisor y coder discrepan sobre el mismo hallazgo dos rondas</td>
+                    <td><code>needs_human</code> para arbitrar</td>
+                  </tr>
+                  <tr>
+                    <td>El diff toca rutas protegidas (migraciones, auth, CI) o supera el tamaño acordado</td>
+                    <td>El riesgo sube a high: el código también pasa por un humano</td>
+                  </tr>
+                  <tr>
+                    <td>El coder borra, salta o debilita tests</td>
+                    <td><code>request_changes</code> automático; si se repite, <code>needs_human</code></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3 class="r-h3">Enrutado: una función de política en lugar de puertas fijas</h3>
+            <p class="r-prose" style="margin: 0">
+              Hoy cada <code>submit_*</code> tiene un estado destino fijo. La propuesta es que el destino lo calcule una
+              política a partir del veredicto, la ronda, el riesgo y el nivel de autonomía. L0 reproduce exactamente el
+              comportamiento actual, así que la migración puede ser proyecto a proyecto.
+            </p>
+            <p class="r-pre-label">packages/shared/src/policy.ts (nuevo)</p>
+            <pre class="r-pre"><code><span class="k">type</span> <span class="t">Gate</span> = <span class="s">"human"</span> | <span class="s">"agent"</span> | <span class="s">"none"</span>;
+
+<span class="k">export interface</span> <span class="t">GatePolicy</span> {
+  plan: <span class="t">Gate</span>;                 <span class="c">// L0/L1: "human" · L2: "agent" · L3: "agent"</span>
+  code: <span class="t">Gate</span>;                 <span class="c">// L0: "human" · L1-L3: "agent"</span>
+  maxPlanRounds: <span class="t">number</span>;        <span class="c">// 2</span>
+  maxReviewRounds: <span class="t">number</span>;      <span class="c">// 3</span>
+  maxVerifyFailures: <span class="t">number</span>;    <span class="c">// 2</span>
+  requireDifferentModel: <span class="t">boolean</span>;
+}
+
+<span class="k">export function</span> afterPlan(task: <span class="t">Task</span>, p: <span class="t">GatePolicy</span>, plan: <span class="t">PlanSubmission</span>): <span class="t">TaskStatus</span> {
+  <span class="k">if</span> (plan.openQuestions.some((q) =&gt; q.blocking)) <span class="k">return</span> TaskStatus.NeedsHuman;
+  <span class="k">if</span> (p.plan === <span class="s">"agent"</span>) <span class="k">return</span> TaskStatus.PlanReviewRequested;
+  <span class="k">if</span> (p.plan === <span class="s">"human"</span>) <span class="k">return</span> TaskStatus.WaitingPlanReview;
+  <span class="k">return</span> TaskStatus.ReadyForCode;
+}
+
+<span class="k">export function</span> afterPlanReview(task: <span class="t">Task</span>, p: <span class="t">GatePolicy</span>, verdict: <span class="t">Verdict</span>): <span class="t">TaskStatus</span> {
+  <span class="k">if</span> (verdict === <span class="s">"needs_human"</span>) <span class="k">return</span> TaskStatus.NeedsHuman;
+  <span class="k">if</span> (verdict === <span class="s">"request_changes"</span>)
+    <span class="k">return</span> task.planRound &gt;= p.maxPlanRounds ? TaskStatus.NeedsHuman : TaskStatus.PlanChangesRequested;
+  <span class="k">return</span> task.risk === <span class="s">"low"</span> ? TaskStatus.ReadyForCode : TaskStatus.WaitingPlanReview;
+}
+
+<span class="c">// submit_code siempre pasa por verificación: el runner ejecuta los comandos.</span>
+<span class="k">export function</span> afterCode(): <span class="t">TaskStatus</span> {
+  <span class="k">return</span> TaskStatus.VerifyRequested;
+}
+
+<span class="k">export function</span> afterVerify(task: <span class="t">Task</span>, p: <span class="t">GatePolicy</span>, passed: <span class="t">boolean</span>): <span class="t">TaskStatus</span> {
+  <span class="k">if</span> (!passed)
+    <span class="k">return</span> task.verifyFailures &gt;= p.maxVerifyFailures ? TaskStatus.NeedsHuman : TaskStatus.ChangesRequested;
+  <span class="k">return</span> p.code === <span class="s">"human"</span> ? TaskStatus.WaitingCodeReview : TaskStatus.CodeReviewRequested;
+}
+
+<span class="k">export function</span> afterReview(task: <span class="t">Task</span>, p: <span class="t">GatePolicy</span>, verdict: <span class="t">Verdict</span>): <span class="t">TaskStatus</span> {
+  <span class="k">if</span> (verdict === <span class="s">"needs_human"</span>) <span class="k">return</span> TaskStatus.NeedsHuman;
+  <span class="k">if</span> (verdict === <span class="s">"request_changes"</span>)
+    <span class="k">return</span> task.codeRound &gt;= p.maxReviewRounds ? TaskStatus.NeedsHuman : TaskStatus.ChangesRequested;
+  <span class="k">return</span> task.risk === <span class="s">"high"</span> ? TaskStatus.WaitingCodeReview : TaskStatus.Approved; <span class="c">// approved → el integrator abre el PR</span>
+}</code></pre>
+            <div class="r-callout r-tone-info">
+              <span class="r-callout__title">Estados nuevos</span>
+              <p class="r-small" style="margin: 0">
+                <code>plan_review_requested</code> y <code>plan_reviewing</code> (crítica del plan),
+                <code>verify_requested</code> y <code>verifying</code>, <code>needs_human</code> (con
+                <code>blocker.question</code>) y <code>pr_open</code>, que sustituye a <code>merged</code>
+                (<code>normalizeStatus</code> puede mapear el valor antiguo). <code>complete</code> lo pone el servidor
+                cuando el PR se fusiona.
+              </p>
+            </div>
+          </section>
+
+          <!-- ─── 7. Roles ─────────────────────────────────────────────── -->
+          <section class="r-section" id="roles">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Roles</p>
+              <h2 class="r-h2">Roles más finos y separación de funciones</h2>
+              <p class="r-lead">
+                Hoy el implementer también integra (reclama <code>approved</code>) y nadie revisa planes. Separar esos
+                papeles permite usar el modelo adecuado para cada uno y que ningún agente apruebe su propio trabajo.
+              </p>
+            </div>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Rol</th>
+                    <th>Reclama</th>
+                    <th>Produce</th>
+                    <th>Modelo sugerido</th>
+                    <th>No puede</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="r-nowrap"><code>refiner</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>draft</code> (opcional)</td>
+                    <td>Tarea lista: criterios verificables, riesgo, preguntas</td>
+                    <td>Medio</td>
+                    <td>Escribir código</td>
+                  </tr>
+                  <tr>
+                    <td><code>planner</code></td>
+                    <td><code>plan_requested</code>, <code>plan_changes_requested</code></td>
+                    <td>Plan, plan de validación, preguntas, propuesta de subtareas</td>
+                    <td>Fuerte</td>
+                    <td>Modificar archivos</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>plan_reviewer</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>plan_review_requested</code></td>
+                    <td>Veredicto y hallazgos del plan</td>
+                    <td>Fuerte, distinto del planner</td>
+                    <td>Aprobar su propio plan</td>
+                  </tr>
+                  <tr>
+                    <td><code>implementer</code></td>
+                    <td><code>ready_for_code</code>, <code>changes_requested</code></td>
+                    <td>Commits, tests, evidencia, resolución por hallazgo</td>
+                    <td>Medio o fuerte</td>
+                    <td>Revisar, hacer push, cambiar el plan de validación</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>verifier</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>verify_requested</code></td>
+                    <td>Resultado de comandos; detección de tests borrados o saltados</td>
+                    <td>Sin LLM (runner) o barato</td>
+                    <td>Editar código</td>
+                  </tr>
+                  <tr>
+                    <td><code>reviewer</code></td>
+                    <td><code>code_review_requested</code></td>
+                    <td>Veredicto estructurado; hallazgos con id y severidad</td>
+                    <td>Fuerte, distinto del implementer</td>
+                    <td>Revisar código propio</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>integrator</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>approved</code></td>
+                    <td>Push, PR, seguimiento del estado del PR</td>
+                    <td>Barato</td>
+                    <td>Cambiar código</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="r-small r-muted" style="margin: 0">
+              Roles compuestos: <code>senior</code> = todos (útil en local con un solo agente, siempre con separación de
+              funciones por identidad) · <code>architect</code> = planner + plan_reviewer + reviewer · <code>qa</code> =
+              verifier + reviewer · <code>builder</code> = implementer + integrator.
+            </p>
+
+            <div class="r-grid-2">
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Reglas de separación de funciones</h3>
+                <ol class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>
+                    Quien produce un artefacto no lo aprueba: <code>claimNextTask</code> excluye tareas cuyo último
+                    productor tiene el mismo <code>sessionId</code>; con <code>requireDifferentModel</code>, también el
+                    mismo modelo.
+                  </li>
+                  <li>El revisor no se fía de la evidencia: re-ejecuta al menos los comandos ligados a los criterios.</li>
+                  <li>
+                    El plan de validación aprobado es inmutable para el implementer. Si no es viable, lo dice con
+                    <code>report_blocker</code>. Así no puede «arreglar» los tests para que pasen.
+                  </li>
+                  <li>
+                    Modelos cruzados: planner y reviewer con un modelo distinto al del implementer; por ejemplo,
+                    implementer en <code>claude-sonnet-5</code> y reviewer en <code>claude-opus-5-5</code> o codex.
+                  </li>
+                </ol>
+              </div>
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Más granularidad en las tareas</h3>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>
+                    Si el plan toca más de N archivos o M criterios, el planner propone subtareas
+                    (<code>create_subtask</code> con <code>parentId</code> y <code>blockedBy</code>). El padre se
+                    completa cuando se completan las hijas.
+                  </li>
+                  <li>Una tarea = un PR revisable; como guía, menos de ~400 líneas de diff.</li>
+                  <li>
+                    Tipos con plantilla propia: <strong>bug</strong> (primero un test que falla),
+                    <strong>refactor</strong> (sin cambio de comportamiento: la suite actual es el oráculo),
+                    <strong>feature</strong>, <strong>docs</strong>, <strong>chore</strong>.
+                  </li>
+                  <li><code>getClaimableTasks</code> ignora tareas con <code>blockedBy</code> sin completar.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── 8. Contratos de datos ────────────────────────────────── -->
+          <section class="r-section" id="contratos">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Modelo de datos</p>
+              <h2 class="r-h2">Contratos de datos</h2>
+              <p class="r-lead">
+                Tipos propuestos para <code>packages/shared/src/types.ts</code>. Siguen el patrón actual: lo que se
+                consulta por separado (hallazgos, evidencia, handoffs) va en tablas propias como
+                <code>conversation_entries</code>; el resto en columnas JSON, con migraciones en <code>_migrations</code>.
+              </p>
+            </div>
+            <p class="r-pre-label">Perfil de proyecto</p>
+            <pre class="r-pre"><code><span class="k">export type</span> <span class="t">Risk</span> = <span class="s">"low"</span> | <span class="s">"medium"</span> | <span class="s">"high"</span>;
+<span class="k">export type</span> <span class="t">AutonomyLevel</span> = 0 | 1 | 2 | 3;
+<span class="k">export type</span> <span class="t">TaskType</span> = <span class="s">"feature"</span> | <span class="s">"bug"</span> | <span class="s">"refactor"</span> | <span class="s">"docs"</span> | <span class="s">"chore"</span>;
+
+<span class="k">export interface</span> <span class="t">ProjectProfile</span> {
+  defaultMergeBranch: <span class="t">string</span>;      <span class="c">// detectada con: git symbolic-ref refs/remotes/origin/HEAD</span>
+  commands: { install?: <span class="t">string</span>; build?: <span class="t">string</span>; test?: <span class="t">string</span>; lint?: <span class="t">string</span>; typecheck?: <span class="t">string</span> };
+  conventionFiles: <span class="t">string</span>[];       <span class="c">// ["CLAUDE.md", "AGENTS.md", "docs/architecture.md"]</span>
+  guardrails: <span class="t">string</span>[];            <span class="c">// se heredan en cada tarea</span>
+  protectedPaths: <span class="t">string</span>[];        <span class="c">// tocarlas sube el riesgo a high</span>
+  autonomy: <span class="t">AutonomyLevel</span>;          <span class="c">// por defecto 2</span>
+  policy: { maxPlanRounds: <span class="t">number</span>; maxReviewRounds: <span class="t">number</span>; maxVerifyFailures: <span class="t">number</span>; requireDifferentModel: <span class="t">boolean</span> };
+}</code></pre>
+
+            <p class="r-pre-label">Criterios, validación, hallazgos, evidencia y handoffs</p>
+            <pre class="r-pre"><code><span class="k">export interface</span> <span class="t">AcceptanceCriterion</span> {
+  id: <span class="t">string</span>;                        <span class="c">// "AC1"</span>
+  text: <span class="t">string</span>;
+  verify: { kind: <span class="s">"command"</span> | <span class="s">"test"</span> | <span class="s">"manual"</span> | <span class="s">"review"</span>; command?: <span class="t">string</span>; notes?: <span class="t">string</span> };
+  status: <span class="s">"pending"</span> | <span class="s">"met"</span> | <span class="s">"failed"</span> | <span class="s">"waived"</span>;
+  evidenceIds: <span class="t">string</span>[];
+}
+
+<span class="k">export interface</span> <span class="t">ValidationPlan</span> {
+  items: { criterionId: <span class="t">string</span>; how: <span class="t">string</span>; command?: <span class="t">string</span>; newTests?: <span class="t">string</span>[] }[];
+  regressionCommands: <span class="t">string</span>[];      <span class="c">// p. ej. ["bun test", "bun run typecheck"]</span>
+}
+
+<span class="k">export interface</span> <span class="t">Finding</span> {
+  id: <span class="t">string</span>;                        <span class="c">// "R2-3" = ronda 2, hallazgo 3</span>
+  round: <span class="t">number</span>;
+  phase: <span class="s">"plan"</span> | <span class="s">"code"</span>;
+  severity: <span class="s">"blocker"</span> | <span class="s">"major"</span> | <span class="s">"minor"</span> | <span class="s">"nit"</span>;
+  file?: <span class="t">string</span>;
+  line?: <span class="t">number</span>;
+  text: <span class="t">string</span>;
+  status: <span class="s">"open"</span> | <span class="s">"fixed"</span> | <span class="s">"wontfix"</span> | <span class="s">"verified"</span>;
+  resolution?: <span class="t">string</span>;               <span class="c">// la escribe el implementer</span>
+}
+
+<span class="k">export interface</span> <span class="t">Evidence</span> {
+  id: <span class="t">string</span>;
+  round: <span class="t">number</span>;
+  kind: <span class="s">"command"</span> | <span class="s">"manual"</span>;
+  command?: <span class="t">string</span>;
+  exitCode?: <span class="t">number</span>;
+  summary: <span class="t">string</span>;                   <span class="c">// las líneas relevantes, no el log entero</span>
+  producedBy: <span class="t">string</span>;                <span class="c">// agentId o "runner:verify"</span>
+  at: <span class="t">string</span>;
+}
+
+<span class="k">export interface</span> <span class="t">Handoff</span> {
+  phase: <span class="s">"plan"</span> | <span class="s">"plan_review"</span> | <span class="s">"code"</span> | <span class="s">"verify"</span> | <span class="s">"review"</span> | <span class="s">"pr"</span>;
+  round: <span class="t">number</span>;
+  agentId: <span class="t">string</span>;
+  at: <span class="t">string</span>;
+  summary: <span class="t">string</span>;
+  decisions: <span class="t">string</span>[];
+  risks: <span class="t">string</span>[];
+  next: <span class="t">string</span>[];
+}</code></pre>
+
+            <p class="r-pre-label">Campos nuevos en Task</p>
+            <pre class="r-pre"><code><span class="k">export interface</span> <span class="t">Task</span> {
+  <span class="c">// … campos actuales …</span>
+  type: <span class="t">TaskType</span>;
+  risk: <span class="t">Risk</span>;
+  autonomy: <span class="t">AutonomyLevel</span> | <span class="k">null</span>;           <span class="c">// null = el del proyecto</span>
+  nonGoals: <span class="t">string</span>[];
+  references: { label: <span class="t">string</span>; target: <span class="t">string</span> }[];
+  acceptanceCriteria: <span class="t">AcceptanceCriterion</span>[];  <span class="c">// migración: string → { id, text, verify: { kind: "review" } }</span>
+  approvedPlan: { markdown: <span class="t">string</span>; validation: <span class="t">ValidationPlan</span>; approvedBy: <span class="t">string</span>; at: <span class="t">string</span> } | <span class="k">null</span>;
+  planRound: <span class="t">number</span>;
+  codeRound: <span class="t">number</span>;
+  verifyFailures: <span class="t">number</span>;
+  findings: <span class="t">Finding</span>[];
+  evidence: <span class="t">Evidence</span>[];
+  handoffs: <span class="t">Handoff</span>[];                     <span class="c">// sustituye a contexts (se migran como phase "legacy")</span>
+  headSha: <span class="t">string</span> | <span class="k">null</span>;
+  pullRequest: { url: <span class="t">string</span>; number: <span class="t">number</span>; state: <span class="s">"open"</span> | <span class="s">"merged"</span> | <span class="s">"closed"</span> } | <span class="k">null</span>;
+  parentId: <span class="t">string</span> | <span class="k">null</span>;
+  blockedBy: <span class="t">string</span>[];
+  blocker: { reason: <span class="t">string</span>; question: <span class="t">string</span>; raisedBy: <span class="t">string</span>; at: <span class="t">string</span> } | <span class="k">null</span>;
+}</code></pre>
+          </section>
+
+          <!-- ─── 9. MCP y skills ──────────────────────────────────────── -->
+          <section class="r-section" id="mcp">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Protocolo de agentes</p>
+              <h2 class="r-h2">Cambios en MCP y skills</h2>
+            </div>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Herramienta</th>
+                    <th>Cambio</th>
+                    <th>Resuelve</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>claim_task</code></td>
+                    <td>Devuelve el brief en vez de la conversación completa; excluye tareas donde el agente fue el último productor; incluye <code>skillsVersion</code></td>
+                    <td class="r-nowrap">F8 · F12 · F16</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>get_task_brief</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td>Plan aprobado, plan de validación, criterios con estado, hallazgos abiertos, último handoff por fase, comandos del proyecto, ronda</td>
+                    <td class="r-nowrap">F9–F12</td>
+                  </tr>
+                  <tr>
+                    <td><code>submit_plan</code></td>
+                    <td>+ <code>validationPlan</code>, <code>openQuestions[{ text, blocking }]</code>, riesgo sugerido, subtareas propuestas</td>
+                    <td>F7</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>submit_plan_review</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>verdict</code> (approve · request_changes · needs_human) + hallazgos</td>
+                    <td>F5</td>
+                  </tr>
+                  <tr>
+                    <td><code>submit_code</code></td>
+                    <td>+ <code>headSha</code>, <code>branch</code>, <code>evidence[]</code>, <code>criteria[{ id, status, evidenceIds }]</code>, <code>findingResolutions[{ id, status, resolution }]</code></td>
+                    <td class="r-nowrap">F6 · F11 · F13</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>submit_verification</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td>Lo usa el runner: <code>passed</code>, <code>evidence[]</code>, <code>testTampering</code></td>
+                    <td>F6</td>
+                  </tr>
+                  <tr>
+                    <td><code>submit_review</code></td>
+                    <td>+ <code>verdict</code> obligatorio, <code>findings[]</code> estructurados, <code>verifiedFindings[]</code>; rechaza <code>approve</code> con blockers abiertos</td>
+                    <td>F1 · F11</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>submit_merge</code> → <code>submit_pr</code></td>
+                    <td>+ <code>prUrl</code>, <code>prNumber</code>; estado <code>pr_open</code>; alias para compatibilidad</td>
+                    <td>F4 · F13</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>report_blocker</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td><code>reason</code>, <code>question</code> → <code>needs_human</code> y libera la tarea</td>
+                    <td>F14</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>create_subtask</code> <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td>Solo planner: <code>parentId</code>, <code>blockedBy</code></td>
+                    <td>Granularidad</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap"><code>heartbeat</code> <span class="r-chip r-tone-neutral r-chip--plain">Opcional</span></td>
+                    <td>Lease con TTL para sesiones abiertas a mano (los runners ya vigilan el proceso)</td>
+                    <td>Tareas colgadas</td>
+                  </tr>
+                  <tr>
+                    <td class="r-nowrap">Prompts MCP <span class="r-chip r-tone-accent r-chip--plain">Nuevo</span></td>
+                    <td>El servidor sirve la skill de cada fase con su versión; la copia local deja de ser la fuente</td>
+                    <td>F16</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p class="r-pre-label">packages/mcp/src/server.ts: submit_review con veredicto</p>
+            <pre class="r-pre"><code>server.registerTool(<span class="s">"submit_review"</span>, {
+  title: <span class="s">"Submit review"</span>,
+  description: <span class="s">"Submit a verdict and structured findings for a task in `reviewing`. The verdict routes the task."</span>,
+  inputSchema: {
+    taskId: taskIdSchema,
+    verdict: z.enum([<span class="s">"approve"</span>, <span class="s">"request_changes"</span>, <span class="s">"needs_human"</span>]),
+    findings: z.array(z.object({
+      severity: z.enum([<span class="s">"blocker"</span>, <span class="s">"major"</span>, <span class="s">"minor"</span>, <span class="s">"nit"</span>]),
+      file: z.string().optional(),
+      line: z.number().int().optional(),
+      text: z.string().min(1),
+    })).default([]),
+    verifiedFindings: z.array(z.object({ id: z.string(), status: z.enum([<span class="s">"verified"</span>, <span class="s">"open"</span>]) })).default([]),
+    message: z.string().min(1).describe(<span class="s">"Review summary (markdown)"</span>),
+    context: submitContextSchema,
+  },
+}, (input) =&gt; run(() =&gt; submitResponse(submitReview(input.taskId, input))));
+<span class="c">// En workflow.ts: approve con findings blocker/major abiertos → WorkflowError.</span></code></pre>
+
+            <h3 class="r-h3">Skills</h3>
+            <div class="r-grid-2">
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-plan</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Plantilla con tabla «Plan de validación»: criterio · cómo se verifica · comando · tests nuevos.</li>
+                  <li>Secciones «Riesgos», «Fuera de alcance» y «Preguntas abiertas» (bloqueante sí o no).</li>
+                  <li>«Propuesta de subtareas» cuando el plan supera el tamaño acordado.</li>
+                  <li>Comprobar que los archivos citados existen antes de enviarlo.</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-plan-review</code> <span class="r-chip r-tone-accent r-chip--plain">Nueva</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Cada criterio tiene una verificación ejecutable o una razón para que sea manual.</li>
+                  <li>El plan cubre los criterios y no se sale del alcance.</li>
+                  <li>Los riesgos y las rutas protegidas están identificados; propone subir el riesgo si hace falta.</li>
+                  <li>Veredicto: approve solo sin hallazgos blocker o major.</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-code</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Primero los tests del plan de validación; en bugs, un test que falla antes del arreglo.</li>
+                  <li>Ejecutar los comandos del proyecto y adjuntar evidencia por criterio.</li>
+                  <li>Resolver cada hallazgo abierto por id: fixed, o wontfix con motivo.</li>
+                  <li>Plan de validación inviable → <code>report_blocker</code>, nunca editarlo.</li>
+                  <li>Lista de auto-revisión antes de enviar (abajo).</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-review</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Primero verificar los hallazgos de la ronda anterior, por id.</li>
+                  <li>Revisar contra el plan aprobado y su validación; re-ejecutar los comandos clave.</li>
+                  <li>Rúbrica de severidad: blocker y major bloquean; minor y nit no.</li>
+                  <li>Nada de estilo que ya cubra el linter; como mucho N hallazgos, los más importantes.</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-merge</code> → <code>agentq-pr</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Fallo de push o de PR → <code>report_blocker</code>, no «parar y avisar».</li>
+                  <li>Cuerpo del PR desde el brief: criterios con evidencia, veredicto, riesgos y hallazgos resueltos.</li>
+                  <li>Con eso, la revisión humana en GitHub es la única necesaria.</li>
+                </ul>
+              </div>
+              <div class="r-card r-stack">
+                <div class="flex flex-wrap items-center gap-2"><code>agentq-claim</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
+                  <li>Enrutar los estados nuevos (plan review, verify, pr).</li>
+                  <li>Comparar <code>skillsVersion</code> del servidor con la suya y avisar si difiere.</li>
+                  <li>Leer <code>get_task_brief</code> primero; la conversación completa solo si hace falta.</li>
+                </ul>
+              </div>
+            </div>
+
+            <p class="r-pre-label">Auto-revisión del implementer antes de submit_code</p>
+            <pre class="r-pre"><code><span class="k">## Antes de submit_code</span>
+- [ ] Leí mi diff completo (git diff {mergeBranch}...HEAD)
+- [ ] Cada criterio de aceptación tiene estado y evidencia
+- [ ] Cada hallazgo abierto tiene resolución (fixed, o wontfix con motivo)
+- [ ] Ejecuté los comandos de regresión del plan de validación y resumí la salida
+- [ ] No borré, salté ni debilité tests
+- [ ] No quedan logs de depuración, TODOs sin tarea ni archivos fuera de alcance</code></pre>
+          </section>
+
+          <!-- ─── 10. Portal ───────────────────────────────────────────── -->
+          <section class="r-section" id="portal">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Experiencia humana</p>
+              <h2 class="r-h2">Cambios en el portal</h2>
+              <p class="r-lead">
+                Si el humano entra menos veces, cada entrada tiene que resolver más: una decisión con toda la evidencia
+                en una sola pantalla.
+              </p>
+            </div>
+            <div class="r-grid-2">
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Bandeja «Te necesita»</h3>
+                <p class="r-small" style="margin: 0">
+                  Una vista con todo lo que espera a un humano: planes de riesgo medio o alto, tareas
+                  <code>needs_human</code> con su pregunta y PRs abiertos. Ordenada por antigüedad. Sustituye a la
+                  columna «Need Review» del tablero.
+                </p>
+              </div>
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Pantalla de decisión</h3>
+                <p class="r-small" style="margin: 0">
+                  Criterios con estado y evidencia, veredicto del revisor, hallazgos por ronda, tamaño del diff y
+                  riesgo. Botones: aprobar, pedir cambios (prellenado con los hallazgos elegidos) o responder la
+                  pregunta.
+                </p>
+              </div>
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Perfil y autonomía del proyecto</h3>
+                <p class="r-small" style="margin: 0">
+                  Editar comandos, rama destino, rutas protegidas, guardrails comunes y nivel L0–L3; excepción por tarea
+                  en el modal de creación.
+                </p>
+              </div>
+              <div class="r-card r-stack">
+                <h3 class="r-h3">Estado visible en el tablero</h3>
+                <p class="r-small" style="margin: 0">
+                  Chips de ronda (R2/3), de veredicto y de verificación en cada tarjeta; estado del PR sincronizado con
+                  <code>gh pr view --json state,mergedAt</code>; métricas de clics humanos en Activity.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── 11. Hoja de ruta ─────────────────────────────────────── -->
+          <section class="r-section" id="roadmap">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Implementación</p>
+              <h2 class="r-h2">Hoja de ruta</h2>
+              <p class="r-lead">
+                Seis fases en orden de dependencia. Cada punto está escrito para convertirse en una tarea de AgentQ:
+                título, archivos y criterios de aceptación. Las fases 0 y 1 son las que quitan clics.
+              </p>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 0 · Una sola máquina de estados y sin bucles</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">1–2 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.1</span>Unificar las transiciones en packages/shared <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <p class="r-ref" style="margin: 0">packages/shared/src/workflow.ts · packages/web/src/index.ts</p>
+                <ul>
+                  <li>approve_plan, request_plan_changes, approve_code, request_code_changes, request_ai_review, complete, cancel y unblock viven en <code>workflow.ts</code>.</li>
+                  <li><code>index.ts</code> no llama a <code>recordHistory</code>; sus submit_* usan <code>submitPlan</code>, <code>submitCode</code>… (con <code>appendContext</code>).</li>
+                  <li>Los tests actuales siguen pasando.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.2</span>Cerrar el atajo de PUT /api/tasks/:id <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <p class="r-ref" style="margin: 0">packages/shared/src/schemas.ts · packages/web/src/index.ts · packages/web/src/api.test.ts</p>
+                <ul>
+                  <li><code>updateTaskSchema</code> no acepta status, history, conversation, contexts ni assignedAgent.</li>
+                  <li>PUT con <code>status</code> devuelve 400; hay test.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.3</span>Estado needs_human y herramienta report_blocker <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <p class="r-ref" style="margin: 0">types.ts · workflow.ts · packages/mcp/src/server.ts · runner/prompt.ts · skills/agentq-merge · web-ui/src/lib/status.ts</p>
+                <ul>
+                  <li><code>report_blocker(taskId, reason, question)</code> mueve a <code>needs_human</code>, guarda <code>blocker</code> y libera la tarea.</li>
+                  <li>Acción humana <code>resolve_blocker(answer, targetStatus)</code>; la respuesta queda en la conversación.</li>
+                  <li>Un push fallido en un runner termina en <code>needs_human</code> sin revert ni reintento (test con <code>fake-agent.ts</code>).</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.4</span>Unblock en merging y comprobación de asignado <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>merging</code> se desbloquea a <code>approved</code>.</li>
+                  <li>Los submit_* aceptan <code>agentId</code> y rechazan si no coincide con el asignado (el runner lo pasa siempre).</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.5</span>Rama destino por defecto desde el proyecto <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>projects.default_merge_branch</code>, detectada al crear el proyecto y editable.</li>
+                  <li>Una tarea nueva en este repo usa <code>main</code> sin indicarlo.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P0.6</span>Detección de skills desactualizadas <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>claim_task</code> devuelve <code>skillsVersion</code>; <code>agentq-claim</code> la compara con su <code>metadata.version</code>.</li>
+                  <li>Con la v2 instalada, el agente avisa «ejecuta bun run install:skills» y se detiene.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 1 · Una revisión que decide</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">3–5 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P1.1</span>Veredicto y hallazgos estructurados <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <p class="r-ref" style="margin: 0">workflow.ts · database.ts (tabla task_findings) · server.ts</p>
+                <ul>
+                  <li><code>submit_review</code> exige <code>verdict</code> y acepta <code>findings[]</code>.</li>
+                  <li><code>approve</code> con blocker o major abiertos devuelve error.</li>
+                  <li>Los hallazgos aparecen en <code>get_task</code> y en el portal.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P1.2</span>Política de gates y autonomía <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <p class="r-ref" style="margin: 0">packages/shared/src/policy.ts (nuevo) · workflow.ts · projects</p>
+                <ul>
+                  <li>En L2, <code>submit_code</code> lleva a <code>code_review_requested</code> sin clic.</li>
+                  <li>En L0 el comportamiento es idéntico al actual (tests de regresión).</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P1.3</span>Enrutado por veredicto con tope de rondas <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>request_changes</code> → <code>changes_requested</code> e incrementa <code>codeRound</code>.</li>
+                  <li>Tres rondas seguidas → <code>needs_human</code> con los hallazgos abiertos.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P1.4</span>Separación de funciones en el claim <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>claimNextTask</code> salta tareas cuyo último productor comparte <code>sessionId</code> (y modelo si <code>requireDifferentModel</code>).</li>
+                  <li>Un runner senior no reclama la revisión de su propio código; hay test.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P1.5</span>Skill agentq-review v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li>Rúbrica de severidad, verificación de hallazgos previos por id y reglas de veredicto.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 2 · Evidencia y verificación</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">4–6 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P2.1</span>Perfil de proyecto <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li>Comandos, ficheros de convenciones, rutas protegidas y guardrails comunes, con UI en Projects.</li>
+                  <li>Los guardrails de proyecto se añaden a los de la tarea en el brief.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P2.2</span>Plan de validación y plan aprobado inmutable <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li><code>submit_plan</code> acepta <code>validationPlan</code>; al aprobarse (humano o crítico) se copia a <code>approvedPlan</code>.</li>
+                  <li><code>approvedPlan</code> no cambia hasta un nuevo ciclo de plan.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P2.3</span>Evidencia en submit_code <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>evidence[]</code>, estado por criterio y <code>headSha</code>; <code>realBranch</code> se rellena.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P2.4</span>Verificador determinista en el runner <span class="r-chip r-tone-neutral r-chip--plain">L</span></div>
+                <p class="r-ref" style="margin: 0">packages/web/src/runner/runner.ts · runner/verify.ts (nuevo)</p>
+                <ul>
+                  <li>Tras <code>submit_code</code> la tarea pasa a <code>verify_requested</code>; el engine ejecuta <code>regressionCommands</code> y los comandos de cada criterio en el worktree, con timeout.</li>
+                  <li>Guarda la evidencia y enruta: verde → revisión; rojo → <code>changes_requested</code> con el log resumido.</li>
+                  <li>Detecta manipulación de tests: archivos de test borrados, <code>.skip</code>, <code>.only</code>, <code>xit</code>, umbrales rebajados.</li>
+                  <li>Reintenta una vez un comando fallido antes de marcar rojo (tests inestables).</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P2.5</span>Skills agentq-plan y agentq-code v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li>Plantilla de validación en el plan; tests primero, evidencia y auto-revisión en el código.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 3 · Continuidad y contexto</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">3–4 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P3.1</span>Handoffs estructurados <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li>Tabla <code>task_handoffs</code>; <code>context</code> de los submit_* pasa a <code>{ summary, decisions, risks, next }</code>.</li>
+                  <li>Los <code>contexts</code> existentes se migran con <code>phase: "legacy"</code>.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P3.2</span>get_task_brief y prompt ligero <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li><code>claim_task</code> y <code>buildPrompt</code> usan el brief; la conversación completa sigue disponible con <code>get_task</code>.</li>
+                  <li>El tamaño del prompt ya no crece con cada ronda (test con una tarea de 5 rondas).</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P3.3</span>Criterios de aceptación como objetos <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li>Migración compatible: cada string pasa a <code>{ id: "ACn", text, verify: { kind: "review" }, status: "pending" }</code>.</li>
+                  <li><code>create_task</code> sigue aceptando strings.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P3.4</span>Actor en el historial de estados <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+              </div>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 4 · Planes revisados por agentes y granularidad</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">4–6 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P4.1</span>Crítica del plan <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li>Estados <code>plan_review_requested</code> y <code>plan_reviewing</code>, rol <code>plan_reviewer</code>, <code>submit_plan_review</code> y skill <code>agentq-plan-review</code>.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P4.2</span>Riesgo y puerta de plan condicional <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li>El plan pasa por un humano solo con riesgo medio o alto o preguntas bloqueantes.</li>
+                  <li>El riesgo sube solo si el plan o el diff tocan <code>protectedPaths</code>.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P4.3</span>Subtareas y dependencias <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li><code>create_subtask</code> con <code>parentId</code> y <code>blockedBy</code>; <code>getClaimableTasks</code> excluye las bloqueadas.</li>
+                  <li>El padre se completa cuando todas sus hijas están completas.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P4.4</span>Roles nuevos en workflow y runners <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>plan_reviewer</code>, <code>verifier</code>, <code>integrator</code>, <code>qa</code> y <code>builder</code> en <code>ROLE_STATUSES</code> y <code>COMPOUND_ROLES</code>, en los esquemas y en el formulario de runners.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="r-phase">
+              <div class="r-phase__head">
+                <h3 class="r-h3">Fase 5 · Cierre centrado en el PR</h3>
+                <span class="r-chip r-tone-neutral r-chip--plain">2–3 días</span>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P5.1</span>submit_pr y estado pr_open <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li><code>prUrl</code> y <code>prNumber</code> estructurados; <code>submit_merge</code> queda como alias.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P5.2</span>Sincronización del PR <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
+                <ul>
+                  <li>El servidor consulta <code>gh pr view --json state,mergedAt</code> de las tareas <code>pr_open</code> cada pocos minutos.</li>
+                  <li>Merged → <code>complete</code> automático (y archivo opcional); closed → <code>needs_human</code>.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P5.3</span>Cuerpo del PR con evidencia <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <ul>
+                  <li>Criterios con evidencia, veredicto, riesgos y hallazgos resueltos, generado desde el brief.</li>
+                </ul>
+              </div>
+              <div class="r-task">
+                <div class="r-task__title"><span class="r-finding__id">P5.4</span>Bandeja «Te necesita» y pantalla de decisión <span class="r-chip r-tone-neutral r-chip--plain">L</span></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── 12. Métricas y riesgos ───────────────────────────────── -->
+          <section class="r-section" id="metricas">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Seguimiento</p>
+              <h2 class="r-h2">Métricas y riesgos</h2>
+              <p class="r-lead">
+                Todas se pueden calcular con la tabla <code>activity</code> y el historial de estados que ya existen.
+              </p>
+            </div>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Métrica</th>
+                    <th>Cómo se mide</th>
+                    <th>Objetivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Clics humanos por tarea</td>
+                    <td>Eventos de actividad con actor <code>user</code> por tarea</td>
+                    <td>≤ 2 en L2</td>
+                  </tr>
+                  <tr>
+                    <td>Tareas que llegan al PR sin humano</td>
+                    <td>Sin eventos <code>user</code> entre la creación y <code>pr_open</code></td>
+                    <td>&gt; 70%</td>
+                  </tr>
+                  <tr>
+                    <td>Rondas de revisión</td>
+                    <td><code>codeRound</code> al llegar a <code>pr_open</code></td>
+                    <td>Media ≤ 1,5</td>
+                  </tr>
+                  <tr>
+                    <td>Tasa de escalada</td>
+                    <td>Tareas que pasan por <code>needs_human</code></td>
+                    <td>10–20%; 0% indica umbrales laxos</td>
+                  </tr>
+                  <tr>
+                    <td>Rechazo humano tras aprobación IA</td>
+                    <td>PRs con cambios pedidos por humanos después de un <code>approve</code> del revisor</td>
+                    <td>&lt; 10%; si sube, reforzar la skill de revisión</td>
+                  </tr>
+                  <tr>
+                    <td>Reversiones de runner</td>
+                    <td>Eventos <code>task_reverted</code> por tarea</td>
+                    <td>A la baja tras P0.3</td>
+                  </tr>
+                  <tr>
+                    <td>Lead time</td>
+                    <td>Creación → <code>complete</code></td>
+                    <td>A la baja</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="r-grid-2">
+              <div class="r-callout r-tone-danger">
+                <span class="r-callout__title">Revisor que lo aprueba todo</span>
+                <p class="r-small" style="margin: 0">
+                  Modelo distinto al del coder, reglas de veredicto, la métrica de rechazo humano tras aprobación IA y
+                  muestreo: el humano revisa a fondo una de cada N aprobaciones.
+                </p>
+              </div>
+              <div class="r-callout r-tone-danger">
+                <span class="r-callout__title">Tests debilitados para pasar</span>
+                <p class="r-small" style="margin: 0">
+                  Plan de validación inmutable, detección de manipulación de tests en el verificador y un revisor que
+                  re-ejecuta.
+                </p>
+              </div>
+              <div class="r-callout r-tone-warning">
+                <span class="r-callout__title">Más ejecuciones, más coste</span>
+                <p class="r-small" style="margin: 0">
+                  Verificador sin LLM, modelos baratos para verificar e integrar, y el brief en lugar de la conversación
+                  completa.
+                </p>
+              </div>
+              <div class="r-callout r-tone-warning">
+                <span class="r-callout__title">Bucles entre agentes</span>
+                <p class="r-small" style="margin: 0">
+                  Todos los ciclos tienen tope y terminan en <code>needs_human</code>. Como L0 reproduce el
+                  comportamiento actual, cada proyecto puede subir de nivel cuando las métricas lo justifiquen.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ─── Apéndice ─────────────────────────────────────────────── -->
+          <section class="r-section" id="evidencias">
+            <div class="r-section__head">
+              <p class="r-eyebrow">Apéndice</p>
+              <h2 class="r-h2">Evidencias</h2>
+              <p class="r-lead">Rutas relativas a la raíz del repositorio, en el commit <code>2859af1</code>.</p>
+            </div>
+            <div class="r-table-wrap">
+              <table class="r-table">
+                <thead>
+                  <tr>
+                    <th>Referencia</th>
+                    <th>Qué muestra</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td class="r-ref">packages/shared/src/workflow.ts:13</td><td><code>ROLE_STATUSES</code>: el reviewer solo reclama <code>code_review_requested</code></td></tr>
+                  <tr><td class="r-ref">packages/shared/src/workflow.ts:161</td><td><code>claimNextTask</code> no considera quién produjo el artefacto</td></tr>
+                  <tr><td class="r-ref">packages/shared/src/workflow.ts:297</td><td><code>requireTaskInStatus</code> valida el estado, no el agente</td></tr>
+                  <tr><td class="r-ref">packages/shared/src/workflow.ts:344</td><td><code>submitReview</code> → siempre <code>waiting_code_review</code></td></tr>
+                  <tr><td class="r-ref">packages/shared/src/workflow.ts:362</td><td><code>submitMerge</code> → <code>merged</code> tras abrir el PR</td></tr>
+                  <tr><td class="r-ref">packages/web/src/index.ts:684–770</td><td>submit_* duplicados en el API web, sin <code>appendContext</code></td></tr>
+                  <tr><td class="r-ref">packages/web/src/index.ts:824</td><td><code>request_ai_review</code>, único camino a la revisión IA</td></tr>
+                  <tr><td class="r-ref">packages/web/src/index.ts:868</td><td><code>unblock</code> sin <code>merging</code></td></tr>
+                  <tr><td class="r-ref">packages/web/src/index.ts:921</td><td><code>PUT /api/tasks/:id</code> aplica <code>updateTaskSchema</code> sin pasar por el workflow</td></tr>
+                  <tr><td class="r-ref">packages/shared/src/schemas.ts:23</td><td><code>updateTaskSchema</code> acepta <code>status</code></td></tr>
+                  <tr><td class="r-ref">packages/shared/src/types.ts:59</td><td><code>contexts: string[]</code></td></tr>
+                  <tr><td class="r-ref">packages/shared/src/types.ts:84</td><td><code>Project</code> sin comandos ni rama por defecto</td></tr>
+                  <tr><td class="r-ref">packages/shared/src/database.ts:543</td><td><code>mergeBranch</code> por defecto <code>develop</code></td></tr>
+                  <tr><td class="r-ref">packages/web/src/runner/prompt.ts:109</td><td>Conversación completa en el prompt del runner</td></tr>
+                  <tr><td class="r-ref">packages/web/src/runner/prompt.ts:156</td><td>«still submit with a message explaining what blocks you»</td></tr>
+                  <tr><td class="r-ref">packages/web/src/runner/runner.ts:470</td><td><code>revertClaim</code> y backoff cuando la herramienta sale sin submit</td></tr>
+                  <tr><td class="r-ref">skills/agentq-review/SKILL.md:53</td><td>El veredicto es «una recomendación»</td></tr>
+                  <tr><td class="r-ref">skills/agentq-merge/SKILL.md:83, 102</td><td>Parar y avisar al usuario si fallan el push o el PR</td></tr>
+                  <tr><td class="r-ref">~/.claude/skills/agentq-claim/SKILL.md</td><td>Versión 2.0.0 (CLI) instalada frente a la 3.1.0 (MCP) del repo</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <footer class="r-footer">
+            Generado el 23 de septiembre de 2026 a partir del commit <code>2859af1</code>. Estilo reutilizable en
+            <code>research/styleguide.md</code>; CSS en <code>research/assets/report.css</code>.
+          </footer>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
