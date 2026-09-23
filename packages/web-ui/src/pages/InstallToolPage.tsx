@@ -1,3 +1,8 @@
+import type { CSSProperties } from "react";
+import { DownloadIcon } from "../lib/icons";
+import { CopyButton } from "../components/CopyButton";
+import { PageBody, PageHeader } from "../components/PageHeader";
+
 const INSTALL_STEPS = [
   {
     title: "Install CLI Binary",
@@ -18,30 +23,50 @@ const INSTALL_STEPS = [
 
 export function InstallToolPage() {
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border bg-surface flex items-center px-4 shrink-0 text-text">
-        <h2 className="font-semibold text-text">Install AgentQ</h2>
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        back={{ to: "/tools", label: "Back to tools" }}
+        icon={DownloadIcon}
+        title="Install AgentQ"
+        description="Run these commands from the project root in your terminal."
+      />
 
-      <div className="flex-1 overflow-auto p-4 space-y-4">
-        <p className="text-sm text-text-secondary">
-          Run these commands from the project root in your terminal:
-        </p>
-        {INSTALL_STEPS.map((step, i) => (
-          <div key={step.command} className="rounded-lg border border-border p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-xs font-bold shrink-0">
+      <PageBody>
+        <ol className="mx-auto max-w-3xl">
+          {INSTALL_STEPS.map((step, i) => (
+            <li
+              key={step.command}
+              className="stagger relative flex gap-4 pb-6 last:pb-0"
+              style={{ "--i": i } as CSSProperties}
+            >
+              {i < INSTALL_STEPS.length - 1 && (
+                <span
+                  aria-hidden
+                  className="absolute bottom-0 left-4 top-10 w-px -translate-x-1/2 bg-border"
+                />
+              )}
+              <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold tabular-nums text-primary ring-1 ring-inset ring-primary/20">
                 {i + 1}
               </span>
-              <h3 className="text-sm font-medium text-text">{step.title}</h3>
-            </div>
-            <p className="text-xs text-text-secondary mb-2 pl-7">{step.description}</p>
-            <pre className="bg-gray-900 text-green-400 rounded-lg p-3 text-xs font-mono overflow-auto border border-border pl-7">
-              {step.command}
-            </pre>
-          </div>
-        ))}
-      </div>
+              <div className="card min-w-0 flex-1 p-4">
+                <h3 className="text-sm font-semibold text-text">{step.title}</h3>
+                <p className="mt-1 text-[13px] leading-relaxed text-text-secondary">
+                  {step.description}
+                </p>
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-canvas py-1 pl-3 pr-1">
+                  <span aria-hidden className="select-none font-mono text-xs text-text-muted">
+                    $
+                  </span>
+                  <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-1.5 font-mono text-xs text-text">
+                    {step.command}
+                  </code>
+                  <CopyButton value={step.command} label="Copy command" />
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </PageBody>
     </div>
   );
 }

@@ -1,45 +1,125 @@
+import type { LucideIcon } from "../lib/icons";
+import type { Tone } from "../lib/status";
+import { TONE_DOT, taskStatusMeta, JOB_STATUS } from "../lib/status";
+import type { RunnerJobStatus } from "../lib/api";
+import { cn } from "../lib/cn";
+
+/** Legacy variant names map onto tones. */
+type LegacyVariant = "default" | "purple";
+
 interface BadgeProps {
-  variant?: "default" | "success" | "warning" | "danger" | "info" | "purple";
+  tone?: Tone;
+  /** @deprecated use `tone` */
+  variant?: Tone | LegacyVariant;
   size?: "sm" | "md";
+  icon?: LucideIcon;
   dot?: boolean;
+  /** Animated ring around the dot, for live states. */
+  pulse?: boolean;
+  className?: string;
+  title?: string;
   children: React.ReactNode;
 }
 
-const variantStyles = {
-  default: "bg-surface-secondary text-text-secondary border border-border",
-  success: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-  warning: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-  danger: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  info: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-  purple: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400",
-};
-
-const dotColors: Record<string, string> = {
-  default: "bg-text-muted",
-  success: "bg-green-500",
-  warning: "bg-amber-500",
-  danger: "bg-red-500",
-  info: "bg-blue-500",
-  purple: "bg-violet-500",
+const toneStyles: Record<Tone, string> = {
+  neutral: "bg-surface-tertiary/80 text-text-secondary ring-border",
+  primary: "bg-primary/10 text-primary ring-primary/20",
+  info: "bg-info/10 text-info ring-info/20",
+  success: "bg-success/10 text-success ring-success/20",
+  warning: "bg-warning/10 text-warning ring-warning/25",
+  danger: "bg-danger/10 text-danger ring-danger/20",
+  accent: "bg-accent/10 text-accent ring-accent/20",
 };
 
 const sizeStyles = {
-  sm: "px-1.5 py-0.5 text-xs",
-  md: "px-2 py-1 text-sm",
+  sm: "h-5 gap-1 px-1.5 text-[11px]",
+  md: "h-6 gap-1.5 px-2 text-xs",
 };
 
-export function Badge({ variant = "default", size = "sm", dot = false, children }: BadgeProps) {
+function resolveTone(tone?: Tone, variant?: Tone | LegacyVariant): Tone {
+  if (tone) return tone;
+  if (variant === "default" || !variant) return "neutral";
+  if (variant === "purple") return "accent";
+  return variant;
+}
+
+export function Badge({
+  tone,
+  variant,
+  size = "sm",
+  icon: Icon,
+  dot = false,
+  pulse = false,
+  className,
+  title,
+  children,
+}: BadgeProps) {
+  const t = resolveTone(tone, variant);
   return (
     <span
-      className={`
-        inline-flex items-center gap-1 font-medium rounded-full
-        transition-colors duration-150
-        ${variantStyles[variant]}
-        ${sizeStyles[size]}
-      `}
+      title={title}
+      className={cn(
+        "inline-flex max-w-full shrink-0 items-center whitespace-nowrap rounded-full font-medium leading-none",
+        "ring-1 ring-inset transition-colors duration-200",
+        toneStyles[t],
+        sizeStyles[size],
+        className,
+      )}
     >
-      {dot && <span className={`w-1.5 h-1.5 rounded-full ${dotColors[variant]}`} />}
-      {children}
+      {dot && <Dot tone={t} pulse={pulse} />}
+      {Icon && !dot && (
+        <Icon aria-hidden className={size === "sm" ? "h-3 w-3 shrink-0" : "h-3.5 w-3.5 shrink-0"} />
+      )}
+      <span className="truncate">{children}</span>
     </span>
+  );
+}
+
+/** Colored status dot with an optional live pulse. */
+export function Dot({
+  tone = "neutral",
+  pulse = false,
+  className,
+}: {
+  tone?: Tone;
+  pulse?: boolean;
+  className?: string;
+}) {
+  return (
+    <span className={cn("relative inline-flex h-1.5 w-1.5 shrink-0", className)}>
+      {pulse && (
+        <span
+          className={cn("absolute inset-0 rounded-full animate-pulse-ring", TONE_DOT[tone])}
+          aria-hidden
+        />
+      )}
+      <span className={cn("relative inline-flex h-full w-full rounded-full", TONE_DOT[tone])} />
+    </span>
+  );
+}
+
+/** Badge for a task workflow status, with its icon, tone and live pulse. */
+export function StatusBadge({ status, size = "sm" }: { status: string; size?: "sm" | "md" }) {
+  const meta = taskStatusMeta(status);
+  return (
+    <Badge tone={meta.tone} size={size} dot={meta.live} pulse={meta.live} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  );
+}
+
+/** Badge for a runner job status. */
+export function JobStatusBadge({
+  status,
+  size = "sm",
+}: {
+  status: RunnerJobStatus;
+  size?: "sm" | "md";
+}) {
+  const meta = JOB_STATUS[status];
+  return (
+    <Badge tone={meta.tone} size={size} dot={meta.live} pulse={meta.live} icon={meta.icon}>
+      {meta.label}
+    </Badge>
   );
 }

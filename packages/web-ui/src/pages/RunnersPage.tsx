@@ -1,37 +1,47 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { Runner, RunnerJob, RunnerJobEvent, RunnerJobStatus } from "../lib/api";
+import toast from "react-hot-toast";
+import type { Runner, RunnerJob, RunnerJobEvent } from "../lib/api";
 import { api } from "../lib/api";
+import type { LucideIcon } from "../lib/icons";
+import {
+  AddIcon,
+  ClockIcon,
+  ConcurrencyIcon,
+  DeleteIcon,
+  DurationIcon,
+  EditIcon,
+  EffortIcon,
+  ExternalLinkIcon,
+  FolderIcon,
+  FollowIcon,
+  FullAccessIcon,
+  LogsIcon,
+  ModelIcon,
+  RunnersIcon,
+  StartIcon,
+  StopIcon,
+  TerminalIcon,
+  ZapIcon,
+} from "../lib/icons";
+import type { Tone } from "../lib/status";
+import { TONE_SOFT, TOOL_TONE } from "../lib/status";
+import { formatDateTime, formatDuration, formatRelative, pluralize } from "../lib/format";
+import { cn } from "../lib/cn";
 import { useSSE } from "../hooks/useSSE";
-import { Badge } from "../components/Badge";
+import { Alert } from "../components/Alert";
+import { Badge, Dot, JobStatusBadge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { CopyButton } from "../components/CopyButton";
+import { EmptyState } from "../components/EmptyState";
+import { IconButton } from "../components/IconButton";
+import { Drawer, useModal } from "../components/Modal";
+import { CountPill, PageBody, PageHeader } from "../components/PageHeader";
 import { RunnerModal } from "../components/RunnerModal";
 import { Skeleton } from "../components/Skeleton";
-
-const JOB_BADGE: Record<RunnerJobStatus, { variant: "info" | "success" | "danger" | "warning"; label: string }> = {
-  running: { variant: "info", label: "running" },
-  succeeded: { variant: "success", label: "succeeded" },
-  failed: { variant: "danger", label: "failed" },
-  reverted: { variant: "warning", label: "reverted" },
-};
-
-const TOOL_BADGE: Record<string, "purple" | "info" | "success" | "warning" | "default"> = {
-  claude: "purple",
-  codex: "info",
-  opencode: "success",
-  gemini: "warning",
-  custom: "default",
-};
-
-function formatDuration(start: string, end?: string) {
-  const ms = (end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime();
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${s % 60}s`;
-}
 
 function DeleteRunnerModal({ runner, onClose }: { runner: Runner; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -39,27 +49,61 @@ function DeleteRunnerModal({ runner, onClose }: { runner: Runner; onClose: () =>
     mutationFn: () => api.deleteRunner(runner.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runners"] });
-      onClose();
     },
   });
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-surface rounded-xl shadow-lg w-full max-w-sm p-6 transition-colors duration-300">
-        <h2 className="text-lg font-semibold mb-2 text-text">Delete Runner</h2>
-        <p className="text-sm text-text-secondary mb-4">
-          Delete <span className="font-medium text-text">{runner.name}</span>? Running jobs are killed and their tasks
-          released back to the queue.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} variant="danger">
-            {mutation.isPending ? "Deleting..." : "Delete"}
-          </Button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      title="Delete runner?"
+      message={
+        <>
+          <span className="font-medium text-text">{runner.name}</span> will be deleted. Running jobs
+          are killed and their tasks released back to the queue.
+        </>
+      }
+      confirmLabel="Delete runner"
+      onConfirm={async () => {
+        try {
+          await mutation.mutateAsync();
+          toast.success("Runner deleted");
+        } catch (e) {
+          toast.error((e as Error).message);
+          throw e;
+        }
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
+/** Small mono chip for the job phase, pid and exit code. */
+function MonoChip({ children, tone = "neutral" }: { children: ReactNode; tone?: Tone }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 shrink-0 items-center rounded-md px-1.5 font-mono text-[11px]",
+        TONE_SOFT[tone],
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Icon + text pair used in the runner meta line. */
+function MetaItem({
+  icon: Icon,
+  children,
+  mono = false,
+}: {
+  icon: LucideIcon;
+  children: ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <Icon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+      <span className={cn("truncate", mono && "font-mono")}>{children}</span>
+    </span>
   );
 }
 
@@ -122,40 +166,55 @@ function LogPanel({ runnerId, job }: { runnerId: string; job: RunnerJob }) {
     setFollow(atBottom);
   };
 
-  const badge = JOB_BADGE[job.status];
+  const hasExit = job.exitCode !== undefined && job.exitCode !== null;
+
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border text-xs text-text-secondary">
-        <Badge variant={badge.variant} dot={job.status === "running"}>
-          {badge.label}
-        </Badge>
-        <span className="font-mono truncate">{job.phase}</span>
-        <span>·</span>
-        <Link to={`/tasks/${job.taskId}/details`} className="truncate text-primary hover:underline">
-          {job.taskTitle}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2.5 text-xs text-text-secondary">
+        <JobStatusBadge status={job.status} />
+        <MonoChip>{job.phase}</MonoChip>
+        <Link
+          to={`/tasks/${job.taskId}/details`}
+          className="inline-flex min-w-0 max-w-[16rem] items-center gap-1 font-medium text-primary transition-colors duration-150 hover:underline"
+        >
+          <span className="truncate">{job.taskTitle}</span>
+          <ExternalLinkIcon aria-hidden className="h-3 w-3 shrink-0" />
         </Link>
         <div className="flex-1" />
-        {job.pid !== null && <span className="font-mono">pid {job.pid}</span>}
-        {job.exitCode !== undefined && job.exitCode !== null && <span className="font-mono">exit {job.exitCode}</span>}
-        <span>{formatDuration(job.startedAt, job.finishedAt)}</span>
+        {job.pid !== null && <MonoChip>pid {job.pid}</MonoChip>}
+        {hasExit && (
+          <MonoChip tone={job.exitCode === 0 ? "success" : "danger"}>exit {job.exitCode}</MonoChip>
+        )}
+        <span className="inline-flex items-center gap-1 tabular-nums text-text-muted">
+          <DurationIcon aria-hidden className="h-3.5 w-3.5" />
+          {formatDuration(job.startedAt, job.finishedAt)}
+        </span>
         {!follow && (
-          <button
-            className="text-primary hover:underline"
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={FollowIcon}
+            className="animate-fade-in"
             onClick={() => {
               setFollow(true);
               if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight;
             }}
           >
             Follow
-          </button>
+          </Button>
         )}
+        <CopyButton value={text} label="Copy log" />
       </div>
       <pre
         ref={preRef}
         onScroll={onScroll}
-        className="flex-1 min-h-0 overflow-auto p-3 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words bg-surface-secondary text-text"
+        className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words bg-canvas px-4 py-3 font-mono text-xs leading-relaxed text-text-secondary"
       >
-        {loading ? "Loading log..." : text || "(no output yet)"}
+        {loading ? (
+          <span className="text-text-muted">Loading log...</span>
+        ) : (
+          text || <span className="text-text-muted">(no output yet)</span>
+        )}
       </pre>
     </div>
   );
@@ -163,6 +222,7 @@ function LogPanel({ runnerId, job }: { runnerId: string; job: RunnerJob }) {
 
 function JobsDrawer({ runner, onClose }: { runner: Runner; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const drawer = useModal(onClose);
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ["runner-jobs", runner.id],
     queryFn: () => api.getRunnerJobs(runner.id),
@@ -194,87 +254,131 @@ function JobsDrawer({ runner, onClose }: { runner: Runner; onClose: () => void }
     queryClient,
   );
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div className="fixed inset-0 z-40 flex justify-end animate-fade-in">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
-      <div className="relative w-full max-w-4xl bg-surface border-l border-border shadow-xl flex flex-col h-full">
-        <div className="h-14 border-b border-border flex items-center px-4 gap-3 shrink-0">
-          <h3 className="font-semibold text-text truncate">{runner.name}</h3>
-          <Badge variant={TOOL_BADGE[runner.tool] ?? "default"}>{runner.tool}</Badge>
+    <Drawer
+      {...drawer.props}
+      header={
+        <>
+          <div
+            className={cn(
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+              TONE_SOFT[runner.state.running ? "success" : "neutral"],
+            )}
+          >
+            <RunnersIcon aria-hidden className="h-[18px] w-[18px]" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="truncate text-[15px] font-semibold tracking-tight text-text">
+              {runner.name}
+            </h3>
+            <p className="text-xs text-text-muted">
+              {isLoading ? "Loading jobs..." : pluralize(jobs.length, "job")}
+            </p>
+          </div>
+          <Badge tone={TOOL_TONE[runner.tool] ?? "neutral"}>{runner.tool}</Badge>
           <Badge>{runner.role}</Badge>
-          <div className="flex-1" />
-          <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-secondary" title="Close">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div className="flex flex-1 min-h-0">
-          <div className="w-72 border-r border-border overflow-auto shrink-0">
-            {isLoading && (
-              <div className="p-3 space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-12 w-full" />
-                ))}
-              </div>
-            )}
-            {!isLoading && jobs.length === 0 && (
-              <p className="p-4 text-sm text-text-muted">No jobs yet. Jobs appear here as soon as the runner claims a task.</p>
-            )}
-            {jobs.map((job) => {
-              const badge = JOB_BADGE[job.status];
-              const active = selected?.id === job.id;
-              return (
-                <button
-                  key={job.id}
-                  onClick={() => setSelectedId(job.id)}
-                  className={`w-full text-left px-3 py-2.5 border-b border-border transition-colors ${
-                    active ? "bg-primary/10" : "hover:bg-surface-secondary"
-                  }`}
-                >
+        </>
+      }
+    >
+      <div className="flex w-72 shrink-0 flex-col border-r border-border">
+        <div className="eyebrow shrink-0 border-b border-border-light px-4 py-2.5">Jobs</div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {isLoading && (
+            <div className="space-y-px">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="space-y-2 border-b border-border-light px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <Badge variant={badge.variant} dot={job.status === "running"}>
-                      {badge.label}
-                    </Badge>
-                    <span className="text-xs text-text-muted font-mono">{job.phase}</span>
-                    <span className="flex-1" />
-                    <span className="text-xs text-text-muted">{formatDuration(job.startedAt, job.finishedAt)}</span>
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                    <Skeleton className="h-4 w-10" />
                   </div>
-                  <div className="text-sm text-text truncate mt-1">{job.taskTitle}</div>
-                  <div className="text-xs text-text-muted">{new Date(job.startedAt).toLocaleTimeString()}</div>
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex-1 min-w-0 flex flex-col">
-            {selected ? (
-              <LogPanel key={selected.id} runnerId={runner.id} job={selected} />
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-sm text-text-muted">Select a job to see its output.</div>
-            )}
-          </div>
+                  <Skeleton className="h-4 w-44" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              ))}
+            </div>
+          )}
+          {!isLoading && jobs.length === 0 && (
+            <EmptyState
+              compact
+              icon={LogsIcon}
+              title="No jobs yet"
+              description="Jobs appear here as soon as the runner claims a task."
+            />
+          )}
+          {jobs.map((job, i) => {
+            const active = selected?.id === job.id;
+            return (
+              <button
+                key={job.id}
+                type="button"
+                aria-current={active || undefined}
+                onClick={() => setSelectedId(job.id)}
+                className={cn(
+                  "stagger relative block w-full border-b border-border-light px-4 py-3 text-left transition-colors duration-150",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60",
+                  active ? "bg-primary/[0.06]" : "hover:bg-surface-secondary",
+                )}
+                style={{ "--i": i } as CSSProperties}
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-primary transition-all duration-200 ease-out-expo",
+                    active ? "opacity-100" : "scale-y-50 opacity-0",
+                  )}
+                />
+                <div className="flex items-center gap-2">
+                  <JobStatusBadge status={job.status} />
+                  <MonoChip>{job.phase}</MonoChip>
+                  <span className="flex-1" />
+                  <span className="inline-flex items-center gap-1 text-xs tabular-nums text-text-muted">
+                    <DurationIcon aria-hidden className="h-3 w-3" />
+                    {formatDuration(job.startedAt, job.finishedAt)}
+                  </span>
+                </div>
+                <div
+                  className={cn(
+                    "mt-1.5 truncate text-sm",
+                    active ? "font-medium text-text" : "text-text-secondary",
+                  )}
+                >
+                  {job.taskTitle}
+                </div>
+                <div
+                  className="mt-0.5 text-xs text-text-muted"
+                  title={formatDateTime(job.startedAt)}
+                >
+                  {formatRelative(job.startedAt)}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
-    </div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {selected ? (
+          <LogPanel key={selected.id} runnerId={runner.id} job={selected} />
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-canvas text-sm text-text-muted">
+            <TerminalIcon aria-hidden className="h-5 w-5" />
+            Select a job to see its output.
+          </div>
+        )}
+      </div>
+    </Drawer>
   );
 }
 
 function RunnerCard({
   runner,
+  index,
   projectName,
   onOpen,
   onEdit,
   onDelete,
 }: {
   runner: Runner;
+  index: number;
   projectName: string | null;
   onOpen: () => void;
   onEdit: () => void;
@@ -282,77 +386,180 @@ function RunnerCard({
 }) {
   const queryClient = useQueryClient();
   const toggle = useMutation({
-    mutationFn: () => (runner.state.running ? api.stopRunner(runner.id) : api.startRunner(runner.id)),
+    mutationFn: () =>
+      runner.state.running ? api.stopRunner(runner.id) : api.startRunner(runner.id),
     onSuccess: (updated) => {
       queryClient.setQueryData<Runner[]>(["runners"], (old) =>
         old ? old.map((r) => (r.id === updated.id ? updated : r)) : undefined,
       );
     },
+    onError: (e: Error) => toast.error(e.message),
   });
   const { state } = runner;
   const last = state.lastJob;
 
   return (
     <div
-      className="p-4 rounded-xl border border-border bg-surface hover:border-primary/30 hover:shadow-sm transition-all duration-150 cursor-pointer group flex flex-col gap-3"
+      role="button"
+      tabIndex={0}
+      aria-label={`Show jobs of ${runner.name}`}
       onClick={onOpen}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="card-interactive group stagger p-4"
+      style={{ "--i": index } as CSSProperties}
     >
-      <div className="flex items-start gap-3">
-        <div className={`w-2.5 h-2.5 mt-1.5 rounded-full shrink-0 ${state.running ? "bg-green-500 animate-pulse" : "bg-text-muted/40"}`} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-text truncate">{runner.name}</span>
-            <Badge variant={TOOL_BADGE[runner.tool] ?? "default"}>{runner.tool}</Badge>
-            <Badge>{runner.role}</Badge>
-            {runner.permissionMode === "full" && <Badge variant="warning">full access</Badge>}
+      <div className="flex flex-wrap items-start gap-3.5">
+        <div className="relative shrink-0">
+          <div
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-xl transition-colors duration-200",
+              TONE_SOFT[state.running ? "success" : "neutral"],
+            )}
+          >
+            <RunnersIcon aria-hidden className="h-5 w-5" />
           </div>
-          <div className="text-xs text-text-muted mt-1 truncate">
-            {projectName ?? "Any project"}
-            {runner.model ? ` · ${runner.model}` : ""}
-            {runner.effort ? ` · effort ${runner.effort}` : ""} · every {runner.pollIntervalSec}s · up to {runner.concurrency} job
-            {runner.concurrency === 1 ? "" : "s"}
+          {state.running && (
+            <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-surface">
+              <Dot tone="success" pulse className="h-2 w-2" />
+            </span>
+          )}
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-0.5 truncate text-sm font-semibold text-text">{runner.name}</span>
+            <Badge tone={TOOL_TONE[runner.tool] ?? "neutral"}>{runner.tool}</Badge>
+            <Badge>{runner.role}</Badge>
+            {runner.permissionMode === "full" && (
+              <Badge tone="warning" icon={FullAccessIcon}>
+                full access
+              </Badge>
+            )}
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-text-muted">
+            <MetaItem icon={FolderIcon}>{projectName ?? "Any project"}</MetaItem>
+            {runner.model && (
+              <MetaItem icon={ModelIcon} mono>
+                {runner.model}
+              </MetaItem>
+            )}
+            {runner.effort && <MetaItem icon={EffortIcon}>{runner.effort}</MetaItem>}
+            <MetaItem icon={ClockIcon}>every {runner.pollIntervalSec}s</MetaItem>
+            <MetaItem icon={ConcurrencyIcon}>up to {pluralize(runner.concurrency, "job")}</MetaItem>
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <Button size="sm" variant={state.running ? "secondary" : "primary"} onClick={() => toggle.mutate()} disabled={toggle.isPending}>
-            {toggle.isPending ? "..." : state.running ? "Stop" : "Start"}
+
+        <div
+          className="ml-auto flex shrink-0 items-center gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button
+            size="sm"
+            variant={state.running ? "secondary" : "primary"}
+            icon={state.running ? StopIcon : StartIcon}
+            loading={toggle.isPending}
+            onClick={() => toggle.mutate()}
+            className="mr-1"
+          >
+            {state.running ? "Stop" : "Start"}
           </Button>
-          <button onClick={onEdit} className="p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-secondary transition-colors" title="Edit">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-            </svg>
-          </button>
-          <button onClick={onDelete} className="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors" title="Delete">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-            </svg>
-          </button>
+          <IconButton icon={LogsIcon} label="View jobs" onClick={onOpen} />
+          <IconButton icon={EditIcon} label="Edit runner" onClick={onEdit} />
+          <IconButton icon={DeleteIcon} label="Delete runner" variant="danger" onClick={onDelete} />
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs text-text-secondary">
-        <span>
-          <span className={state.running ? "text-green-600 dark:text-green-400" : "text-text-muted"}>{state.running ? "Running" : "Stopped"}</span>
-          {" · "}
-          {state.activeJobs} active
-          {" · "}
-          {state.jobCount} job{state.jobCount === 1 ? "" : "s"}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border-light pt-3 text-xs text-text-secondary">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 font-medium",
+            state.running ? "text-success" : "text-text-muted",
+          )}
+        >
+          <Dot tone={state.running ? "success" : "neutral"} />
+          {state.running ? "Running" : "Stopped"}
+        </span>
+        <span className="tabular-nums">
+          {state.activeJobs} active · {pluralize(state.jobCount, "job")}
         </span>
         {last && (
-          <span className="flex items-center gap-1.5 min-w-0">
-            <span className="text-text-muted">last:</span>
-            <Badge variant={JOB_BADGE[last.status].variant} dot={last.status === "running"}>
-              {JOB_BADGE[last.status].label}
-            </Badge>
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="text-text-muted">Last job</span>
+            <JobStatusBadge status={last.status} />
             <span className="truncate">{last.taskTitle}</span>
+            <span className="shrink-0 text-text-muted" title={formatDateTime(last.startedAt)}>
+              {formatRelative(last.startedAt)}
+            </span>
           </span>
         )}
       </div>
       {state.lastError && (
-        <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 truncate" title={state.lastError}>
-          {state.lastError}
-        </div>
+        <Alert tone="danger" className="mt-3">
+          <span className="block truncate" title={state.lastError}>
+            {state.lastError}
+          </span>
+        </Alert>
       )}
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+  live = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+  tone: Tone;
+  live?: boolean;
+}) {
+  return (
+    <div className="card flex items-center gap-3 px-4 py-3">
+      <div
+        className={cn(
+          "hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-200 sm:flex",
+          TONE_SOFT[value > 0 ? tone : "neutral"],
+        )}
+      >
+        <Icon aria-hidden className="h-[18px] w-[18px]" />
+      </div>
+      <div className="min-w-0">
+        <div className="eyebrow truncate">{label}</div>
+        <div className="flex items-center gap-2 text-lg font-semibold leading-tight tabular-nums text-text">
+          {value}
+          {live && <Dot tone="success" pulse />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunnerCardSkeleton() {
+  return (
+    <div className="card p-4">
+      <div className="flex items-start gap-3.5">
+        <Skeleton className="h-10 w-10 rounded-xl" />
+        <div className="flex-1 space-y-2 pt-0.5">
+          <div className="flex gap-2">
+            <Skeleton className="h-4 w-36" />
+            <Skeleton className="h-4 w-14 rounded-full" />
+          </div>
+          <Skeleton className="h-3 w-72 max-w-full" />
+        </div>
+        <Skeleton className="h-8 w-20 rounded-lg" />
+      </div>
+      <div className="mt-3 border-t border-border-light pt-3">
+        <Skeleton className="h-3 w-56" />
+      </div>
     </div>
   );
 }
@@ -372,63 +579,93 @@ export function RunnersPage() {
   const { data: projects = [] } = useQuery({ queryKey: ["projects"], queryFn: api.getProjects });
 
   // Subscribing here keeps the cached runner state fresh via runner_updated events.
-  useSSE(useCallback(() => {}, []), queryClient);
+  useSSE(
+    useCallback(() => {}, []),
+    queryClient,
+  );
 
-  const projectName = (id: string | null) => (id ? projects.find((p) => p.id === id)?.displayName ?? id : null);
-  const open = openId ? runners.find((r) => r.id === openId) ?? null : null;
+  const projectName = (id: string | null) =>
+    id ? (projects.find((p) => p.id === id)?.displayName ?? id) : null;
+  const open = openId ? (runners.find((r) => r.id === openId) ?? null) : null;
+
+  const runningCount = runners.filter((r) => r.state.running).length;
+  const activeJobs = runners.reduce((sum, r) => sum + r.state.activeJobs, 0);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
-        <h2 className="font-semibold text-text">Runners</h2>
-        <span className="text-xs text-text-muted hidden sm:inline">
-          Runners claim tasks and launch your coding tool headless in the project directory.
-        </span>
-        <div className="flex-1" />
-        <Button onClick={() => setShowCreate(true)} variant="primary" size="sm">
-          New Runner
-        </Button>
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        icon={RunnersIcon}
+        title="Runners"
+        description="Claim tasks and run your coding tool headless in the project directory."
+        meta={!isLoading && <CountPill>{runners.length}</CountPill>}
+        actions={
+          <Button icon={AddIcon} onClick={() => setShowCreate(true)}>
+            New runner
+          </Button>
+        }
+      />
 
-      <div className="flex-1 overflow-auto p-4">
+      <PageBody>
         {isLoading && (
-          <div className="space-y-2">
-            {[1, 2].map((i) => (
-              <div key={i} className="p-4 rounded-xl border border-border space-y-2">
-                <Skeleton className="h-4 w-48" />
-                <Skeleton className="h-3 w-72" />
-                <Skeleton className="h-3 w-40" />
-              </div>
-            ))}
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-[62px] rounded-xl" />
+              ))}
+            </div>
+            <div className="space-y-3">
+              {[1, 2].map((i) => (
+                <RunnerCardSkeleton key={i} />
+              ))}
+            </div>
           </div>
         )}
         {!isLoading && runners.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-text-muted">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
-            </svg>
-            <p className="text-sm">No runners yet.</p>
-            <p className="text-xs mt-1">Create one and it will pick up tasks from the board within seconds.</p>
-          </div>
+          <EmptyState
+            icon={RunnersIcon}
+            title="No runners yet"
+            description="Create one and it will pick up tasks from the board within seconds."
+            action={
+              <Button icon={AddIcon} onClick={() => setShowCreate(true)}>
+                New runner
+              </Button>
+            }
+          />
         )}
         {runners.length > 0 && (
-          <div className="space-y-2">
-            {runners.map((runner) => (
-              <RunnerCard
-                key={runner.id}
-                runner={runner}
-                projectName={projectName(runner.projectId)}
-                onOpen={() => setOpenId(runner.id)}
-                onEdit={() => setEditing(runner)}
-                onDelete={() => setDeleting(runner)}
+          <div className="space-y-5">
+            <div className="grid grid-cols-3 gap-3">
+              <StatCard icon={RunnersIcon} label="Runners" value={runners.length} tone="primary" />
+              <StatCard
+                icon={StartIcon}
+                label="Running"
+                value={runningCount}
+                tone="success"
+                live={runningCount > 0}
               />
-            ))}
+              <StatCard icon={ZapIcon} label="Active jobs" value={activeJobs} tone="info" />
+            </div>
+            <div className="space-y-3">
+              {runners.map((runner, i) => (
+                <RunnerCard
+                  key={runner.id}
+                  runner={runner}
+                  index={i}
+                  projectName={projectName(runner.projectId)}
+                  onOpen={() => setOpenId(runner.id)}
+                  onEdit={() => setEditing(runner)}
+                  onDelete={() => setDeleting(runner)}
+                />
+              ))}
+            </div>
           </div>
         )}
-      </div>
+      </PageBody>
 
       {showCreate && <RunnerModal projects={projects} onClose={() => setShowCreate(false)} />}
-      {editing && <RunnerModal runner={editing} projects={projects} onClose={() => setEditing(null)} />}
+      {editing && (
+        <RunnerModal runner={editing} projects={projects} onClose={() => setEditing(null)} />
+      )}
       {deleting && <DeleteRunnerModal runner={deleting} onClose={() => setDeleting(null)} />}
       {open && <JobsDrawer runner={open} onClose={() => setOpenId(null)} />}
     </div>

@@ -24,11 +24,24 @@ createRoot(document.getElementById("root")!).render(
           <App />
           <Toaster
             position="bottom-right"
+            gutter={10}
             toastOptions={{
               duration: 3000,
               style: {
-                borderRadius: "8px",
-                fontSize: "14px",
+                borderRadius: "12px",
+                fontSize: "13.5px",
+                fontWeight: 500,
+                padding: "10px 14px",
+                background: "rgb(var(--surface-elevated))",
+                color: "rgb(var(--text))",
+                border: "1px solid rgb(var(--border))",
+                boxShadow: "var(--shadow-lg)",
+              },
+              success: {
+                iconTheme: { primary: "rgb(var(--success))", secondary: "rgb(var(--surface))" },
+              },
+              error: {
+                iconTheme: { primary: "rgb(var(--danger))", secondary: "rgb(var(--surface))" },
               },
             }}
           />

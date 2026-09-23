@@ -1,27 +1,27 @@
 import { forwardRef } from "react";
+import { cn } from "../lib/cn";
+import { controlBase, controlState } from "./Input";
 
 interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   error?: string;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ error, className = "", ...props }, ref) => {
+  ({ error, className, ...props }, ref) => {
     return (
       <div className="w-full">
         <textarea
           ref={ref}
-          className={`
-            w-full border rounded-lg px-3 py-2 text-sm
-            bg-surface text-text
-            placeholder:text-text-muted
-            focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface
-            transition-all duration-150
-            ${error ? "border-danger focus-visible:ring-danger" : "border-border focus-visible:ring-primary"}
-            ${className}
-          `}
+          aria-invalid={error ? true : undefined}
+          className={cn(
+            controlBase,
+            controlState(error),
+            "min-h-[2.25rem] resize-y px-3 py-2 leading-relaxed",
+            className,
+          )}
           {...props}
         />
-        {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+        {error && <p className="mt-1.5 text-xs text-danger animate-slide-down">{error}</p>}
       </div>
     );
   },
