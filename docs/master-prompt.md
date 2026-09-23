@@ -1,5 +1,7 @@
 # AgentQ — Master Prompt
 
+> **Outdated (historical spec).** This document describes the original design, where agents used an `agentq` command-line binary. That binary no longer exists: agents now use the AgentQ MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
+
 Build a local task queue system for managing coding-agent work across multiple projects. It provides a centralized backlog that allows AI agents (OpenCode, Codex, Claude, Kimi, Junie) to pull work items, complete them, and continue from well-defined context.
 
 > Tagline: "If you want to be a 100x engineer, stop prompting and start queueing."
@@ -88,14 +90,10 @@ agent-task-queue/
 │   │
 │   └── installer/src/                 # @agentq/installer — install scripts
 │       ├── install-bin.ts             # Build + install agentq binary to ~/.local/bin
-│       ├── install-skills.ts          # Copy workflow skill to agent config dirs
-│       └── install-agents.ts          # Copy subagent files to opencode
+│       └── install-skills.ts          # Copy workflow skill to agent config dirs
 │
 ├── skills/                            # Shared agent skill definitions
 │   └── agentq-workflow/SKILL.md
-│
-├── agents/opencode/                   # Subagent definitions
-│   └── agentq-fetcher.md
 │
 ├── .opencode/                         # OpenCode-specific config
 │   ├── skills/                        # 7 skills (agentq-workflow, agentq-create-task, openspec-*)
@@ -793,16 +791,7 @@ typescript ^5.8
 
 ---
 
-## 11. Agent Definitions
-
-**`agents/opencode/agentq-fetcher.md`** — A subagent that:
-- Claims the next eligible task from AgentQ using `agentq claim --json`
-- Returns task details (does NOT implement or review)
-- Uses `allowed-tools: Bash(agentq:*)` to restrict tool access
-
----
-
-## 12. Installer (`packages/installer/`)
+## 11. Installer (`packages/installer/`)
 
 ### `install-bin.ts` — Binary Installation
 
@@ -824,13 +813,9 @@ Copies `skills/agentq-workflow/SKILL.md` to all agent config directories:
 
 Creates target directories if missing.
 
-### `install-agents.ts` — Agent Installation
-
-Copies `agents/opencode/*.md` to `~/.config/opencode/agents/`
-
 ---
 
-## 13. Configuration
+## 12. Configuration
 
 ### Environment Variables
 
@@ -854,7 +839,7 @@ Set by agent on `submit-code --worktree`. Stored in `task.worktreePath`.
 
 ---
 
-## 14. Root Package.json
+## 13. Root Package.json
 
 ### Scripts
 
@@ -865,7 +850,6 @@ Set by agent on `submit-code --worktree`. Stored in `task.worktreePath`.
   "cli": "bun run packages/cli/src/index.ts",
   "install:bin": "bun run packages/installer/src/install-bin.ts",
   "install:skills": "bun run packages/installer/src/install-skills.ts",
-  "install:agents": "bun run packages/installer/src/install-agents.ts",
   "lint": "eslint . --ext .ts,.tsx",
   "lint:fix": "eslint . --ext .ts,.tsx --fix",
   "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
@@ -886,7 +870,7 @@ husky ^9.1, lint-staged ^17.2
 
 ---
 
-## 15. Package Relationships
+## 14. Package Relationships
 
 ```
 @agentq/shared        (zod, bun-types)
@@ -901,7 +885,7 @@ Bun workspace root `package.json` references `packages/*`.
 
 ---
 
-## 16. Tests
+## 15. Tests
 
 **Location**: `packages/shared/src/database.test.ts`
 **Runner**: `bun test` (Bun's built-in test runner)
@@ -924,7 +908,7 @@ Bun workspace root `package.json` references `packages/*`.
 
 ---
 
-## 17. Development Setup
+## 16. Development Setup
 
 ```bash
 # Install dependencies
@@ -953,14 +937,11 @@ bun run install:bin
 
 # Install skills to all agent configs
 bun run install:skills
-
-# Install agent definitions
-bun run install:agents
 ```
 
 ---
 
-## 18. Key Architectural Decisions
+## 17. Key Architectural Decisions
 
 1. **Bun's built-in SQLite** (`bun:sqlite`) — no external ORM. JSON columns for arrays, WAL mode for concurrent access.
 2. **Normalized conversation/history tables** — migrated from JSON columns. New code writes to both normalized tables AND JSON columns for backward compatibility.
@@ -977,7 +958,7 @@ bun run install:agents
 
 ---
 
-## 19. State Protection Sets
+## 18. State Protection Sets
 
 ```typescript
 // Statuses that cannot be canceled
@@ -994,7 +975,7 @@ Tasks in `CANT_DELETE_STATUSES` respond with "Task has reached coding stage and 
 
 ---
 
-## 20. Additional Edge Cases & Notes
+## 19. Additional Edge Cases & Notes
 
 - **Server-side validation**: Each transition handler checks current status before proceeding. Returns descriptive error messages.
 - **Submit-merge requirements**: Must include `branch`, `commit`, and `authors` in request body. Details are recorded in conversation as one line.

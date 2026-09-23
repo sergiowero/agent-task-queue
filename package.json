@@ -10,17 +10,16 @@
   "scripts": {
     "start": "bun run --cwd packages/web-ui build && bun run packages/web/src/index.ts",
     "dev": "bun --watch run packages/web/src/index.ts --dev",
-    "cli": "bun run packages/cli/src/index.ts",
     "design-system:build": "bun run design-system/scripts/build.ts",
     "mcp": "bun run packages/mcp/src/index.ts",
-    "install:bin": "bun run packages/installer/src/install-bin.ts",
+    "install:all": "bun run packages/installer/src/install-all.ts",
+    "install:mcp": "bun run packages/installer/src/install-mcp.ts",
     "install:skills": "bun run packages/installer/src/install-skills.ts",
-    "install:agents": "bun run packages/installer/src/install-agents.ts",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,json,css,md}\"",
-    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/cli --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit && tsc --project packages/mcp --noEmit"
+    "typecheck": "tsc --project packages/shared --noEmit && tsc --project packages/web --noEmit && tsc --project packages/web-ui --noEmit && tsc --project packages/installer --noEmit && tsc --project packages/mcp --noEmit"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

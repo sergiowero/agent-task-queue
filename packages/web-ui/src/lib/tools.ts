@@ -10,7 +10,7 @@ export const TOOLS: Tool[] = [
   {
     id: "install",
     name: "Install AgentQ",
-    description: "Instructions for installing the AgentQ CLI and workflow skills.",
+    description: "Connect your coding agents to AgentQ: the MCP server and the workflow skills.",
     icon: "download",
     badge: "Experimental",
   },

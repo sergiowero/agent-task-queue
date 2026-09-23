@@ -41,7 +41,7 @@ async function createTaskViaApi(overrides: Record<string, unknown> = {}): Promis
   return (await res.json()) as Task;
 }
 
-/** Simulates a CLI claim (the web API has no claim route). */
+/** Simulates an agent claim through MCP (the web API has no claim route). */
 async function setStatus(taskId: string, status: TaskStatus): Promise<Task> {
   const res = await json(`/api/tasks/${taskId}`, "PUT", { status });
   expect(res.status).toBe(200);

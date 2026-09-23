@@ -343,8 +343,8 @@ describe("SSE task watcher", () => {
     const events = await collectSSE(
       "task_updated",
       () => {
-        // Simulates the CLI: a write that bypasses the web server entirely.
-        updateTask(task.id, { status: TaskStatus.Planning, assignedAgent: { name: "cli", tool: "cli", model: "m" } });
+        // Simulates an agent's MCP server: a write that bypasses the web server entirely.
+        updateTask(task.id, { status: TaskStatus.Planning, assignedAgent: { name: "mcp-agent", tool: "mcp-agent", model: "m" } });
       },
       (found) => found.some((e: Task) => e.id === task.id && e.status === TaskStatus.Planning),
     );
@@ -353,7 +353,7 @@ describe("SSE task watcher", () => {
     const mine = events.find((e: Task) => e.id === task.id && e.status === TaskStatus.Planning) as Task | undefined;
     expect(mine).toBeDefined();
     expect(mine!.status).toBe(TaskStatus.Planning);
-    expect(mine!.assignedAgent?.tool).toBe("cli");
+    expect(mine!.assignedAgent?.tool).toBe("mcp-agent");
   });
 });
 

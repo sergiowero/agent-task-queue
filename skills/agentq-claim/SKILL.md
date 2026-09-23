@@ -1,17 +1,19 @@
 ---
 name: agentq-claim
-description: Entry point for working as an AgentQ agent through the `agentq` CLI. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with `agentq claim --json`, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
-allowed-tools: Bash(agentq:*)
+description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
+allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Claim Skill
 
-Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit command) live in the phase skills.
+Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit tool) live in the phase skills.
 
-**CLI conventions**: use only `agentq claim` and `agentq submit-*`, always with `--json`. Include `--context "<short summary of current state, findings, or blockers>"` on every `agentq claim` and `agentq submit-*` so the next agent has context. All `-m` messages MUST be in Markdown format (templates are in the phase skills).
+**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task` and the `submit_*` tools; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Pass `context` ("<short summary of current state, findings, or blockers>") on every `claim_task` and `submit_*` call so the next agent has context. Every `message` MUST be Markdown (templates are in the phase skills).
+
+If the `agentq` tools are missing, the server is not registered: tell the user to run `bun run install:mcp` from the AgentQ checkout, then restart the tool. Do not work around it.
 
 ## Identity
 
@@ -23,44 +25,52 @@ Router skill: claim a task, then follow the phase skill for its status. Per-phas
 
 ## Claim a Task
 
-```bash
-agentq claim -n <toolName> -v <version> -m <model> -r <role> -s <sessionId> \
-  [--host <host>] [--project <projectId>] [--context "<summary>"] --json   # --project restricts the claim to one project
+Call `claim_task`:
+
+```json
+{ "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
+  "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<summary>" }
 ```
 
-**Response (success)** — the full task plus `project` and your `agent` identity. Keep `task.id`: the phase skills need it for `agentq submit-*`.
+**Result (success)**: the full task plus `project` and your `agent` identity. Keep `task.id`: the phase skills need it for the `submit_*` tools.
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."],
-    "acceptanceCriteria": ["..."], "status": "ready_for_code", "recommendedBranch": "feat/...", "mergeBranch": "develop",
+    "acceptanceCriteria": ["..."], "status": "coding", "recommendedBranch": "feat/...", "mergeBranch": "develop",
     "worktreePath": null | "{project}/.agentq/worktrees/{taskId}",
+    "history": [{ "pre_status": "ready_for_code", "new_status": "coding", "timestamp": "..." }],
     "conversation": [{ "authorName": "...", "timestamp": "...", "message": "...", "messageType": "review" }], "contexts": ["..."],
-    "project": { "id": "...", "name": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
-  "agent": { "id": "opencode@1.0|model", "role": "senior" } }
+    "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
+  "agent": { "id": "opencode@1.0|model", "role": "implementer" } }
 ```
 
-**Response (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
+**Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
+
+**Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
 ## Protocol
 
-1. **Claim** a task using `agentq claim --json`
-2. **Read** the task status from the response
+1. **Claim** a task with `claim_task`
+2. **Read** the task status from the result
 3. **Determine phase** from the status (see Phase Routing) and read that phase skill
 4. **Work** on the task according to the phase skill
-5. **Submit** using the `agentq submit-*` command given by the phase skill
+5. **Submit** with the `submit_*` tool given by the phase skill
 6. **Repeat** until no tasks available
+
+If an AgentQ runner started you, the task was **already claimed by the runner**: skip steps 1–2 and 6, do not call `claim_task`, work on the task you were given and submit once.
 
 ## Phase Routing
 
-| Task Status | Phase | Skill to read next |
-|-------------|-------|--------------------|
-| `plan_requested` | Planning | `agentq-plan` |
-| `plan_changes_requested` | Planning | `agentq-plan` |
-| `ready_for_code` | Coding | `agentq-code` |
-| `changes_requested` | Coding | `agentq-code` |
-| `code_review_requested` | Reviewing | `agentq-review` |
-| `reviewing` | Reviewing | `agentq-review` |
-| `approved` | Merging | `agentq-merge` |
+The claim moves the task to its in-progress status; route on the status it was claimed from (the last `history` entry's `pre_status`) or on the in-progress status:
+
+| Claimed from | In progress | Phase | Skill to read next |
+|--------------|-------------|-------|--------------------|
+| `plan_requested` | `planning` | Planning | `agentq-plan` |
+| `plan_changes_requested` | `planning` | Planning | `agentq-plan` |
+| `ready_for_code` | `coding` | Coding | `agentq-code` |
+| `changes_requested` | `coding` | Coding | `agentq-code` |
+| `code_review_requested` | `reviewing` | Reviewing | `agentq-review` |
+| `approved` | `merging` | Merging | `agentq-merge` |
 
 After claiming, read the skill for the phase and follow it. Do not read the other phase skills.
 
@@ -76,8 +86,8 @@ Agents MUST NOT ask the user for permission or confirmation during task executio
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq claim`, `agentq submit-*`)
-- **DO NOT** use `agentq list` or `agentq get` - agents only use `claim` and `submit-*`
+- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`claim_task`, `submit_*`)
+- **DO NOT** use `list_tasks`, `create_task` or `archive_task` in this loop — agents claim, work on the claimed task and submit
 - **DO NOT** manage state or generate session IDs
 - **DO NOT** retry indefinitely on empty queue — **STOP** and inform user when no tasks available
 - **DO NOT** skip phases or jump to other tasks - follow the status-driven phase and focus only on the claimed task until submitted
@@ -86,4 +96,4 @@ Agents MUST NOT ask the user for permission or confirmation during task executio
 
 ## No Tasks Available
 
-When `agentq claim` returns `{ "success": false, "reason": "no_tasks_available" }`: stop immediately, inform the user "No tasks available for your role.", and do NOT retry or loop.
+When `claim_task` returns `{ "success": false, "reason": "no_tasks_available" }`: stop immediately, inform the user "No tasks available for your role.", and do NOT retry or loop.

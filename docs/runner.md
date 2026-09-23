@@ -4,8 +4,9 @@ A **runner** is the piece of AgentQ that removes the "open Claude / Codex / Open
 hand" step. It lives inside the web server, polls the queue with a role, and every time
 it claims a task it launches the configured coding tool **headless** in the project's
 working directory with a prompt that contains the task and the matching phase skill.
-The tool does the work and finishes with the usual `agentq submit-*` command; the runner
-only watches the process.
+Every job gets the AgentQ MCP server, bound to the web server's database, with no setup
+on your side. The tool does the work and finishes by calling the phase's `submit_*` MCP
+tool; the runner only watches the process.
 
 Demo flow: create a task on the board → a runner picks it up within `poll_interval_sec`
 seconds → the plan shows up in *Need Review* → you approve → the same (or another)
@@ -40,21 +41,46 @@ default 1), `pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`),
 
 ## Tools and the commands they run
 
-The runner writes the prompt to `~/agentq/runs/<taskId>/<jobId>.prompt.md` and runs:
+The runner writes the prompt to `~/agentq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
+config to `<jobId>.mcp.json` next to it, and runs:
 
 | Tool | Command |
 |------|---------|
-| `claude` | `claude -p <prompt> --output-format json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
-| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` |
-| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` |
-| `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` |
+| `claude` | `claude -p <prompt> --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
+| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` |
+| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
+| `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
 | `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$AGENTQ_PROMPT` |
 
-Every child gets `AGENTQ_TASK_ID`, `AGENTQ_ROLE` and `AGENTQ_PROMPT_FILE` in its
-environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner started
+Every child gets `AGENTQ_TASK_ID`, `AGENTQ_ROLE`, `AGENTQ_PROMPT_FILE`,
+`AGENTQ_MCP_CONFIG` (the job's MCP config file) and `AGENTQ_DB_PATH` (the web server's
+database) in its environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner started
 from inside a Claude Code session does not trip the nested-session guard. The working
 directory is the project's `workingDirectory` (with `~` expanded); if it does not exist
 the task is released immediately and the job is marked reverted.
+
+### The AgentQ MCP server in every job
+
+Before starting the tool, the runner writes `<jobId>.mcp.json`:
+
+```json
+{ "mcpServers": { "agentq": { "command": "<bun>", "args": ["run", "<checkout>/packages/mcp/src/index.ts"],
+                              "env": { "AGENTQ_DB_PATH": "<the web server's database>" } } } }
+```
+
+and hands the same server to the tool the way that tool reads MCP config for a single run,
+so nothing has to be registered beforehand (`bun run install:mcp` is only needed to use
+AgentQ from a tool you open yourself):
+
+| Tool | How the job gets the server |
+|------|-----------------------------|
+| `claude` | `--mcp-config <jobId>.mcp.json`. It is added to the servers you configured, and a server passed this way takes precedence over one with the same name. |
+| `codex` | `-c mcp_servers.agentq.command=…`, `…args=…` and `…env={ "AGENTQ_DB_PATH" = … }` overrides (TOML values). |
+| `opencode` | `OPENCODE_CONFIG_CONTENT` (inline config, highest precedence) with an `mcp.agentq` local server, merged into any content the variable already holds. |
+| `gemini` | Gemini CLI has no per-run MCP flag, so the job writes `<jobId>.gemini-settings.json`: a copy of the system settings file (`$GEMINI_CLI_SYSTEM_SETTINGS_PATH`, else `/etc/gemini-cli/settings.json`, `/Library/Application Support/GeminiCli/settings.json` or `C:\ProgramData\gemini-cli\settings.json`) with `mcpServers.agentq` added, and points `GEMINI_CLI_SYSTEM_SETTINGS_PATH` at it. Admin settings are kept. If the system settings file exists but is not valid JSON, the job fails before the tool starts, the task is released and the error names the file to fix. |
+| `custom` | Your argv decides. Read `$AGENTQ_MCP_CONFIG` (the `mcpServers` document above, usable as-is with `claude --mcp-config`), or start `bun run packages/mcp/src/index.ts` with `AGENTQ_DB_PATH=$AGENTQ_DB_PATH`. A custom tool that never submits has its task released when it exits. |
+
+The job log starts with the path of the MCP config the job received.
 
 ### Model & effort discovery
 
@@ -68,16 +94,16 @@ overrides the tool-level one.
 | Tool | Models | Efforts |
 |------|--------|---------|
 | `claude` | Aliases quoted in `claude --help` (`fable`, `opus`, `sonnet`, plus `haiku`), the entries of `additionalModelOptionsCache` in `~/.claude.json`, then the static full IDs (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`) | Parsed from the `--effort <level>` line of `--help` → `--effort <e>` |
-| `codex` | `codex debug models` (only `visibility: "list"`, highest `priority` first) with each model's `supported_reasoning_levels`; the `model` / `model_reasoning_effort` set at the top of `~/.codex/config.toml` is prepended as `<model> (configured)` when the CLI does not list it | Union of every model's levels → `-c model_reasoning_effort="<e>"` |
+| `codex` | `codex debug models` (only `visibility: "list"`, highest `priority` first) with each model's `supported_reasoning_levels`; the `model` / `model_reasoning_effort` set at the top of `~/.codex/config.toml` is prepended as `<model> (configured)` when `codex` does not list it | Union of every model's levels → `-c model_reasoning_effort="<e>"` |
 | `opencode` | `opencode models`, one `provider/model` per line, grouped by provider | Fixed `minimal, low, medium, high, max` → `--variant <e>` |
 | `gemini` | Static `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`; the `model` in `~/.gemini/settings.json` is prepended as `(configured)` | none |
 | `custom` | none (free text only) | none |
 
 `source` tells where the list came from: `cli` (the tool was executed), `cache` (served
-from the in-memory cache, kept per tool for 10 minutes) or `static` (the CLI is missing,
+from the in-memory cache, kept per tool for 10 minutes) or `static` (the tool is missing,
 timed out after 15 s or printed something unparsable, so only the built-in and configured
 entries are shown). The "Refresh" link under the model select calls the route with
-`?refresh=1`, which bypasses the cache. Discovery never fails the request: a broken CLI
+`?refresh=1`, which bypasses the cache. Discovery never fails the request: a broken tool
 just degrades to `static`.
 
 The chosen effort is stored on the runner (`effort`, nullable) and only handed to tools
@@ -85,11 +111,16 @@ that understand it; `gemini` and `custom` ignore it.
 
 ### Permission modes
 
-- **safe** (default) — the tool may edit files and run a fixed allow-list of commands.
-  For Claude Code: `--permission-mode acceptEdits --allowedTools "Bash(agentq:*)"
-  "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)" "Bash(npx:*)" "Bash(ls:*)"
-  "Bash(cat:*)" "Bash(grep:*)" "Bash(find:*)" Edit Write Read Glob Grep`. Codex runs
-  with `--full-auto` (sandboxed workspace-write).
+- **safe** (default) — the tool may edit files, run a fixed allow-list of commands and
+  call the AgentQ tools a claimed job needs. For Claude Code: `--permission-mode
+  acceptEdits --allowedTools mcp__agentq__get_task mcp__agentq__post_comment
+  mcp__agentq__submit_plan mcp__agentq__submit_code mcp__agentq__submit_review
+  mcp__agentq__submit_merge "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)"
+  "Bash(npx:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(grep:*)" "Bash(find:*)" Edit Write Read
+  Glob Grep`. `claim_task`, `create_task`, `list_tasks` and `archive_task` are not
+  allowed: the runner already claimed the task. Codex runs with `--full-auto` (sandboxed
+  workspace-write; its MCP servers run outside the sandbox, so the AgentQ server can write
+  the database).
 - **full** — no prompts, no sandbox: Claude gets `--dangerously-skip-permissions`, Codex
   `--dangerously-bypass-approvals-and-sandbox`. Use only for repositories you trust the
   agent to operate in unattended.
@@ -97,11 +128,13 @@ that understand it; `gemini` and `custom` ignore it.
 ### The prompt
 
 `buildPrompt()` tells the tool it is an AgentQ `<role>` agent, that task `<id>` was
-**already claimed for it** (so it must not run `agentq claim`), the current status, the
+**already claimed for it** (so it must not call `claim_task`), the current status, the
+AgentQ MCP tools it can use (`get_task`, `post_comment` and the phase's `submit_*`), the
 full task JSON (title, description, steerDetails, guardrails, acceptanceCriteria,
 conversation, contexts, branches, worktreePath, project working directory), the body of
-`skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit
-command to finish with, never to ask for permission, and to stop after submitting.
+`skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
+arguments to finish with (a Markdown message plus a `context` for the next agent), never
+to ask for permission, and to stop once the submit succeeds.
 
 Phase by status: `plan_requested` / `plan_changes_requested` → plan,
 `ready_for_code` / `changes_requested` → code, `code_review_requested` → review,
@@ -125,7 +158,9 @@ When the child exits the runner re-reads the task:
   The job is `reverted`.
 
 The same revert runs when a job is killed by Stop, by server shutdown, or by the job
-timeout. After a revert the engine backs off before claiming the same task again
+timeout. On Windows the whole process tree is ended (`taskkill /T /F`), so the tool's MCP
+servers and shell children go with it. On every platform the runner stops reading output
+2 s after the tool exits, even if a leftover child still holds the pipes open. After a revert the engine backs off before claiming the same task again
 (30 s, doubling per consecutive revert, capped at 30 min) so a crashing tool is not
 relaunched in a tight loop; the counter resets when a job for that task succeeds.
 
@@ -135,7 +170,7 @@ relaunched in a tight loop; the counter resets when a job for that task succeeds
 |----------|---------|---------|
 | `AGENTQ_HOME` | `~/agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
-| `AGENTQ_DB_PATH` | `~/agentq/agentq.db` | Database (shared with the CLI the tool calls) |
+| `AGENTQ_DB_PATH` | `~/agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 
 ## Live updates
 
@@ -146,7 +181,7 @@ SSE (`/api/events`) carries, in addition to `task_created` / `task_updated`:
   `{ type: "output", runnerId, jobId, taskId, chunk }` (output is batched, at most ~10/s per job)
 - `runner_deleted` — `{ id }`
 
-Because the CLI writes straight to SQLite, the server also watches `tasks.updated_at`
+Because the agents' MCP servers write straight to SQLite, the server also watches `tasks.updated_at`
 every 1.5 s while at least one SSE client is connected and re-broadcasts changed tasks
 as `task_updated`, so claims and submissions made by agents show up on the board.
 
@@ -172,4 +207,6 @@ curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
 ```
 
 For tests, use `tool: "custom"` with `extraArgs` such as
-`["bash", "-c", "agentq submit-plan \"$AGENTQ_TASK_ID\" --json -m '## Plan'"]`.
+`["bun", "packages/web/src/runner/testing/fake-agent.ts", "submit_plan", "{\"message\":\"## Plan\"}"]`:
+the fake agent starts the server from `$AGENTQ_MCP_CONFIG` and calls the tool for
+`$AGENTQ_TASK_ID`, as a real coding tool would.

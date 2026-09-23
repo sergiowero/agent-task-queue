@@ -1,21 +1,21 @@
 ---
 name: agentq-merge
-description: Merging phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `approved` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with `agentq submit-merge`. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
-allowed-tools: Bash(agentq:*), Bash(git:*), Bash(gh:*)
+description: Merging phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with the `submit_merge` MCP tool. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
+allowed-tools: mcp__agentq__submit_merge, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Merge Skill
 
-Follow this skill when `agentq claim` returned a task with status `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-claim` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 
-| Task Status | Phase | Action |
-|-------------|-------|--------|
-| `approved` | Merging | Verify nothing is left uncommitted, push the feature branch, create a PR into `mergeBranch` with `gh pr create`, then `submit-merge` |
+| Claimed from | Phase | Action |
+|--------------|-------|--------|
+| `approved` | Merging | Verify nothing is left uncommitted, push the feature branch, create a PR into `mergeBranch` with `gh pr create`, then `submit_merge` |
 
 The code was already committed to the feature branch during the coding phase. Your job: verify nothing is left uncommitted, push the feature branch, create a **pull request** from the feature branch into the merge branch using the GitHub CLI (`gh`), and record the PR. Do NOT merge the branches locally — the PR is the integration mechanism.
 
@@ -39,7 +39,7 @@ Two branches matter:
 |-------|------------------------|
 | Merging | Verify the worktree has no uncommitted changes (commit any stragglers), push the feature branch, then create a PR into `mergeBranch` with `gh pr create`. The ONLY phase where `git push` is allowed. |
 
-- `agentq submit-merge` is queue bookkeeping — it does NOT run git and does NOT create the PR. The feature branch is committed during coding; you push it and create the PR with `gh pr create` before calling it.
+- `submit_merge` is queue bookkeeping — it does NOT run git and does NOT create the PR. The feature branch is committed during coding; you push it and create the PR with `gh pr create` before calling it.
 - NEVER force-push (`git push --force` / `-f`).
 - NEVER commit in the main working directory (`task.project.workingDirectory`) — commits live in the task worktree.
 
@@ -80,7 +80,7 @@ git push -u origin {task.recommendedBranch}
 ```
 
 - Before touching anything: `git status` in the main repo. If it has uncommitted changes you did not create, **stop and report** — never stash, commit, or discard the user's work.
-- **If the push fails**, do NOT create the PR. Report the error details (the full command output) to the user so they can add them to the task conversation, and **stop — let the user take control**. Do NOT force-push, do NOT call `submit-merge`.
+- **If the push fails**, do NOT create the PR. Report the error details (the full command output) to the user so they can add them to the task conversation, and **stop — let the user take control**. Do NOT force-push, do NOT call `submit_merge`.
 
 ### Step 4 — Create the PR into mergeBranch with `gh`
 
@@ -97,56 +97,47 @@ Closes task #{task.id}"
 ```
 
 - `--base` = the PR base / merge target (`task.mergeBranch`); `--head` = the pushed feature branch.
-- Capture the **PR URL / number** from the output — you need it for `submit-merge`.
+- Capture the **PR URL / number** from the output — you need it for `submit_merge`.
 - If a PR for this exact head branch already exists, reuse it — capture its URL and skip creating a duplicate.
-- **If `gh pr create` fails** (e.g. not authenticated, `gh` not installed, head branch not pushed): report the error details to the user and **stop — let the user take control**. Do NOT call `submit-merge` for a PR that was never created.
+- **If `gh pr create` fails** (e.g. not authenticated, `gh` not installed, head branch not pushed): report the error details to the user and **stop — let the user take control**. Do NOT call `submit_merge` for a PR that was never created.
 
 ### Step 5 — Record the PR
 
-```bash
-agentq submit-merge {task.id} --json \
-  -b {task.mergeBranch} \
-  -c <feature-branch-head-sha> \
-  --authors "<implementer>,<co-authors>" \
-  --worktree {task.worktreePath} \
-  --context "<summary>" \
-  -m "## PR Created
-- **PR**: <PR URL or number>
-- **Base / Merge branch**: {task.mergeBranch}
-- **Head / Feature branch**: {task.recommendedBranch}
-- **Commit**: <feature-branch-head-sha>
-- **Authors**: <implementer>,<co-authors>
+Call the `submit_merge` MCP tool:
 
-### Changes
-- <what the PR delivers>"
+```json
+{ "taskId": "<task.id>",
+  "mergeBranch": "<task.mergeBranch>",
+  "commit": "<feature-branch-head-sha>",
+  "authors": "<implementer>,<co-authors>",
+  "worktree": "<task.worktreePath>",
+  "context": "<summary>",
+  "message": "## PR Created\n- **PR**: <PR URL or number>\n- **Base / Merge branch**: <task.mergeBranch>\n- **Head / Feature branch**: <task.recommendedBranch>\n- **Commit**: <feature-branch-head-sha>\n- **Authors**: <implementer>,<co-authors>\n\n### Changes\n- <what the PR delivers>" }
 ```
 
-- `-b` = `task.mergeBranch` (the PR base), `-c` = the feature-branch head SHA (from `git rev-parse HEAD` on the feature branch, Step 3/4), `--authors` = the implementing agent (from the task conversation) plus any human co-authors.
+- `mergeBranch` = `task.mergeBranch` (the PR base), `commit` = the feature-branch head SHA (from `git rev-parse HEAD` on the feature branch, Step 3/4), `authors` = the implementing agent (from the task conversation) plus any human co-authors.
+
+It moves the task to `merged` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Merging status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ### Failure handling
 
-- **Push failure (Step 3)** or **PR creation failure (Step 4)**: do NOT proceed to `submit-merge`. Report the error details to the user and **stop — let the user take control**. Never force-push, never call `submit-merge` for a merge/PR that never happened.
+- **Push failure (Step 3)** or **PR creation failure (Step 4)**: do NOT proceed to `submit_merge`. Report the error details to the user and **stop — let the user take control**. Never force-push, never call `submit_merge` for a merge/PR that never happened.
 
 ## Submit Merge
 
-`agentq submit-merge` only **records** a completed merge (a created PR) in the queue. It does **NOT** run git and does **NOT** create the PR — the feature branch is committed during coding, then you push it and create the PR with the GitHub CLI (`gh`) BEFORE calling it.
+`submit_merge` only **records** a completed merge (a created PR) in the queue. It does **NOT** run git and does **NOT** create the PR — the feature branch is committed during coding, then you push it and create the PR with the GitHub CLI (`gh`) BEFORE calling it.
 
-```bash
-agentq submit-merge <taskId> --json -b <mergeBranch> -c <feature-branch-head-sha> --authors "<name1>,<name2>" [-m "<message>"] [--worktree <path>] [--context "<summary>"]
-```
-
-| Flag | What to pass | Common mistake |
-|------|--------------|----------------|
-| `-b` | The **PR base / merge target branch** (`task.mergeBranch`, e.g. `develop`) | Passing the feature branch instead |
-| `-c` | The **feature-branch head commit SHA** pushed to `origin` (from `git rev-parse HEAD` on the feature branch) | Passing a merge commit SHA — there is no local merge commit anymore |
-| `--authors` | Comma-separated names of everyone who wrote the code (implementing agent + human co-authors) | Passing only the merge-phase agent |
-| `--worktree` | Path where the code was implemented (`task.worktreePath`) | Omitting it |
-
-Include the PR URL/number from `gh pr create` in `-m` — it becomes part of the task conversation.
+| Argument | What to pass | Common mistake |
+|----------|--------------|----------------|
+| `mergeBranch` | The **PR base / merge target branch** (`task.mergeBranch`, e.g. `develop`) | Passing the feature branch instead |
+| `commit` | The **feature-branch head commit SHA** pushed to `origin` (from `git rev-parse HEAD` on the feature branch) | Passing a merge commit SHA — there is no local merge commit anymore |
+| `authors` | Comma-separated names of everyone who wrote the code (implementing agent + human co-authors) | Passing only the merge-phase agent |
+| `worktree` | Path where the code was implemented (`task.worktreePath`) | Omitting it |
+| `message` | The Merge Template below, with the PR URL/number from `gh pr create` — it becomes part of the task conversation | Leaving the PR out |
 
 ## Merge Template
 
-All `-m` messages MUST be in Markdown format.
+The `message` MUST be Markdown.
 
 ```markdown
 ## PR Created
@@ -165,8 +156,8 @@ All `-m` messages MUST be in Markdown format.
 
 - **DO NOT** create the PR until all changes are committed AND pushed - the head branch MUST be on `origin` first
 - **DO NOT** merge the feature branch into `mergeBranch` locally - use the GitHub CLI (`gh pr create`) to open a PR instead
-- **DO NOT** call `submit-merge` before the PR was successfully created - it records, it does not merge or create PRs
-- **DO NOT** pass the feature branch as `-b` or a merge commit as `-c` - `-b` must be `mergeBranch` (the PR base) and `-c` the feature-branch head SHA
+- **DO NOT** call `submit_merge` before the PR was successfully created - it records, it does not merge or create PRs
+- **DO NOT** pass the feature branch as `mergeBranch` or a merge commit as `commit` - `mergeBranch` must be the PR base and `commit` the feature-branch head SHA
 - **DO** use the `gh` CLI (`gh pr create`) to create the pull request - never use raw GitHub API calls
 - **DO NOT** force-push (`git push --force` / `-f`)
 - **DO NOT** amend or rewrite commits made in earlier phases - each round of changes is a new commit

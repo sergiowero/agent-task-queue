@@ -1,59 +1,58 @@
 ---
 name: agentq-create-task
-description: Instructions for creating well-structured tasks in AgentQ via the CLI. Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
-allowed-tools: Bash(agentq:*)
+description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
+allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Create Task Skill
 
+All queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `create_task` is `mcp__agentq__create_task`). If the `agentq` tools are missing, tell the user to run `bun run install:mcp` from the AgentQ checkout and restart the tool.
+
 ## Identity
 
-- **toolName**: `opencode`
+- **toolName**: name of the invoking tool (e.g. `opencode`, `claude`, `codex`)
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
 - **sessionId**: Current session ID from the invoking tool (do not generate)
 
-## CLI Commands
+## MCP Tools
 
 ### List Projects
 
-```bash
-agentq projects --json
-```
-
-Returns all registered projects with `id`, `displayName`, and `workingDirectory`.
+Call `list_projects` (no arguments). It returns `{ "success": true, "projects": [...] }` with each project's `id`, `displayName` and `workingDirectory`.
 
 ### Create a Task
 
-```bash
-agentq create "<title>" \
-  --project <projectId> \
-  --description "<detailed description>" \
-  --steer-details "<implementation guidance>" \
-  --guardrails "<constraint1|constraint2|constraint3>" \
-  --acceptance-criteria "<criterion1|criterion2|criterion3>" \
-  --branch <branch-name> \
-  --priority <0-5> \
-  --requires-plan <true|false> \
-  --merge-branch <branch> \
-  [--context "<initial context entry>"] \
-  --json
+Call `create_task`:
+
+```json
+{ "title": "<title>",
+  "projectId": "<projectId>",
+  "description": "<detailed description>",
+  "steerDetails": "<implementation guidance>",
+  "guardrails": ["<constraint1>", "<constraint2>"],
+  "acceptanceCriteria": ["<criterion1>", "<criterion2>"],
+  "branch": "<branch-name>",
+  "priority": 0,
+  "requiresPlan": true,
+  "mergeBranch": "develop",
+  "context": "<initial context entry, optional>" }
 ```
 
-Mandatory: `--project`, `--description`. The `title` is a positional argument.
+Mandatory: `title`, `projectId`, `description`. The task starts in `plan_requested` when `requiresPlan` is true, otherwise in `ready_for_code`. The result is `{ "success": true, "task": { "id": "...", "status": "...", "project": {...}, ... } }`; on failure `{ "success": false, "error": "..." }`.
 
 ## Protocol
 
 ### 1. Discover the Project
 
-Run `agentq projects --json` to get all registered projects. Determine which project the task belongs to:
+Call `list_projects` to get all registered projects. Determine which project the task belongs to:
 
 | Priority | Method | Example |
 |----------|--------|---------|
-| 1st | User explicitly names a project | Match `displayName` from the output |
+| 1st | User explicitly names a project | Match `displayName` from the result |
 | 2nd | User's working directory context | Match `workingDirectory` to the repo the user is in |
 | 3rd | Ask the user | Present the list and let them choose |
 
@@ -82,20 +81,7 @@ Take what the user described and produce a complete, well-structured task.
 
 ### 3. Create the Task
 
-```bash
-agentq create "<Elaborated Title>" \
-  --project <projectId> \
-  --description "<functional requirements only — steerDetails go separately>" \
-  --steer-details "<technical recommendations, implementation hints>" \
-  --guardrails "<constraint1|constraint2>" \
-  --acceptance-criteria "<criterion1|criterion2>" \
-  --branch <branch-name> \
-  --priority <priority> \
-  --requires-plan <true|false> \
-  --json
-```
-
-Parse the JSON response and confirm to the user that the task was created with its ID.
+Call `create_task` with the elaborated fields (see Create a Task). `description` holds the functional requirements only; steer details, guardrails and acceptance criteria go in their own fields. Confirm to the user that the task was created, with its `id` and initial status.
 
 ## Task Elaboration Template
 
@@ -128,9 +114,9 @@ When writing the description, use this structure:
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use CLI only (`agentq create`, `agentq projects`)
+- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`list_projects`, `create_task`)
 - **DO NOT** claim or execute the task — this skill is only for creating tasks
-- **DO NOT** use `agentq claim` or `agentq submit-*` — those belong to the `agentq-claim` skill
+- **DO NOT** call `claim_task` or the `submit_*` tools — those belong to the `agentq-claim` skill
 - **DO** elaborate descriptions and acceptance criteria — always add value beyond what the user provided
 - **DO** respect user-specified priority and branch — only generate them when not given
 - **DO** verify the project exists before creating the task

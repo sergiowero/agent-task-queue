@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "bin": {
-    "install:bin": "src/install-bin.ts",
+    "install:all": "src/install-all.ts",
+    "install:mcp": "src/install-mcp.ts",
     "install:skills": "src/install-skills.ts"
   },
   "scripts": {
-    "install:bin": "bun run src/install-bin.ts",
+    "install:all": "bun run src/install-all.ts",
+    "install:mcp": "bun run src/install-mcp.ts",
     "install:skills": "bun run src/install-skills.ts"
+  },
+  "dependencies": {
+    "@agentq/mcp": "workspace:*",
+    "@agentq/shared": "workspace:*"
   }
 }

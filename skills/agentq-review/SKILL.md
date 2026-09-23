@@ -1,22 +1,22 @@
 ---
 name: agentq-review
-description: Reviewing phase of the AgentQ workflow. Use right after `agentq claim` returned a task with status `code_review_requested` or `reviewing` (the agentq-claim router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with `agentq submit-review`. Never edits, commits or pushes.
-allowed-tools: Bash(agentq:*), Bash(git:*)
+description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with the `submit_review` MCP tool. Never edits, commits or pushes.
+allowed-tools: mcp__agentq__submit_review, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Review Skill
 
-Follow this skill when `agentq claim` returned a task with status `code_review_requested` or `reviewing`. The cross-cutting rules in `agentq-claim` (identity, CLI conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 
-| Task Status | Phase | Action |
-|-------------|-------|--------|
-| `code_review_requested` | Reviewing | Review submitted code |
-| `reviewing` | Reviewing | Complete code review |
+| Status | Phase | Action |
+|--------|-------|--------|
+| `code_review_requested` (claimed from) | Reviewing | Review submitted code |
+| `reviewing` (in progress) | Reviewing | Complete code review |
 
 ## Working Directory
 
@@ -28,7 +28,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 ## Worktree Rules
 
-- **Check first**: If `task.worktreePath` is set (the coding phase stores it with `submit-code --worktree`), use that path. If the directory already exists, it was left from a previous session — reuse it.
+- **Check first**: If `task.worktreePath` is set (the coding phase stores it with `submit_code`), use that path. If the directory already exists, it was left from a previous session — reuse it.
 - **Path format**: Always `{project}/.agentq/worktrees/{task.id}` — never `/tmp`. `{project}` is `task.project.workingDirectory`.
 - **Creation command** (only if no worktree exists; run from `task.project.workingDirectory`): `git worktree add {project}/.agentq/worktrees/{task.id} {task.recommendedBranch}`
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
@@ -54,13 +54,17 @@ The verdict is a recommendation recorded in the task conversation — the user a
 
 ## Submit Review
 
-```bash
-agentq submit-review <taskId> --json -m "<markdown message>" [--context "<summary>"]
+Call the `submit_review` MCP tool:
+
+```json
+{ "taskId": "<task.id>", "message": "<markdown message>", "context": "<summary>" }
 ```
+
+It moves the task back to `waiting_code_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Review Template
 
-All `-m` messages MUST be in Markdown format.
+The `message` MUST be Markdown.
 
 ```markdown
 ## Review Findings
