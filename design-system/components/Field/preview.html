@@ -1,0 +1,27 @@
+<!-- @dsCard group="Forms" height=268 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field</title></head>
+<body>
+<div id="root" class="grid max-w-lg gap-5 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  var s = useState('full'); var mode = s[0], setMode = s[1];
+  return h(F, null,
+    h('div', { className: 'grid grid-cols-2 gap-4' },
+      h(A.Field, { label: 'Priority', icon: I.PriorityIcon, hint: 'Higher runs first' },
+        h(A.Input, { type: 'number', placeholder: '0' })),
+      h(A.Field, { label: 'Poll interval (sec)', icon: I.ClockIcon, hint: 'How often it checks the queue.' },
+        h(A.Input, { type: 'number', defaultValue: 5 }))),
+    h(A.Field, { label: 'Permission mode', hintTone: mode === 'full' ? 'warning' : 'muted',
+      hint: mode === 'full'
+        ? 'Full skips every permission prompt and sandbox: the tool can run any command in the project directory.'
+        : 'Safe auto-accepts edits and allows agentq, git, gh, bun/npm and read-only shell commands.' },
+      h(A.SegmentedControl, { label: 'Permission mode', value: mode, onChange: setMode,
+        options: [{ value: 'safe', label: 'Safe', icon: I.SafeModeIcon }, { value: 'full', label: 'Full access', icon: I.FullAccessIcon }] })));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

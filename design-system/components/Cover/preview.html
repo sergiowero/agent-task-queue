@@ -1,0 +1,65 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AgentQ</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--canvas); color: var(--text); font-family: var(--font-sans); overflow: hidden; }
+  .cover { position: relative; width: 960px; height: 288px; overflow: hidden; }
+  .art { position: absolute; top: 0; left: 480px; width: 480px; height: 288px; overflow: hidden; }
+  .art svg { display: block; width: 480px; height: 288px; }
+  .primary { fill: var(--primary); }
+  .accent { fill: var(--accent); }
+  .ink { fill: var(--text); }
+  .tint { fill: var(--border-strong); }
+  .col { rx: var(--rounded-2xl); }
+  .line { fill: var(--canvas); rx: calc(var(--space-2) / 2); }
+  .words { position: absolute; left: var(--space-6); bottom: var(--space-6); max-width: 440px; }
+  .name { margin: 0; font-size: 112px; line-height: .9; font-weight: 700; letter-spacing: -0.025em; color: var(--text); }
+  .tag { margin: var(--space-3) 0 0 6px; font-size: 14px; line-height: 20px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      primary 96×240 (the brand, largest) · accent 96×160 (the gradient's second stop) · text 96×208 (the deep ink; light in dark) · border-strong 120×112 bled off the right (the tint) — ≈26% of 960×288
+  arrangement four board columns hanging off the top edge like queues of unequal length, space-4 gutters, starting space-6 right of the name zone
+  pattern     queue lines, from the mark's three round-capped strokes at 14:10:6 — the product is a queue: pills 56/40/24 × space-2 cut in canvas, pitch space-4, one stack per column and two in the primary
+  scales      column width 96 = 6 × space-4, gutters and line inset space-4, line height space-2 with rx half of it; column corners rounded-2xl (the board columns' radius)
+-->
+<rect class="primary col" x="24" y="-16" width="96" height="256" rx="16"/>
+<rect class="accent col" x="136" y="-16" width="96" height="176" rx="16"/>
+<rect class="ink col" x="248" y="-16" width="96" height="224" rx="16"/>
+<rect class="tint col" x="360" y="-16" width="136" height="128" rx="16"/>
+
+<rect class="line" x="40" y="112" width="56" height="8" rx="4"/>
+<rect class="line" x="40" y="128" width="40" height="8" rx="4"/>
+<rect class="line" x="40" y="144" width="24" height="8" rx="4"/>
+<rect class="line" x="40" y="176" width="56" height="8" rx="4"/>
+<rect class="line" x="40" y="192" width="40" height="8" rx="4"/>
+<rect class="line" x="40" y="208" width="24" height="8" rx="4"/>
+
+<rect class="line" x="152" y="96" width="56" height="8" rx="4"/>
+<rect class="line" x="152" y="112" width="40" height="8" rx="4"/>
+<rect class="line" x="152" y="128" width="24" height="8" rx="4"/>
+
+<rect class="line" x="264" y="144" width="56" height="8" rx="4"/>
+<rect class="line" x="264" y="160" width="40" height="8" rx="4"/>
+<rect class="line" x="264" y="176" width="24" height="8" rx="4"/>
+
+<rect class="line" x="376" y="48" width="56" height="8" rx="4"/>
+<rect class="line" x="376" y="64" width="40" height="8" rx="4"/>
+<rect class="line" x="376" y="80" width="24" height="8" rx="4"/>
+</svg>
+</div>
+<div class="words">
+<h1 class="name">AgentQ</h1>
+<p class="tag">your 100x engineer tool</p>
+</div>
+</div>
+</body>
+</html>

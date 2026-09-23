@@ -1,0 +1,24 @@
+<!-- @dsCard group="Overlays" height=112 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Tooltip</title></head>
+<body>
+<div id="root" class="flex items-end gap-2 px-6 pb-6 pt-14"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function openFirst() {
+  var el = document.querySelector('[data-open]');
+  if (el) el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+}
+setTimeout(openFirst, 400);
+window.addEventListener('resize', function () { setTimeout(openFirst, 120); });
+function Preview() {
+  return h(F, null,
+    h(A.IconButton, { icon: I.EditIcon, label: 'Edit project', variant: 'secondary', 'data-open': true }),
+    h(A.IconButton, { icon: I.CopyIcon, label: 'Copy command' }),
+    h(A.Tooltip, { content: 'Priority 2', side: 'right' }, h('span', null, h(A.Badge, { tone: 'warning', icon: I.PriorityIcon }, 'P2'))));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

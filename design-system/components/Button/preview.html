@@ -1,0 +1,31 @@
+<!-- @dsCard group="Actions" height=232 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Button</title></head>
+<body>
+<div id="root" class="flex flex-col gap-4 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  function Row(kids) { return h('div', { className: 'flex flex-wrap items-center gap-2' }, kids); }
+  return h(F, null,
+    Row([
+      h(A.Button, { key: 1, icon: I.AddIcon }, 'New task'),
+      h(A.Button, { key: 2, variant: 'secondary', icon: I.RefreshIcon }, 'Try again'),
+      h(A.Button, { key: 3, variant: 'ghost' }, 'Cancel'),
+      h(A.Button, { key: 4, variant: 'subtle', icon: I.AiReviewIcon }, 'AI review'),
+      h(A.Button, { key: 5, variant: 'danger', icon: I.DeleteIcon }, 'Delete runner'),
+      h(A.Button, { key: 6, variant: 'danger-ghost', icon: I.CancelTaskIcon }, 'Cancel task'),
+    ]),
+    Row([
+      h(A.Button, { key: 1, size: 'sm', variant: 'ghost', icon: I.ClearIcon }, 'Clear filters'),
+      h(A.Button, { key: 2, size: 'md', icon: I.ApproveIcon }, 'Approve plan'),
+      h(A.Button, { key: 3, size: 'lg', icon: I.AddIcon }, 'Create project'),
+      h(A.Button, { key: 4, loading: true, icon: I.SaveIcon }, 'Save changes'),
+      h(A.Button, { key: 5, variant: 'secondary', icon: I.BrowseIcon, disabled: true }, 'Browse'),
+    ]));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

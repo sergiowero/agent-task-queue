@@ -1,0 +1,15 @@
+<!-- @dsCard group="Forms" height=144 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Textarea</title></head>
+<body>
+<div id="root" class="max-w-md p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h(A.Textarea, { rows: 3, 'aria-label': 'Description', placeholder: 'Context, goals and anything the agent should know' });
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

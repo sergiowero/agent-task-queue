@@ -1,0 +1,19 @@
+<!-- @dsCard group="Status" height=164 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>StatusBadge</title></head>
+<body>
+<div id="root" class="flex flex-col gap-3 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h(F, null,
+    h('div', { className: 'flex flex-wrap items-center gap-2' },
+      Object.keys(A.TASK_STATUS).map(function (s) { return h(A.StatusBadge, { key: s, status: s }); })),
+    h('div', { className: 'flex flex-wrap items-center gap-2' },
+      ['running', 'succeeded', 'failed', 'reverted'].map(function (s) { return h(A.JobStatusBadge, { key: s, status: s, size: 'md' }); })));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!-- @dsCard group="Status" height=140 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Badge</title></head>
+<body>
+<div id="root" class="flex flex-col gap-3 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  function Row(kids) { return h('div', { className: 'flex flex-wrap items-center gap-2' }, kids); }
+  var tools = Object.keys(A.TOOL_TONE);
+  return h(F, null,
+    Row(['neutral', 'primary', 'info', 'success', 'warning', 'danger', 'accent'].map(function (t) { return h(A.Badge, { key: t, tone: t }, t); })),
+    Row([0, 1, 2, 3].map(function (p) { return h(A.Badge, { key: p, tone: A.priorityTone(p), icon: I.PriorityIcon, title: 'Priority ' + p }, 'P' + p); })
+      .concat(tools.map(function (t) { return h(A.Badge, { key: t, tone: A.TOOL_TONE[t], icon: I.TerminalIcon }, t); }))),
+    Row([
+      h(A.Badge, { key: 1, tone: 'info', dot: true, pulse: true, size: 'md' }, 'Running'),
+      h(A.Badge, { key: 2, tone: 'success', icon: I.SuccessIcon, size: 'md' }, 'Succeeded'),
+      h('span', { key: 3, className: 'inline-flex items-center gap-2 text-xs text-text-muted' }, h(A.Dot, { tone: 'success', pulse: true }), 'Live dot'),
+    ]));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!-- @dsCard group="Layout" height=150 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>PageHeader</title></head>
+<body>
+<div id="root" class=""></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h(A.PageHeader, { icon: I.BoardIcon, title: 'Board',
+    description: 'Every task in the queue, grouped by where it is in the workflow.',
+    meta: h(A.CountPill, null, 12),
+    actions: h(A.Button, { icon: I.AddIcon }, 'New task'),
+    toolbar: h(F, null,
+      h(A.Input, { icon: I.SearchIcon, inputSize: 'sm', wrapperClassName: 'w-64', placeholder: 'Search title or branch\u2026', 'aria-label': 'Search tasks' }),
+      h(A.Select, { selectSize: 'sm', wrapperClassName: 'w-40', icon: I.FilterIcon, 'aria-label': 'Filter by status' }, h('option', null, 'All statuses')),
+      h(A.Select, { selectSize: 'sm', wrapperClassName: 'w-40', icon: I.AgentsIcon, 'aria-label': 'Filter by agent' }, h('option', null, 'All agents'))) });
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>
