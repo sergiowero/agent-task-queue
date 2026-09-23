@@ -24,7 +24,15 @@ export function phaseForStatus(status: TaskStatus): Phase | null {
   return PHASE_BY_STATUS[status] ?? null;
 }
 
-const CONTEXT_ARG = "<short summary of the state, findings or blockers for the next agent>";
+const CONTEXT_ARG = "<handoff notes for the agent of the next phase>";
+
+/** What the `context` handoff notes should tell the agent of the next phase. */
+const CONTEXT_HINT: Record<Phase, string> = {
+  plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
+  code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
+  review: "the verdict and the blocking issues the coder must fix next (or why it is safe to merge)",
+  merge: "the PR URL/number, the base and head branches, and anything left for the user after the merge",
+};
 
 /** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
 export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, string> }> = {
@@ -138,10 +146,12 @@ export function buildPrompt(input: BuildPromptInput): string {
     JSON.stringify(submit.args, null, 2),
     "```",
     "",
+    `\`context\` is required: short handoff notes, stored in \`task.contexts\`, for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Do not repeat \`message\`.`,
+    "",
     "Rules:",
     "- You are running headless. Never ask for permission or confirmation; decide and proceed.",
     "- Do not claim other tasks. Work only on the task above.",
-    "- Write every message in Markdown and pass a short `context` for the next agent.",
+    "- Write every message in Markdown and always pass `context` handoff notes for the next agent.",
     `- Stop immediately after \`${submit.tool}\` returns \`"success": true\`.`,
     "- If it returns an error, fix the arguments and call it again. If you cannot complete the phase, still submit with a message explaining what blocks you.",
     "",

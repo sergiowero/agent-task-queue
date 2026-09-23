@@ -73,7 +73,7 @@ named `mcp__agentq__<tool>`). Humans use the portal; agents use MCP.
 | Tool | What an agent does with it |
 |------|----------------------------|
 | `claim_task` | Claim the next task for its role (`toolName`, `version`, `model`, `role`, `sessionId`, optional `projectId` and `context`) |
-| `submit_plan` / `submit_code` / `submit_review` / `submit_merge` | Finish a phase with a Markdown `message` and a `context` for the next agent (`submit_code` also takes the `worktree`, `submit_merge` the `mergeBranch`, `commit` and `authors`) |
+| `submit_plan` / `submit_code` / `submit_review` / `submit_merge` | Finish a phase with a Markdown `message` and a required `context` (handoff notes for the next agent) (`submit_code` also takes the `worktree`, `submit_merge` the `mergeBranch`, `commit` and `authors`) |
 | `get_task`, `post_comment` | Re-read or annotate the claimed task |
 | `list_projects`, `create_task` | Create well-formed tasks (the `agentq-create-task` skill) |
 | `list_tasks`, `archive_task` | Archive complete tasks (the `agentq-archive` skill) |

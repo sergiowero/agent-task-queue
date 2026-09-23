@@ -234,7 +234,7 @@ describe("RunnerEngine", () => {
   it("respects concurrency: the second task waits for the first job to end", async () => {
     const first = planTask("concurrency 1");
     const second = planTask("concurrency 2");
-    const runner = makeRunner(agentArgv("submit_plan", { message: "## Plan" }, "--sleep", "1500"), { concurrency: 1 });
+    const runner = makeRunner(agentArgv("submit_plan", { message: "## Plan", context: "plan handoff" }, "--sleep", "1500"), { concurrency: 1 });
     const engine = makeEngine();
     engine.start(runner.id);
 
@@ -335,7 +335,7 @@ describe("RunnerEngine", () => {
         // Stand in for the claude binary, using the MCP config the real command carries.
         const config = built.cmd[built.cmd.indexOf("--mcp-config") + 1];
         return {
-          cmd: agentArgv("submit_plan", { taskId: ctx.taskId, message: "## Plan", author: "claude@runner" }, "--config", config),
+          cmd: agentArgv("submit_plan", { taskId: ctx.taskId, message: "## Plan", author: "claude@runner", context: "plan handoff" }, "--config", config),
           cwd: ctx.cwd,
           env: built.env,
         };
@@ -662,6 +662,7 @@ describe("buildPrompt", () => {
       expect(prompt).toContain(`call the \`${tool}\` tool of the \`agentq\` MCP server`);
       expect(prompt).toContain(`"taskId": "${task.id}"`);
       for (const arg of [...args, "context"]) expect(prompt).toContain(`"${arg}":`);
+      expect(prompt).toContain("`context` is required");
       expect(prompt).toContain("Do **NOT** call `claim_task`");
       expect(prompt).toContain("mcp__agentq__<tool>");
       expect(prompt).not.toMatch(/agentq (claim|submit)/);

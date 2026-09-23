@@ -34,7 +34,7 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents. Pro
    - reviewing: review the submitted code (task.worktreePath), then call submit_review with your findings and a verdict.
    - merging: push the feature branch and open a pull request into task.mergeBranch, then call submit_merge with mergeBranch, the pushed commit, authors and the PR in the message.
 4. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-5. Pass a short context (state, findings, blockers) on every claim_task and submit_* call, and write every message in Markdown.
+5. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
 6. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
@@ -97,6 +97,13 @@ const contextSchema = z
   .string()
   .optional()
   .describe("Context entry appended to the task for future agents (decisions, gotchas, pointers)");
+const submitContextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .describe(
+    "Required handoff notes appended to task.contexts for the next agent: decisions taken, gotchas, what the next phase should check",
+  );
 
 // ─── Server ────────────────────────────────────────────────────────────
 
@@ -164,7 +171,7 @@ export function createAgentQMcpServer(): McpServer {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
         author: authorSchema,
-        context: contextSchema,
+        context: submitContextSchema,
       },
     },
     (input) =>
@@ -193,7 +200,7 @@ export function createAgentQMcpServer(): McpServer {
           .min(1)
           .describe("Absolute path of the git worktree containing the changes"),
         author: authorSchema,
-        context: contextSchema,
+        context: submitContextSchema,
       },
     },
     (input) =>
@@ -219,7 +226,7 @@ export function createAgentQMcpServer(): McpServer {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Review findings (markdown)"),
         author: authorSchema,
-        context: contextSchema,
+        context: submitContextSchema,
       },
     },
     (input) =>
@@ -248,7 +255,7 @@ export function createAgentQMcpServer(): McpServer {
         message: z.string().optional().describe("Additional merge notes"),
         worktree: z.string().optional().describe("Worktree path used for the merge"),
         author: authorSchema,
-        context: contextSchema,
+        context: submitContextSchema,
       },
     },
     (input) =>

@@ -133,8 +133,9 @@ AgentQ MCP tools it can use (`get_task`, `post_comment` and the phase's `submit_
 full task JSON (title, description, steerDetails, guardrails, acceptanceCriteria,
 conversation, contexts, branches, worktreePath, project working directory), the body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
-arguments to finish with (a Markdown message plus a `context` for the next agent), never
-to ask for permission, and to stop once the submit succeeds.
+arguments to finish with (a Markdown message plus the required `context` handoff notes,
+with a per-phase hint of what they should contain), never to ask for permission, and to
+stop once the submit succeeds.
 
 Phase by status: `plan_requested` / `plan_changes_requested` → plan,
 `ready_for_code` / `changes_requested` → code, `code_review_requested` → review,

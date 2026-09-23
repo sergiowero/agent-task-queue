@@ -223,7 +223,7 @@ describe("AgentQ MCP server", () => {
     const task = createTask({ title: "not planning", description: "d", projectId });
     const result = (await client.callTool({
       name: "submit_plan",
-      arguments: { taskId: task.id, message: "plan" },
+      arguments: { taskId: task.id, message: "plan", context: "c" },
     })) as CallToolResult;
     expect(result.isError).toBe(true);
     expect(parse(result)).toEqual({ success: false, error: "Task must be in Planning status." });
@@ -231,7 +231,7 @@ describe("AgentQ MCP server", () => {
 
     const missing = (await client.callTool({
       name: "submit_code",
-      arguments: { taskId: "does-not-exist", message: "m", worktree: "/tmp/wt" },
+      arguments: { taskId: "does-not-exist", message: "m", worktree: "/tmp/wt", context: "c" },
     })) as CallToolResult;
     expect(missing.isError).toBe(true);
     expect(parse(missing)).toEqual({ success: false, error: "Task not found." });
@@ -246,7 +246,13 @@ describe("AgentQ MCP server", () => {
     const code = parse(
       (await client.callTool({
         name: "submit_code",
-        arguments: { taskId: coding.id, message: "done", worktree: "/tmp/wt-code", author: "bob" },
+        arguments: {
+          taskId: coding.id,
+          message: "done",
+          worktree: "/tmp/wt-code",
+          author: "bob",
+          context: "Check the cache invalidation first",
+        },
       })) as CallToolResult,
     );
     expect(code).toEqual({
@@ -260,13 +266,14 @@ describe("AgentQ MCP server", () => {
     expect(storedCode.worktreePath).toBe("/tmp/wt-code");
     expect(storedCode.assignedAgent).toBeNull();
     expect(storedCode.conversation.at(-1)).toMatchObject({ authorName: "bob", message: "done" });
+    expect(storedCode.contexts).toEqual(["Check the cache invalidation first"]);
 
     const reviewing = createTask({ title: "reviewing", description: "d", projectId });
     updateTask(reviewing.id, { status: TaskStatus.Reviewing });
     const review = parse(
       (await client.callTool({
         name: "submit_review",
-        arguments: { taskId: reviewing.id, message: "LGTM" },
+        arguments: { taskId: reviewing.id, message: "LGTM", context: "Approve, no blockers" },
       })) as CallToolResult,
     );
     expect(review).toMatchObject({
@@ -288,6 +295,7 @@ describe("AgentQ MCP server", () => {
           authors: "dev1,dev2",
           worktree: "/tmp/wt-merge",
           message: "squashed",
+          context: "PR #7 open against develop",
         },
       })) as CallToolResult,
     );
@@ -489,14 +497,21 @@ describe("AgentQ MCP agent workflow", () => {
   });
 
   it("submit_plan moves the task to waiting_plan_review", async () => {
-    const out = await ok("submit_plan", { taskId: planTaskId, message: "Here is the plan" });
+    const out = await ok("submit_plan", {
+      taskId: planTaskId,
+      message: "Here is the plan",
+      context: "  Start from api.ts; keep the old endpoint  ",
+    });
     expect(out.success).toBe(true);
     expect(out.taskId).toBe(planTaskId);
     expect(await status(planTaskId)).toBe(TaskStatus.WaitingPlanReview);
+
+    const got = await ok("get_task", { taskId: planTaskId });
+    expect(got.task.contexts.at(-1)).toBe("Start from api.ts; keep the old endpoint");
   });
 
   it("submit_plan is rejected when the task is not in Planning", async () => {
-    const res = await call("submit_plan", { taskId: planTaskId, message: "again" });
+    const res = await call("submit_plan", { taskId: planTaskId, message: "again", context: "c" });
     expect(res.isError).toBe(true);
     expect(parse(res)).toEqual({ success: false, error: "Task must be in Planning status." });
   });
@@ -525,7 +540,9 @@ describe("AgentQ MCP agent workflow", () => {
   });
 
   it("submit_code requires the worktree", async () => {
-    const text = validationError(await call("submit_code", { taskId: codeTaskId, message: "x" }));
+    const text = validationError(
+      await call("submit_code", { taskId: codeTaskId, message: "x", context: "c" }),
+    );
     expect(text).toContain("worktree");
     expect(await status(codeTaskId)).toBe(TaskStatus.Coding);
   });
@@ -535,6 +552,7 @@ describe("AgentQ MCP agent workflow", () => {
       taskId: codeTaskId,
       worktree: "/tmp/wt/code-task",
       message: "Implemented",
+      context: "Review the retry loop first",
     });
     expect(out.success).toBe(true);
     expect(out.taskId).toBe(codeTaskId);
@@ -543,6 +561,25 @@ describe("AgentQ MCP agent workflow", () => {
     expect(got.task.status).toBe(TaskStatus.WaitingCodeReview);
     expect(got.task.worktreePath).toBe("/tmp/wt/code-task");
     expect(got.task.assignedAgent).toBeNull();
+    expect(got.task.contexts.at(-1)).toBe("Review the retry loop first");
+  });
+
+  it("every submit_* tool requires a non-blank context", async () => {
+    const submits: [string, string, Record<string, unknown>][] = [
+      ["submit_plan", planTaskId, { message: "x" }],
+      ["submit_code", codeTaskId, { message: "x", worktree: "/tmp/wt" }],
+      ["submit_review", codeTaskId, { message: "x" }],
+      ["submit_merge", codeTaskId, { mergeBranch: "develop", commit: "abc", authors: "dev" }],
+    ];
+    for (const [tool, taskId, args] of submits) {
+      const before = await ok("get_task", { taskId });
+      for (const context of [undefined, "   "]) {
+        expect(validationError(await call(tool, { taskId, ...args, context }))).toContain("context");
+      }
+      const after = await ok("get_task", { taskId });
+      expect(after.task.status).toBe(before.task.status);
+      expect(after.task.contexts).toEqual(before.task.contexts);
+    }
   });
 
   it("senior claims a code_review_requested task as reviewer -> reviewing", async () => {
@@ -555,7 +592,11 @@ describe("AgentQ MCP agent workflow", () => {
   });
 
   it("submit_review moves the task back to waiting_code_review", async () => {
-    const out = await ok("submit_review", { taskId: codeTaskId, message: "Looks good" });
+    const out = await ok("submit_review", {
+      taskId: codeTaskId,
+      message: "Looks good",
+      context: "Approve, no blockers",
+    });
     expect(out.success).toBe(true);
     expect(out.taskId).toBe(codeTaskId);
     expect(await status(codeTaskId)).toBe(TaskStatus.WaitingCodeReview);
@@ -572,7 +613,7 @@ describe("AgentQ MCP agent workflow", () => {
 
   it("submit_merge requires mergeBranch, commit and authors, then moves the task to merged", async () => {
     const missing = validationError(
-      await call("submit_merge", { taskId: codeTaskId, mergeBranch: "feat/x" }),
+      await call("submit_merge", { taskId: codeTaskId, mergeBranch: "feat/x", context: "c" }),
     );
     expect(missing).toContain("commit");
     expect(missing).toContain("authors");
@@ -583,6 +624,7 @@ describe("AgentQ MCP agent workflow", () => {
       mergeBranch: "feat/x",
       commit: "abc123",
       authors: "dev1,dev2",
+      context: "PR #42 open against develop",
     });
     expect(out.success).toBe(true);
     expect(out.taskId).toBe(codeTaskId);

@@ -248,8 +248,9 @@ export function revertClaim(taskId: string, reason: string): Task | null {
 }
 
 export function appendContext(task: Task, context?: string): Task {
-  if (!context) return task;
-  return updateTask(task.id, { contexts: [...(task.contexts || []), context] })!;
+  const entry = context?.trim();
+  if (!entry) return task;
+  return updateTask(task.id, { contexts: [...(task.contexts || []), entry] })!;
 }
 
 // ─── Agent submissions (used by the MCP server) ────────────────────────

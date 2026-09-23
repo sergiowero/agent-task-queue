@@ -3,13 +3,13 @@ name: agentq-code
 description: Coding phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
 allowed-tools: mcp__agentq__submit_code, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "3.0.0"
+  version: "3.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Code Skill
 
-Follow this skill when you hold a task claimed from `ready_for_code` or `changes_requested` (its status is now `coding`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `ready_for_code` or `changes_requested` (its status is now `coding`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply.
 
 ## Phase
 
@@ -87,8 +87,10 @@ Repeat steps 1–5 for every round of review changes. Each round adds a NEW comm
 Commit your changes in the worktree BEFORE calling `submit_code` — it only records the submission, it does NOT run git. `worktree` is mandatory and must be the absolute worktree path (`task.worktreePath` or the path you created). Call the `submit_code` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "message": "<markdown message>", "worktree": "<absolute worktree path>", "context": "<summary>" }
+{ "taskId": "<task.id>", "message": "<markdown message>", "worktree": "<absolute worktree path>", "context": "<handoff notes>" }
 ```
+
+`context` is required too (see Context Handoff in `agentq-claim`). For the reviewer, include: what to look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, say which review points you fixed and any you deliberately did not, and why.
 
 It stores the worktree path, moves the task to `waiting_code_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
@@ -118,6 +120,7 @@ The `message` MUST be Markdown.
 - **DO NOT** modify files outside the assigned worktree
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
 - **DO NOT** call `submit_code` with uncommitted changes - commit in the worktree first
+- **DO NOT** call `submit_code` without `context` handoff notes for the reviewer
 - **DO NOT** run `git push` outside the merging phase
 - **DO NOT** commit in the main working directory - commits live in the task worktree
 - **DO NOT** force-push (`git push --force` / `-f`)
