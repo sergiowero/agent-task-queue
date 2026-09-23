@@ -66,6 +66,7 @@ Every tool returns JSON both as a text content block and as `structuredContent`.
 | `list_projects` | `agentq projects --json`      | List all projects.                                                                                                                                                                                                         |
 | `create_task`   | `agentq create --json`        | Create a task (`guardrails` and `acceptanceCriteria` are arrays instead of `\|`-separated strings).                                                                                                                        |
 | `post_comment`  | —                             | Append an `agent` conversation entry and a `comment_added` activity event without changing the status.                                                                                                                     |
+| `archive_task`  | `agentq archive --json`       | Archive a `complete` task: write `<name>.summary.md` and `<name>.detailed.md` to `{project.workingDirectory}/archive/` and take the task off the board. Same as the board's **Archive** button.                                  |
 
 Tool inputs:
 
@@ -80,6 +81,7 @@ Tool inputs:
 | `list_projects` |                                                                                                                           |                                                                                                                        |
 | `create_task`   | `title`, `projectId`, `description`                                                                                       | `steerDetails`, `guardrails[]`, `acceptanceCriteria[]`, `priority`, `branch`, `requiresPlan`, `mergeBranch`, `context` |
 | `post_comment`  | `taskId`, `message`                                                                                                       | `author`                                                                                                               |
+| `archive_task`  | `taskId`                                                                                                                  | `pullRequests[]`, `overview`, `force`, `author`                                                                        |
 
 ## Resources
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { unlinkSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -31,6 +31,7 @@ const TOOL_NAMES = [
   "list_projects",
   "create_task",
   "post_comment",
+  "archive_task",
 ];
 
 const senior = {
@@ -311,6 +312,44 @@ describe("AgentQ MCP server", () => {
     expect(events.map((e) => [e.eventType, e.actor, e.details])).toEqual([
       ["comment_added", "worker", "halfway there"],
     ]);
+  });
+
+  it("archive_task writes the archive files for a complete task", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agentq-mcp-archive-"));
+    try {
+      const archiveProject = "mcp-archive-" + Date.now();
+      createProject({ id: archiveProject, displayName: "Archive", workingDirectory: root });
+      const task = createTask({
+        title: "Archive via MCP",
+        description: "d",
+        projectId: archiveProject,
+      });
+
+      const early = (await client.callTool({
+        name: "archive_task",
+        arguments: { taskId: task.id },
+      })) as CallToolResult;
+      expect(early.isError).toBe(true);
+      expect(parse(early).error).toContain("Only complete tasks can be archived");
+
+      updateTask(task.id, { status: TaskStatus.Complete });
+      const result = parse(
+        (await client.callTool({
+          name: "archive_task",
+          arguments: { taskId: task.id, overview: "- Done.", pullRequests: ["#3"] },
+        })) as CallToolResult,
+      );
+      expect(result.success).toBe(true);
+      expect(result.directory).toBe(join(root, "archive"));
+      expect(result.pullRequests).toEqual(["#3"]);
+      expect(readFileSync(result.summaryPath, "utf8")).toContain("## Overview\n\n- Done.");
+      expect(existsSync(result.detailedPath)).toBe(true);
+      const stored = getTaskById(task.id)!;
+      expect(stored.archivePath).toBe(result.summaryPath);
+      expect(stored.conversation.at(-1)?.authorName).toBe("agent");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reads agentq://task/{id} and agentq://projects resources", async () => {

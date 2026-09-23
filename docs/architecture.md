@@ -43,6 +43,9 @@ Both planning and coding phases support iteration: plans can be revised, code ca
 ### On-Demand AI Reviews
 Users can request an automated AI code review from the web UI, which opens the task for a reviewer agent to claim and evaluate.
 
+### Task Archive
+Complete tasks can be archived from the board (**Archive** button on complete cards and on the task page), the CLI (`agentq archive`), the MCP server (`archive_task`) or the `agentq-archive` skill. Archiving writes two Markdown files to `{project.workingDirectory}/archive/`: `<date>-<id8>-<slug>.summary.md` (key facts, description, what was done, agents) and `<date>-<id8>-<slug>.detailed.md` (every field, message, status change, agent session and activity event, plus the raw task JSON). The pull request is read from the conversation, or passed explicitly. The task then gets `archivedAt` / `archivePath` and leaves the board and `agentq list`. The logic lives in `packages/shared/src/archive.ts`.
+
 ### Soft Delete
 Tasks, projects, and agents support soft deletion with restore capability. Hard deletion available via explicit flag.
 
@@ -55,7 +58,7 @@ Code changes are isolated in git worktrees — one per task — avoiding cross-t
 
 ### Web Portal
 React SPA dashboard for human supervision. Features:
-- **Kanban board** — 4 columns (Pending, In Progress, Need Review, Done) with color-coded headers
+- **Kanban board** — 4 columns (Pending, In Progress, Need Review, Done) with color-coded headers; complete cards have an **Archive** button
 - **Search & filters** — Search by title/branch, filter by status, agent, project
 - **Task creation modal** — Full form with description, steer details, guardrails, acceptance criteria, priority, branch, project assignment, and plan requirement toggle
 - **Task detail page** — Full task view with metadata grid, markdown description, steer details, guardrails, acceptance criteria checklist, action buttons (approve/request changes/cancel/unblock/request AI review/confirm completion), conversation thread, and status history timeline
@@ -85,6 +88,8 @@ Standalone binary (`agentq`) built with Commander for agent-to-system interactio
 - **Submit code** — transitions from Coding to Waiting Code Review, stores worktree path
 - **Submit review** — transitions from Reviewing back to Waiting Code Review
 - **Submit merge** — transitions from Merging to Merged with branch, commit, and author info
+- **Archive** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`--pr`, `--summary`, `--force`, `--dir`)
+- **List filters** — `agentq list --status <status> --project <id>`
 - **JSON output** — all commands support `--json` for structured machine-readable output
 - **Direct database access** — no server dependency
 
@@ -101,6 +106,7 @@ Local SQLite database storing all system data:
 Agent instruction files that define the exact protocol for interacting with AgentQ:
 - **agentq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, CLI command reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails
 - **agentq-create-task** — Instructions for creating well-structured tasks via the CLI with project discovery, task elaboration, and acceptance criteria generation
+- **agentq-archive** — Archives complete tasks with `agentq archive` (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
 - Agent skills are installed to multiple AI tool configs (opencode, claude, codex, kimi, junie) via a single install command
 
 ### Installer
@@ -122,6 +128,7 @@ A unit of work assigned to an agent. Contains:
 - **Workflow**: requiresPlan flag (immutable), status (15 lifecycle states), assignedAgent reference
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
+- **Archive**: archivedAt, archivePath (the summary file; the detailed record sits next to it)
 - **Project**: belongs to one project via projectId
 
 ### Agent
@@ -195,6 +202,7 @@ The task lifecycle moves through these states:
 - Request AI review
 - Cancel task, unblock stuck task
 - Confirm completion
+- Archive a complete task
 
 ### Agent Actions
 - Claim task (based on role eligibility)
@@ -210,3 +218,5 @@ The task lifecycle moves through these states:
 | **In Progress** | planning, coding, reviewing, merging |
 | **Need Review** | waiting_plan_review, waiting_code_review |
 | **Done** | complete, merged |
+
+Archived tasks are not shown on the board.

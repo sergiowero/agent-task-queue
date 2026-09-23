@@ -62,6 +62,10 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /** Set once the task was written to the project's archive/ folder; archived tasks leave the board. */
+  archivedAt: string | null;
+  /** Absolute path of the archive summary file (the detailed file sits next to it). */
+  archivePath: string | null;
 }
 
 export interface Agent {

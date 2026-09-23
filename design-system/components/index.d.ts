@@ -351,6 +351,8 @@ export interface TaskCardProps {
   task: Task;
   onClick: () => void;
   onDelete?: () => void;
+  /** Shows an "Archive" button, e.g. on complete tasks. */
+  onArchive?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }

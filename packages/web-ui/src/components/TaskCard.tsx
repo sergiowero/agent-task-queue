@@ -1,8 +1,9 @@
 import type { Task } from "../lib/api";
-import { AgentsIcon, BranchIcon, DeleteIcon, PriorityIcon } from "../lib/icons";
+import { AgentsIcon, ArchiveIcon, BranchIcon, DeleteIcon, PriorityIcon } from "../lib/icons";
 import { priorityTone } from "../lib/status";
 import { cn } from "../lib/cn";
 import { Badge, StatusBadge } from "./Badge";
+import { Button } from "./Button";
 import { Checkbox } from "./Checkbox";
 import { IconButton } from "./IconButton";
 
@@ -10,6 +11,8 @@ interface TaskCardProps {
   task: Task;
   onClick: () => void;
   onDelete?: () => void;
+  /** Shows an "Archive" button, e.g. on complete tasks. */
+  onArchive?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }
@@ -18,6 +21,7 @@ export function TaskCard({
   task,
   onClick,
   onDelete,
+  onArchive,
   selected = false,
   onToggleSelect,
 }: TaskCardProps) {
@@ -73,6 +77,21 @@ export function TaskCard({
             <span className="truncate">{task.assignedAgent.name}</span>
           </span>
         )}
+        {onArchive && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={ArchiveIcon}
+            aria-label={`Archive ${task.title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArchive();
+            }}
+            className="-my-0.5 ml-auto h-7 gap-1 px-2"
+          >
+            Archive
+          </Button>
+        )}
         {onDelete && (
           <IconButton
             icon={DeleteIcon}
@@ -84,7 +103,8 @@ export function TaskCard({
               onDelete();
             }}
             className={cn(
-              "-mr-1 ml-auto opacity-0",
+              "-mr-1 opacity-0",
+              !onArchive && "ml-auto",
               "focus-visible:opacity-100 group-hover:opacity-100 group-focus-visible:opacity-100",
               "[@media(hover:none)]:opacity-100",
             )}

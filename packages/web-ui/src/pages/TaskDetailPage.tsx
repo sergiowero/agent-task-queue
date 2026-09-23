@@ -9,6 +9,7 @@ import {
   AgentsIcon,
   AiReviewIcon,
   ApproveIcon,
+  ArchiveIcon,
   BranchIcon,
   CalendarIcon,
   CancelTaskIcon,
@@ -52,6 +53,7 @@ import { ConversationEntryCard } from "../components/ConversationEntryCard";
 import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
+import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
 
 const ACTIVE_STATUSES = new Set([
   "plan_requested",
@@ -128,6 +130,7 @@ export function TaskDetailPage() {
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   const {
     data: task,
@@ -139,6 +142,11 @@ export function TaskDetailPage() {
     queryFn: () => api.getTask(id!),
     enabled: !!id,
     refetchInterval: 5000,
+  });
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.getProjects,
   });
 
   const mutation = useMutation({
@@ -276,6 +284,11 @@ export function TaskDetailPage() {
               />
             )}
             <StatusBadge status={task.status} size="md" />
+            {task.archivedAt && (
+              <Badge tone="neutral" size="md" icon={ArchiveIcon}>
+                Archived
+              </Badge>
+            )}
           </>
         }
       />
@@ -386,6 +399,21 @@ export function TaskDetailPage() {
                     onClick={() => setConfirmCancel(true)}
                   >
                     Cancel task
+                  </Button>
+                </div>
+              </section>
+            )}
+
+            {task.status === "complete" && !task.archivedAt && (
+              <section className="card p-4">
+                <h2 className="eyebrow">Actions</h2>
+                <p className="mt-1 text-sm text-text-secondary">
+                  Complete. Archive it to save a summary and the full record in the project's
+                  archive folder and clear it from the board.
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button icon={ArchiveIcon} onClick={() => setConfirmArchive(true)}>
+                    Archive
                   </Button>
                 </div>
               </section>
@@ -600,6 +628,12 @@ export function TaskDetailPage() {
                     <EmptyValue>Unassigned</EmptyValue>
                   )}
                 </PropertyRow>
+                {task.archivedAt && task.archivePath && (
+                  <PropertyRow icon={ArchiveIcon} label="Archive">
+                    <Mono>{task.archivePath}</Mono>
+                    <CopyButton size="xs" value={task.archivePath} label="Copy archive path" />
+                  </PropertyRow>
+                )}
                 <PropertyRow icon={CalendarIcon} label="Created">
                   <RelativeTime value={task.createdAt} />
                 </PropertyRow>
@@ -657,6 +691,14 @@ export function TaskDetailPage() {
           // Rejects on failure (already toasted), which keeps the dialog open.
           onConfirm={() => mutation.mutateAsync({ action: "cancel" })}
           onClose={() => setConfirmCancel(false)}
+        />
+      )}
+
+      {confirmArchive && (
+        <ArchiveTaskModal
+          task={task}
+          project={projects.find((p) => p.id === task.projectId)}
+          onClose={() => setConfirmArchive(false)}
         />
       )}
     </div>
