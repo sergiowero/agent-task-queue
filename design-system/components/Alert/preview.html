@@ -1,0 +1,19 @@
+<!-- @dsCard group="Feedback" height=304 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Alert</title></head>
+<body>
+<div id="root" class="grid max-w-lg gap-2.5 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h(F, null,
+    h(A.Alert, { tone: 'danger' }, 'spawn claude ENOENT: the tool is not on PATH'),
+    h(A.Alert, { tone: 'warning', title: 'Full access' }, 'Full skips every permission prompt and sandbox: the tool can run any command in the project directory.'),
+    h(A.Alert, { tone: 'info', title: 'Run these commands from the project root in your terminal.' }),
+    h(A.Alert, { tone: 'success', title: 'Task created', action: h(A.Button, { size: 'sm', variant: 'ghost', iconRight: I.ChevronRightIcon }, 'Open') }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

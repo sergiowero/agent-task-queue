@@ -1,0 +1,18 @@
+<!-- @dsCard group="Feedback" height=156 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Skeleton</title></head>
+<body>
+<div id="root" class="grid max-w-md gap-3 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h('div', { className: 'card space-y-2.5 p-4', 'aria-busy': 'true', 'aria-label': 'Loading' },
+    h(A.Skeleton, { className: 'h-4 w-3/4' }),
+    h(A.Skeleton, { className: 'h-3 w-1/2' }),
+    h('div', { className: 'flex gap-2 pt-1' }, h(A.Skeleton, { className: 'h-5 w-16 rounded-full' }), h(A.Skeleton, { className: 'h-5 w-20 rounded-full' })));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

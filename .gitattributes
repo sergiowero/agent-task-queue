@@ -8,3 +8,8 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.sh text eol=lf
+*.svg text eol=lf
+
+# Built by `bun run design-system:build`; collapsed in diffs.
+design-system/components/bundle.js linguist-generated=true
+design-system/components/bundle.css linguist-generated=true

@@ -1,0 +1,21 @@
+<!-- @dsCard group="Forms" height=204 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Input</title></head>
+<body>
+<div id="root" class="grid max-w-md gap-3 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  var s = useState('sse'); var q = s[0], setQ = s[1];
+  return h(F, null,
+    h(A.Input, { icon: I.SearchIcon, placeholder: 'Search title or branch\u2026', value: q, onChange: function (e) { setQ(e.target.value); },
+      'aria-label': 'Search tasks',
+      trailing: q ? h(A.IconButton, { icon: I.CloseIcon, label: 'Clear search', size: 'xs', onClick: function () { setQ(''); } }) : null }),
+    h(A.Input, { placeholder: 'feature/my-change', inputSize: 'sm', 'aria-label': 'Branch', className: 'font-mono' }),
+    h(A.Input, { defaultValue: 'not-a-uuid', 'aria-label': 'ID', error: 'Must be a UUID (8-4-4-4-12 hex digits).' }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

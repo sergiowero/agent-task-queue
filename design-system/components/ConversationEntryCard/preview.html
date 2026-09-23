@@ -1,0 +1,22 @@
+<!-- @dsCard group="Domain" height=452 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ConversationEntryCard</title></head>
+<body>
+<div id="root" class="max-w-2xl space-y-5 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  var now = Date.now();
+  var entries = [
+    { authorName: 'claude-senior', messageType: 'plan', timestamp: new Date(now - 42 * 60000).toISOString(),
+      message: '## Plan\n1. Add an `/events` SSE endpoint in `packages/web`.\n2. Subscribe from `useSSE` and invalidate the board query.\n\n```ts\nconst source = new EventSource("/api/events");\n```' },
+    { authorName: 'You', messageType: 'user', timestamp: new Date(now - 30 * 60000).toISOString(), message: 'Looks good. Keep the polling fallback for now.' },
+    { authorName: 'system', messageType: 'system', timestamp: new Date(now - 29 * 60000).toISOString(), message: 'Status changed to **Ready for code**.' },
+  ];
+  return h(F, null, entries.map(function (e, i) { return h(A.ConversationEntryCard, { key: i, entry: e }); }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

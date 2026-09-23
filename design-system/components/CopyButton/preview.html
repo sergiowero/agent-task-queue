@@ -1,0 +1,23 @@
+<!-- @dsCard group="Actions" height=112 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>CopyButton</title></head>
+<body>
+<div id="root" class="flex flex-col gap-2 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  function Row(icon, text, label, size) {
+    return h('div', { className: 'flex min-w-0 items-center gap-1.5 text-text-muted' },
+      h(icon, { 'aria-hidden': true, className: 'h-3.5 w-3.5 shrink-0' }),
+      h('span', { className: 'truncate font-mono text-xs text-text-secondary' }, text),
+      h(A.CopyButton, { value: text, label: label, size: size }));
+  }
+  return h(F, null,
+    Row(I.BranchIcon, 'feature/my-change', 'Copy branch', 'xs'),
+    Row(I.WorktreeIcon, '/path/to/repo/.worktrees/feature-my-change', 'Copy worktree path', 'sm'));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

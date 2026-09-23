@@ -7,3 +7,5 @@ coverage
 agentq.db
 bun.lock
 *.tsbuildinfo
+design-system/components/bundle.js
+design-system/components/bundle.css

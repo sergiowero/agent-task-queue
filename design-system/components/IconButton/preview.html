@@ -1,0 +1,25 @@
+<!-- @dsCard group="Actions" height=88 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>IconButton</title></head>
+<body>
+<div id="root" class="flex flex-wrap items-center gap-2 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+function Preview() {
+  return h(F, null,
+    h(A.IconButton, { icon: I.EditIcon, label: 'Edit title' }),
+    h(A.IconButton, { icon: I.BackIcon, label: 'Back to board', variant: 'secondary' }),
+    h(A.IconButton, { icon: I.AddIcon, label: 'New task', variant: 'primary' }),
+    h(A.IconButton, { icon: I.DeleteIcon, label: 'Delete task', variant: 'danger' }),
+    h(A.IconButton, { icon: I.FilterIcon, label: 'Filters', active: true }),
+    h('span', { className: 'mx-2 h-5 w-px bg-border' }),
+    h(A.IconButton, { icon: I.MoreIcon, label: 'More (xs)', size: 'xs' }),
+    h(A.IconButton, { icon: I.MoreIcon, label: 'More (sm)', size: 'sm' }),
+    h(A.IconButton, { icon: I.MoreIcon, label: 'More (md)', size: 'md' }),
+    h(A.IconButton, { icon: I.RefreshIcon, label: 'Refresh models', loading: true, variant: 'secondary' }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

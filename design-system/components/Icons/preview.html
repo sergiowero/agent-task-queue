@@ -1,0 +1,25 @@
+<!-- @dsCard group="Foundations" height=1240 page -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Icons</title></head>
+<body>
+<div id="root" class="space-y-6 p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+var GROUPS = [['Navigation',['BoardIcon','ProjectsIcon','AgentsIcon','RunnersIcon','ActivityIcon','ToolsIcon']],['Generic actions',['AddIcon','EditIcon','DeleteIcon','SaveIcon','CloseIcon','CheckIcon','CopyIcon','RefreshIcon','SearchIcon','FilterIcon','ClearIcon','BackIcon','ChevronDownIcon','ChevronRightIcon','CollapseIcon','ExpandIcon','ExternalLinkIcon','FollowIcon','MoreIcon','DownloadIcon','BrowseIcon','SpinnerIcon']],['Theme',['LightIcon','DarkIcon','SystemIcon']],['Task workflow',['ApproveIcon','RequestChangesIcon','AiReviewIcon','CompleteIcon','UnblockIcon','CancelTaskIcon','SendIcon','BranchIcon','MergeIcon','WorktreeIcon','PriorityIcon','PlanIcon','GuardrailIcon','CriteriaIcon','SteerIcon','DescriptionIcon','ConversationIcon','HistoryIcon','ClockIcon','CalendarIcon','UserIcon','HashIcon']],['Runners',['StartIcon','StopIcon','TerminalIcon','LogsIcon','DurationIcon','EffortIcon','ConcurrencyIcon','SafeModeIcon','FullAccessIcon','ModelIcon','SettingsIcon','FolderIcon']],['Status and feedback',['InfoIcon','WarningIcon','ErrorIcon','SuccessIcon','FailedIcon','RevertedIcon','EmptyIcon','ZapIcon','CircleIcon','PendingIcon','InProgressIcon','ReviewIcon']]];
+function Preview() {
+  return h(F, null, GROUPS.map(function (g) {
+    return h('section', { key: g[0] },
+      h('div', { className: 'eyebrow mb-2' }, g[0]),
+      h('div', { className: 'grid grid-cols-[repeat(auto-fill,minmax(128px,1fr))] gap-2' }, g[1].map(function (n) {
+        var Icon = I[n];
+        return h('div', { key: n, className: 'card flex items-center gap-2.5 px-3 py-2.5' },
+          h(Icon, { 'aria-hidden': true, className: 'h-4 w-4 shrink-0 text-text-secondary' }),
+          h('span', { className: 'truncate font-mono text-[11px] text-text-muted', title: n }, n.replace(/Icon$/, '')));
+      })));
+  }));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>

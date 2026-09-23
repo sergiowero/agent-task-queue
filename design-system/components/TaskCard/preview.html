@@ -1,0 +1,32 @@
+<!-- @dsCard group="Domain" height=484 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>TaskCard</title></head>
+<body>
+<div id="root" class="p-6"></div>
+<script>
+var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+var T = function (o) { return Object.assign({ id: String(Math.random()), description: null, steerDetails: null, guardrails: [], acceptanceCriteria: [],
+  priority: 0, recommendedBranch: '', realBranch: null, requiresPlan: false, mergeBranch: 'develop', status: 'plan_requested', assignedAgent: null,
+  conversation: [], history: [], contexts: [], projectId: null, worktreePath: null, createdAt: '', updatedAt: '', deletedAt: null }, o); };
+function Preview() {
+  var sel = useState(true);
+  var tasks = [
+    T({ title: 'Add SSE live updates to the board', priority: 2, recommendedBranch: 'feature/sse-live-board', status: 'coding', assignedAgent: { name: 'claude-senior', tool: 'claude', model: 'opus' } }),
+    T({ title: 'Plan the runner retry policy', priority: 3, recommendedBranch: 'feature/runner-retries', status: 'planning', assignedAgent: { name: 'codex-planner', tool: 'codex', model: 'gpt' } }),
+    T({ title: 'Order codex models like the codex picker', priority: 0, recommendedBranch: 'fix/codex-model-order', status: 'reviewing' }),
+  ];
+  return h('section', { className: 'flex w-[300px] flex-col rounded-2xl border border-border-light bg-surface-secondary/60', 'aria-label': 'In progress' },
+    h('header', { className: 'flex h-12 items-center gap-2 px-3.5' },
+      h('span', { className: 'flex h-6 w-6 items-center justify-center rounded-md ' + A.TONE_SOFT.info }, h(I.InProgressIcon, { 'aria-hidden': true, className: 'h-3.5 w-3.5' })),
+      h('h2', { className: 'text-[13px] font-semibold text-text' }, 'In progress'), h(A.CountPill, null, tasks.length)),
+    h('div', { className: 'space-y-2 px-2.5 pb-2.5 pt-0.5' },
+      tasks.map(function (t, i) {
+        return h(A.TaskCard, { key: i, task: t, onClick: function () {}, onDelete: function () {},
+          selected: i === 0 && sel[0], onToggleSelect: i === 0 ? function () { sel[1](!sel[0]); } : undefined });
+      })));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(h(Preview));
+</script>
+</body>
+</html>
