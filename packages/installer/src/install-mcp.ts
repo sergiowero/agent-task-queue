@@ -1,25 +1,30 @@
 import { homedir } from "os";
-import { delimiter, isAbsolute, join, resolve } from "path";
+import { delimiter, resolve } from "path";
 import { mcpServerLaunch } from "@agentq/mcp";
 import { getDbPath } from "@agentq/shared";
 import { manualEntry, registerAll } from "./mcp-setup.js";
 
 /**
  * Registers the AgentQ MCP server with every installed coding tool (Claude Code,
- * Codex, OpenCode, Gemini CLI). Safe to run again: up-to-date entries are left alone.
+ * Codex, OpenCode, Gemini CLI, GitHub Copilot CLI and GitHub Copilot in VS Code).
+ * Safe to run again: up-to-date entries are left alone.
  *
- *   bun run install:mcp              # database from AGENTQ_DB_PATH, default ~/agentq/agentq.db
+ *   bun run install:mcp              # database from AGENTQ_DB_PATH, default ~/.agentq/agentq.db
  *   bun run install:mcp --db <path>  # another database
  */
 
+/** `~` at the start of a path; Windows shells (cmd, PowerShell) leave `~\x` unexpanded. */
+const HOME_PREFIX = process.platform === "win32" ? /^~(?=$|[\\/])/ : /^~(?=$|\/)/;
+
+/**
+ * The database path the tools get: always absolute, since each tool starts the
+ * server from its own working directory.
+ */
 function dbPathFromArgs(argv: string[]): string | null {
   const i = argv.indexOf("--db");
-  if (i === -1) return getDbPath();
-  const value = argv[i + 1];
+  const value = i === -1 ? getDbPath() : argv[i + 1];
   if (!value) return null;
-  const expanded =
-    value === "~" ? homedir() : value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
-  return isAbsolute(expanded) ? expanded : resolve(expanded);
+  return resolve(value.replace(HOME_PREFIX, () => homedir()));
 }
 
 /**
@@ -43,7 +48,12 @@ export function installMcp(argv: string[] = []): boolean {
     return false;
   }
   const launch = mcpServerLaunch(dbPath, stableBunPath());
-  const results = registerAll(launch, { homeDir: homedir(), env: process.env, which: Bun.which });
+  const results = registerAll(launch, {
+    homeDir: homedir(),
+    platform: process.platform,
+    env: process.env,
+    which: Bun.which,
+  });
 
   let ok = true;
   for (const r of results) {
@@ -58,7 +68,9 @@ export function installMcp(argv: string[] = []): boolean {
     }
   }
   if (results.every((r) => r.status === "not_installed")) {
-    console.log("⚠️  No coding tool found for the MCP server (claude, codex, opencode, gemini)");
+    console.log(
+      "⚠️  No coding tool found for the MCP server (claude, codex, opencode, gemini, copilot, code)",
+    );
   }
   return ok;
 }

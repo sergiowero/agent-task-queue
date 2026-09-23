@@ -41,7 +41,7 @@ default 1), `pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`),
 
 ## Tools and the commands they run
 
-The runner writes the prompt to `~/agentq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
+The runner writes the prompt to `~/.agentq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
 config to `<jobId>.mcp.json` next to it, and runs:
 
 | Tool | Command |
@@ -169,9 +169,9 @@ relaunched in a tight loop; the counter resets when a job for that task succeeds
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AGENTQ_HOME` | `~/agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
+| `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
-| `AGENTQ_DB_PATH` | `~/agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
+| `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 
 ## Live updates
 

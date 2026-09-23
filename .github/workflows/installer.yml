@@ -1,0 +1,34 @@
+# Runs the installer tests on the three platforms install:all supports. The
+# end-to-end test (packages/installer/src/install.test.ts) runs the real
+# install:all against a throwaway home folder and starts the registered MCP server.
+name: Installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - ".github/workflows/installer.yml"
+      - "packages/installer/**"
+      - "packages/mcp/**"
+      - "packages/shared/**"
+      - "skills/**"
+      - "package.json"
+      - "bun.lock"
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun x tsc --project packages/installer --noEmit
+      - run: bun test packages/installer

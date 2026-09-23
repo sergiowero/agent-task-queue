@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
+import { mkdirSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import type {
   Task,
   ConversationEntry,
@@ -28,9 +29,9 @@ function resolveDbPath(p: string): string {
 
 // Resolved lazily on first use so callers (e.g. tests) can set AGENTQ_DB_PATH
 // after importing this module — ESM imports are hoisted above env assignments.
-/** Absolute database path from AGENTQ_DB_PATH (default `~/agentq/agentq.db`), `~` expanded. */
+/** Absolute database path from AGENTQ_DB_PATH (default `~/.agentq/agentq.db`), `~` expanded. */
 export function getDbPath(): string {
-  return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
+  return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/.agentq/agentq.db");
 }
 
 let db: Database | null = null;
@@ -65,7 +66,10 @@ function openDatabase(path: string): Database {
 
 function getDb(): Database {
   if (!db) {
-    db = openDatabase(getDbPath());
+    const path = getDbPath();
+    // SQLite creates the file but not its folder (~/.agentq on a fresh machine).
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    db = openDatabase(path);
     initSchema();
     runMigrations();
   }

@@ -210,7 +210,7 @@ interface ActivityEvent {
 
 ## 5. Database Schema (SQLite via `bun:sqlite`)
 
-- **File path**: `~/agentq/agentq.db` (configurable via `AGENTQ_DB_PATH` env var, supports `~` expansion)
+- **File path**: `~/.agentq/agentq.db` (configurable via `AGENTQ_DB_PATH` env var, supports `~` expansion)
 - **Connection**: Lazily initialized singleton with `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON`
 
 ### Tables
@@ -822,7 +822,7 @@ Creates target directories if missing.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Web server port (validated: positive int, max 65535) |
-| `AGENTQ_DB_PATH` | `~/agentq/agentq.db` | SQLite database path (`~` expanded to `homedir()`) |
+| `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database path (`~` expanded to `homedir()`) |
 
 ### Agent ID Format
 
@@ -953,7 +953,7 @@ bun run install:skills
 8. **Immutable requiresPlan** — cannot be changed after task creation. Determines initial status and workflow path.
 9. **Soft delete by default** — hard delete requires explicit `?hard=true` flag. Deleted items excluded from queries via `WHERE deleted_at IS NULL`.
 10. **Conversation authorName convention** — `"agentName|tool|model"` for agent messages so UI can parse both readable name and metadata.
-11. **Local-first** — SQLite path defaults to `~/agentq/agentq.db`, supporting `~` expansion. Database is lazily initialized on first access.
+11. **Local-first** — SQLite path defaults to `~/.agentq/agentq.db`, supporting `~` expansion. Database is lazily initialized on first access.
 12. **No HTTP from CLI** — the CLI imports shared code directly and calls database functions in-process. No network calls needed.
 
 ---

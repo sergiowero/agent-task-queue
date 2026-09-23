@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -24,7 +24,7 @@ import {
 } from "@agentq/shared";
 import { RunnerEngine, type RunnerJob } from "./runner.js";
 import type { BuiltCommand, CommandContext } from "./commands.js";
-import { CLAUDE_AGENTQ_TOOLS, buildCommand, geminiSettings, opencodeConfigContent } from "./commands.js";
+import { CLAUDE_AGENTQ_TOOLS, agentqHome, buildCommand, geminiSettings, opencodeConfigContent } from "./commands.js";
 import { buildPrompt, stripFrontmatter } from "./prompt.js";
 
 // The engine claims in-process while the agent's MCP server opens the database
@@ -407,6 +407,19 @@ describe("revertClaim", () => {
       history: [{ pre_status: TaskStatus.ChangesRequested, new_status: TaskStatus.Coding, timestamp: new Date().toISOString() }],
     });
     expect(revertClaim(task.id, "crashed")!.status).toBe(TaskStatus.ChangesRequested);
+  });
+});
+
+describe("agentqHome", () => {
+  it("is ~/.agentq unless AGENTQ_HOME overrides it", () => {
+    const saved = process.env.AGENTQ_HOME;
+    delete process.env.AGENTQ_HOME;
+    try {
+      expect(agentqHome()).toBe(join(homedir(), ".agentq"));
+    } finally {
+      process.env.AGENTQ_HOME = saved;
+    }
+    expect(agentqHome()).toBe(HOME);
   });
 });
 

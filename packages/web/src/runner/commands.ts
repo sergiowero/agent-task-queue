@@ -38,10 +38,10 @@ export interface BuiltCommand {
 
 export type CommandBuilder = (tool: RunnerTool, ctx: CommandContext) => BuiltCommand;
 
-/** `~/agentq` unless AGENTQ_HOME overrides it (tests point it at a temp dir). */
+/** `~/.agentq` unless AGENTQ_HOME overrides it (tests point it at a temp dir). */
 export function agentqHome(): string {
   const raw = process.env.AGENTQ_HOME;
-  if (!raw) return join(homedir(), "agentq");
+  if (!raw) return join(homedir(), ".agentq");
   if (raw === "~") return homedir();
   if (raw.startsWith("~/")) return join(homedir(), raw.slice(2));
   return raw;

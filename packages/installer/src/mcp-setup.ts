@@ -10,11 +10,16 @@ import { MCP_SERVER_NAME } from "@agentq/mcp";
  * is already up to date is not rewritten, so running it again is a no-op.
  */
 
-export type SetupTool = "claude" | "codex" | "opencode" | "gemini";
+export type SetupTool = "claude" | "codex" | "opencode" | "gemini" | "copilot" | "vscode";
 
 export interface SetupEnv {
   homeDir: string;
-  /** Variables that move config files: CLAUDE_CONFIG_DIR, CODEX_HOME, XDG_CONFIG_HOME. */
+  /** Picks the VS Code user folder (Windows: %APPDATA%, macOS: ~/Library/Application Support). */
+  platform: NodeJS.Platform;
+  /**
+   * Variables that move config files: CLAUDE_CONFIG_DIR, CODEX_HOME, COPILOT_HOME,
+   * XDG_CONFIG_HOME, APPDATA.
+   */
   env: Record<string, string | undefined>;
   /** Path of a binary on PATH, or null. */
   which: (bin: string) => string | null;
@@ -37,6 +42,8 @@ interface ToolTarget {
   configPath(e: SetupEnv): string;
   /** Exists when the tool was set up on this machine, even if its binary is not on PATH. */
   homeMarker(e: SetupEnv): string;
+  /** JSON configs: the key that holds the servers. Absent for Codex's TOML. */
+  section?: string;
   /** The `agentq` entry this tool should hold. */
   entry(launch: McpServerLaunch): unknown;
   /** The `agentq` entry currently in `content` (undefined when absent). Throws on unreadable content. */
@@ -64,6 +71,7 @@ function jsonTarget(
 ): ToolTarget {
   return {
     ...base,
+    section,
     read(content) {
       return parseJsonObject(content)[section]?.[MCP_SERVER_NAME];
     },
@@ -152,8 +160,27 @@ function claudeDir(e: SetupEnv): string {
   return e.env.CLAUDE_CONFIG_DIR || e.homeDir;
 }
 
+function xdgConfigHome(e: SetupEnv): string {
+  return e.env.XDG_CONFIG_HOME || join(e.homeDir, ".config");
+}
+
 function opencodeDir(e: SetupEnv): string {
-  return join(e.env.XDG_CONFIG_HOME || join(e.homeDir, ".config"), "opencode");
+  return join(xdgConfigHome(e), "opencode");
+}
+
+function copilotDir(e: SetupEnv): string {
+  return e.env.COPILOT_HOME || join(e.homeDir, ".copilot");
+}
+
+/** VS Code's user profile folder, where its user-level mcp.json lives. */
+function vscodeUserDir(e: SetupEnv): string {
+  if (e.platform === "win32") {
+    return join(e.env.APPDATA || join(e.homeDir, "AppData", "Roaming"), "Code", "User");
+  }
+  if (e.platform === "darwin") {
+    return join(e.homeDir, "Library", "Application Support", "Code", "User");
+  }
+  return join(xdgConfigHome(e), "Code", "User");
 }
 
 export const TARGETS: ToolTarget[] = [
@@ -209,6 +236,40 @@ export const TARGETS: ToolTarget[] = [
     },
     "mcpServers",
   ),
+  jsonTarget(
+    {
+      tool: "copilot",
+      label: "GitHub Copilot CLI",
+      binary: "copilot",
+      configPath: (e) => join(copilotDir(e), "mcp-config.json"),
+      homeMarker: copilotDir,
+      entry: (launch) => ({
+        type: "local",
+        command: launch.command,
+        args: launch.args,
+        env: launch.env,
+        tools: ["*"],
+      }),
+    },
+    "mcpServers",
+  ),
+  jsonTarget(
+    {
+      tool: "vscode",
+      label: "GitHub Copilot (VS Code)",
+      binary: "code",
+      // The user-level mcp.json of the default profile ("MCP: Open User Configuration").
+      configPath: (e) => join(vscodeUserDir(e), "mcp.json"),
+      homeMarker: vscodeUserDir,
+      entry: (launch) => ({
+        type: "stdio",
+        command: launch.command,
+        args: launch.args,
+        env: launch.env,
+      }),
+    },
+    "servers",
+  ),
 ];
 
 function sameJson(a: unknown, b: unknown): boolean {
@@ -250,7 +311,11 @@ export function registerWith(
 
   const desired = target.entry(launch);
   try {
-    const content = existsSync(configPath) ? readFileSync(configPath, "utf8") : null;
+    // Windows editors (and PowerShell 5.1's Set-Content/Out-File) may save a UTF-8
+    // BOM, which JSON.parse rejects. It is dropped when the file is rewritten.
+    const content = existsSync(configPath)
+      ? readFileSync(configPath, "utf8").replace(/^\uFEFF/, "")
+      : null;
     const current = target.read(content);
     if (sameJson(current, desired)) return result("unchanged");
 
@@ -273,7 +338,7 @@ export function registerAll(launch: McpServerLaunch, e: SetupEnv): SetupResult[]
 /** The entry to paste by hand when a config file could not be edited. */
 export function manualEntry(tool: SetupTool, launch: McpServerLaunch): string {
   const target = TARGETS.find((t) => t.tool === tool)!;
-  if (tool === "codex") return target.write(null, target.entry(launch)).trimEnd();
-  const section = tool === "opencode" ? "mcp" : "mcpServers";
-  return JSON.stringify({ [section]: { [MCP_SERVER_NAME]: target.entry(launch) } }, null, 2);
+  const entry = target.entry(launch);
+  if (!target.section) return target.write(null, entry).trimEnd();
+  return JSON.stringify({ [target.section]: { [MCP_SERVER_NAME]: entry } }, null, 2);
 }

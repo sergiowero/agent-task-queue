@@ -11,7 +11,7 @@ AgentQ is a local task queue system for managing coding-agent work across multip
 - **Real-time updates** - SSE-powered live updates on the web UI as agents claim and submit
 - **Role-based workflows** - Planner, implementer, reviewer, and senior roles with proper access control
 - **Web dashboard** - Kanban-style board with task details, agent monitoring, and activity feed
-- **MCP server for agents** - Typed tools (claim, submit, get, create, archive...) for Claude Code, Codex, OpenCode, Gemini CLI and any other MCP client
+- **MCP server for agents** - Typed tools (claim, submit, get, create, archive...) for Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot and any other MCP client
 - **Runners** - Launch Claude Code, Codex, OpenCode or Gemini headless on claimed tasks, no manual prompting
 - **Plan → Code → Review → Merge** - Full workflow with approval gates and feedback loops
 - **Archive** - Save complete tasks in the project's `archive/` folder as Markdown (a summary and a full record), from the board or with the `agentq-archive` skill
@@ -38,7 +38,8 @@ bun run install:all
 ```
 
 `install:all` runs `install:mcp` (registers the AgentQ MCP server with every coding tool installed
-on the machine: Claude Code, Codex, OpenCode, Gemini CLI on macOS, Linux and Windows) and
+on the machine: Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI and GitHub Copilot in
+VS Code on macOS, Linux and Windows) and
 `install:skills`. It is safe to run again. Runners do not need it: each runner job gets the
 server automatically.
 
@@ -224,7 +225,7 @@ Example: `opencode@1.0|big-pickle`
 ## Development
 
 ```bash
-# Run tests (never touches ~/agentq/agentq.db — tests use in-memory / temp databases)
+# Run tests (never touches ~/.agentq/agentq.db — tests use in-memory / temp databases)
 bun test
 
 # Typecheck every package
