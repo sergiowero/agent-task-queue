@@ -1,15 +1,53 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import type { ModelOption, Project, Runner, RunnerInput, RunnerPermissionMode, RunnerRole, RunnerTool } from "../lib/api";
+import { cloneElement, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
+import toast from "react-hot-toast";
+import type {
+  ModelOption,
+  Project,
+  Runner,
+  RunnerInput,
+  RunnerPermissionMode,
+  RunnerRole,
+  RunnerTool,
+} from "../lib/api";
 import { api } from "../lib/api";
+import {
+  AddIcon,
+  ClockIcon,
+  ConcurrencyIcon,
+  EditIcon,
+  EffortIcon,
+  FolderIcon,
+  FullAccessIcon,
+  ModelIcon,
+  RefreshIcon,
+  SafeModeIcon,
+  SaveIcon,
+  TerminalIcon,
+  UserIcon,
+} from "../lib/icons";
+import { pluralize } from "../lib/format";
+import { cn } from "../lib/cn";
+import { Alert } from "./Alert";
 import { Button } from "./Button";
+import { Field } from "./Field";
+import { IconButton } from "./IconButton";
 import { Input } from "./Input";
+import { Modal, useModal } from "./Modal";
+import type { SegmentOption } from "./SegmentedControl";
+import { SegmentedControl } from "./SegmentedControl";
 import { Select } from "./Select";
 
 const ROLES: RunnerRole[] = ["planner", "implementer", "reviewer", "senior", "architect"];
 
 /** Sentinel value of the model select that reveals the free-text input. */
 const CUSTOM_MODEL = "__custom__";
+
+const PERMISSION_OPTIONS: SegmentOption<RunnerPermissionMode>[] = [
+  { value: "safe", label: "Safe", icon: SafeModeIcon },
+  { value: "full", label: "Full", icon: FullAccessIcon },
+];
 
 interface RunnerModalProps {
   /** Existing runner to edit; omit to create a new one. */
@@ -48,7 +86,8 @@ function formatExtraArgs(args: string[] | null): string {
  */
 function groupModels(models: ModelOption[]): { group: string | null; models: ModelOption[] }[] {
   const distinct = new Set(models.map((m) => m.description ?? ""));
-  const useGroups = models.length > 1 && models.every((m) => m.description) && distinct.size < models.length;
+  const useGroups =
+    models.length > 1 && models.every((m) => m.description) && distinct.size < models.length;
   if (!useGroups) return [{ group: null, models }];
   const groups = new Map<string, ModelOption[]>();
   for (const m of models) {
@@ -66,8 +105,30 @@ function modelOptionText(m: ModelOption): string {
   return `${m.label} (${m.id})`;
 }
 
+/**
+ * Gives the id a Field hands out to `control` (so the label targets it) and
+ * renders follow-up controls, like the custom model input, underneath.
+ */
+function ControlStack({
+  id,
+  control,
+  children,
+}: {
+  id?: string;
+  control: ReactElement<{ id?: string }>;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      {cloneElement(control, { id })}
+      {children}
+    </div>
+  );
+}
+
 export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   const queryClient = useQueryClient();
+  const modal = useModal(onClose);
   const isEdit = !!runner;
 
   const { data: tools = [], isLoading: toolsLoading } = useQuery({
@@ -88,7 +149,9 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [concurrency, setConcurrency] = useState(String(runner?.concurrency ?? 1));
   const [pollIntervalSec, setPollIntervalSec] = useState(String(runner?.pollIntervalSec ?? 5));
-  const [permissionMode, setPermissionMode] = useState<RunnerPermissionMode>(runner?.permissionMode ?? "safe");
+  const [permissionMode, setPermissionMode] = useState<RunnerPermissionMode>(
+    runner?.permissionMode ?? "safe",
+  );
   const [extraArgs, setExtraArgs] = useState(formatExtraArgs(runner?.extraArgs ?? null));
   const [error, setError] = useState<string | null>(null);
 
@@ -159,192 +222,257 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
       };
       return isEdit ? api.updateRunner(runner!.id, payload) : api.createRunner(payload);
     },
+    onMutate: () => setError(null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runners"] });
-      onClose();
+      toast.success(isEdit ? "Runner updated" : "Runner created");
+      modal.close();
     },
     onError: (e: Error) => setError(e.message),
   });
 
-  const customNeedsArgs = effectiveTool === "custom" && !parseExtraArgs(extraArgs);
-  const canSave = name.trim() && effectiveTool && !customNeedsArgs && !mutation.isPending;
+  const isCustomTool = effectiveTool === "custom";
+  const customNeedsArgs = isCustomTool && !parseExtraArgs(extraArgs);
+  const canSave = !!name.trim() && !!effectiveTool && !customNeedsArgs && !mutation.isPending;
+
+  const modelControl: ReactElement<{ id?: string }> = modelsLoading ? (
+    <Select disabled>
+      <option value="">Loading models...</option>
+    </Select>
+  ) : models.length === 0 ? (
+    <Input
+      placeholder="default"
+      value={model}
+      onChange={(e) => setModel(e.target.value)}
+      className="font-mono"
+      spellCheck={false}
+    />
+  ) : (
+    <Select
+      value={customModel ? CUSTOM_MODEL : modelInList ? model : ""}
+      onChange={(e) => selectModel(e.target.value)}
+    >
+      <option value="">default</option>
+      {groupModels(models).map(({ group, models: list }) =>
+        group ? (
+          <optgroup key={group} label={group}>
+            {list.map((m) => (
+              <option key={m.id} value={m.id}>
+                {modelOptionText(m)}
+              </option>
+            ))}
+          </optgroup>
+        ) : (
+          list.map((m) => (
+            <option key={m.id} value={m.id}>
+              {modelOptionText(m)}
+            </option>
+          ))
+        ),
+      )}
+      <option value={CUSTOM_MODEL}>Custom...</option>
+    </Select>
+  );
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-surface rounded-xl shadow-lg w-full max-w-lg p-6 transition-colors duration-300 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4 text-text">{isEdit ? "Edit Runner" : "New Runner"}</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Name *</label>
-            <Input placeholder="e.g. claude-senior" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
+    <Modal
+      {...modal.props}
+      dismissible={!mutation.isPending}
+      size="lg"
+      icon={isEdit ? EditIcon : AddIcon}
+      title={isEdit ? "Edit runner" : "New runner"}
+      description={
+        isEdit
+          ? "Change which tasks this runner claims and how it launches the tool."
+          : "Claims tasks from the queue and runs a coding tool headless."
+      }
+      onSubmit={() => canSave && mutation.mutate()}
+      footer={
+        <>
+          <Button variant="secondary" onClick={modal.close}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            icon={isEdit ? SaveIcon : AddIcon}
+            loading={mutation.isPending}
+            disabled={!canSave}
+          >
+            {isEdit ? "Save changes" : "Create runner"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Name" required>
+          <Input
+            placeholder="e.g. claude-senior"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+          />
+        </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-text mb-1">Tool *</label>
-              <Select value={effectiveTool} onChange={(e) => changeTool(e.target.value as RunnerTool)} disabled={toolsLoading}>
-                {toolsLoading && <option value="">Detecting...</option>}
-                {!toolsLoading && installed.length === 0 && <option value="">No tools installed</option>}
-                {installed.map((t) => (
-                  <option key={t.tool} value={t.tool}>
-                    {t.tool}
-                    {t.version ? ` (${t.version})` : ""}
-                  </option>
-                ))}
-                {isEdit && runner && !installed.some((t) => t.tool === runner.tool) && (
-                  <option value={runner.tool}>{runner.tool} (not installed)</option>
-                )}
-              </Select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-text mb-1">Role *</label>
-              <Select value={role} onChange={(e) => setRole(e.target.value as RunnerRole)}>
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Project</label>
-            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Any project</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.displayName}
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Tool" icon={TerminalIcon} required>
+            <Select
+              value={effectiveTool}
+              onChange={(e) => changeTool(e.target.value as RunnerTool)}
+              disabled={toolsLoading}
+            >
+              {toolsLoading && <option value="">Detecting...</option>}
+              {!toolsLoading && installed.length === 0 && (
+                <option value="">No tools installed</option>
+              )}
+              {installed.map((t) => (
+                <option key={t.tool} value={t.tool}>
+                  {t.tool}
+                  {t.version ? ` (${t.version})` : ""}
+                </option>
+              ))}
+              {isEdit && runner && !installed.some((t) => t.tool === runner.tool) && (
+                <option value={runner.tool}>{runner.tool} (not installed)</option>
+              )}
+            </Select>
+          </Field>
+          <Field label="Role" icon={UserIcon} required>
+            <Select value={role} onChange={(e) => setRole(e.target.value as RunnerRole)}>
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
                 </option>
               ))}
             </Select>
-          </div>
+          </Field>
+        </div>
 
-          <div className={`grid gap-3 ${showEffort ? "grid-cols-3" : "grid-cols-1"}`}>
-            <div className={showEffort ? "col-span-2" : ""}>
-              <label className="block text-sm font-medium text-text mb-1">Model</label>
-              {modelsLoading ? (
-                <Select disabled>
-                  <option value="">Loading models...</option>
-                </Select>
-              ) : models.length === 0 ? (
-                <Input placeholder="default" value={model} onChange={(e) => setModel(e.target.value)} className="font-mono" />
-              ) : (
-                <Select value={customModel ? CUSTOM_MODEL : modelInList ? model : ""} onChange={(e) => selectModel(e.target.value)}>
-                  <option value="">default</option>
-                  {groupModels(models).map(({ group, models: list }) =>
-                    group ? (
-                      <optgroup key={group} label={group}>
-                        {list.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {modelOptionText(m)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : (
-                      list.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {modelOptionText(m)}
-                        </option>
-                      ))
-                    ),
-                  )}
-                  <option value={CUSTOM_MODEL}>Custom...</option>
-                </Select>
-              )}
+        <Field label="Project" icon={FolderIcon}>
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">Any project</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <div className={cn("grid gap-4", showEffort ? "grid-cols-3" : "grid-cols-1")}>
+          <Field
+            label="Model"
+            icon={ModelIcon}
+            className={cn(showEffort && "col-span-2")}
+            aside={
+              discovery && (
+                <IconButton
+                  icon={RefreshIcon}
+                  label="Refresh models"
+                  size="xs"
+                  loading={refreshingModels}
+                  onClick={refreshModels}
+                />
+              )
+            }
+            hint={
+              discovery && (
+                <>
+                  source: {discovery.source}
+                  {models.length > 0 ? ` · ${pluralize(models.length, "model")}` : ""}
+                </>
+              )
+            }
+          >
+            <ControlStack control={modelControl}>
               {customModel && (
                 <Input
+                  aria-label="Custom model id"
                   placeholder="model id"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  className="font-mono mt-2"
+                  className="font-mono"
+                  wrapperClassName="animate-slide-down"
+                  spellCheck={false}
                   autoFocus={customMode === true}
                 />
               )}
-              {discovery && (
-                <p className="text-xs text-text-muted mt-1">
-                  source: {discovery.source}
-                  {models.length > 0 ? ` · ${models.length} model${models.length === 1 ? "" : "s"}` : ""} ·{" "}
-                  <button type="button" className="underline hover:text-text disabled:opacity-50" onClick={refreshModels} disabled={refreshingModels}>
-                    {refreshingModels ? "Refreshing..." : "Refresh"}
-                  </button>
-                </p>
-              )}
-            </div>
-            {showEffort && (
-              <div>
-                <label className="block text-sm font-medium text-text mb-1">Effort</label>
-                <Select value={efforts!.includes(effort) ? effort : ""} onChange={(e) => setEffort(e.target.value)}>
-                  <option value="">(default{defaultEffort ? `: ${defaultEffort}` : ""})</option>
-                  {efforts!.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            )}
-          </div>
+            </ControlStack>
+          </Field>
+          {showEffort && (
+            <Field label="Effort" icon={EffortIcon}>
+              <Select
+                value={efforts!.includes(effort) ? effort : ""}
+                onChange={(e) => setEffort(e.target.value)}
+              >
+                <option value="">(default{defaultEffort ? `: ${defaultEffort}` : ""})</option>
+                {efforts!.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+        </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-text mb-1">Concurrency</label>
-              <Input type="number" min={1} max={16} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-text mb-1">Poll (sec)</label>
-              <Input type="number" min={1} max={3600} value={pollIntervalSec} onChange={(e) => setPollIntervalSec(e.target.value)} />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Permission mode</label>
-            <div className="flex gap-4 text-sm text-text">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="permission" checked={permissionMode === "safe"} onChange={() => setPermissionMode("safe")} />
-                Safe
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="permission" checked={permissionMode === "full"} onChange={() => setPermissionMode("full")} />
-                Full
-              </label>
-            </div>
-            <p className={`text-xs mt-1 ${permissionMode === "full" ? "text-amber-600 dark:text-amber-400" : "text-text-muted"}`}>
-              {permissionMode === "full"
-                ? "Full skips every permission prompt and sandbox: the tool can run any command in the project directory."
-                : "Safe auto-accepts edits and allows agentq, git, gh, bun/npm and read-only shell commands."}
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">
-              Extra args {effectiveTool === "custom" ? "* (full command line)" : ""}
-            </label>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Concurrency" icon={ConcurrencyIcon} hint="Max jobs at the same time.">
             <Input
-              placeholder={effectiveTool === "custom" ? 'bash -c "my-agent \\"$AGENTQ_TASK_ID\\""' : "--verbose"}
-              value={extraArgs}
-              onChange={(e) => setExtraArgs(e.target.value)}
-              className="font-mono"
+              type="number"
+              min={1}
+              max={16}
+              value={concurrency}
+              onChange={(e) => setConcurrency(e.target.value)}
             />
-            <p className="text-xs text-text-muted mt-1">
-              {effectiveTool === "custom"
-                ? "Argv to run; the prompt is appended as the last argument and exposed as $AGENTQ_PROMPT."
-                : "Appended to the generated command. Quoted or JSON array."}
-            </p>
-          </div>
-
-          {error && <p className="text-sm text-danger">{error}</p>}
+          </Field>
+          <Field label="Poll interval (sec)" icon={ClockIcon} hint="How often it checks the queue.">
+            <Input
+              type="number"
+              min={1}
+              max={3600}
+              value={pollIntervalSec}
+              onChange={(e) => setPollIntervalSec(e.target.value)}
+            />
+          </Field>
         </div>
 
-        <div className="flex justify-end gap-2 mt-4">
-          <Button onClick={onClose} variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={() => mutation.mutate()} disabled={!canSave} variant="primary">
-            {mutation.isPending ? "Saving..." : isEdit ? "Save" : "Create"}
-          </Button>
-        </div>
+        <Field
+          label="Permission mode"
+          hintTone={permissionMode === "full" ? "warning" : "muted"}
+          hint={
+            permissionMode === "full"
+              ? "Full skips every permission prompt and sandbox: the tool can run any command in the project directory."
+              : "Safe auto-accepts edits and allows agentq, git, gh, bun/npm and read-only shell commands."
+          }
+        >
+          <SegmentedControl
+            label="Permission mode"
+            value={permissionMode}
+            onChange={(v) => setPermissionMode(v)}
+            options={PERMISSION_OPTIONS}
+          />
+        </Field>
+
+        <Field
+          label={isCustomTool ? "Extra args (full command line)" : "Extra args"}
+          icon={TerminalIcon}
+          required={isCustomTool}
+          hint={
+            isCustomTool
+              ? "Argv to run; the prompt is appended as the last argument and exposed as $AGENTQ_PROMPT."
+              : "Appended to the generated command. Quoted or JSON array."
+          }
+        >
+          <Input
+            placeholder={isCustomTool ? 'bash -c "my-agent \\"$AGENTQ_TASK_ID\\""' : "--verbose"}
+            value={extraArgs}
+            onChange={(e) => setExtraArgs(e.target.value)}
+            className="font-mono"
+            spellCheck={false}
+          />
+        </Field>
+
+        {error && <Alert tone="danger">{error}</Alert>}
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -1,27 +1,105 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import type { CSSProperties } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
+import type { Task } from "../lib/api";
 import { useSSE } from "../hooks/useSSE";
+import type { LucideIcon } from "../lib/icons";
+import {
+  AddIcon,
+  AgentsIcon,
+  BoardIcon,
+  ClearIcon,
+  CloseIcon,
+  CompleteIcon,
+  DeleteIcon,
+  FilterIcon,
+  InProgressIcon,
+  PendingIcon,
+  ProjectsIcon,
+  ReviewIcon,
+  SearchIcon,
+} from "../lib/icons";
+import type { Tone } from "../lib/status";
+import { TASK_STATUS, TONE_SOFT, taskStatusMeta } from "../lib/status";
+import { cn } from "../lib/cn";
 import { TaskCard } from "../components/TaskCard";
 import { CreateTaskModal } from "../components/CreateTaskModal";
 import { DeleteTaskModal } from "../components/DeleteTaskModal";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
 import { Skeleton } from "../components/Skeleton";
+import { PageHeader, CountPill } from "../components/PageHeader";
+import { Button } from "../components/Button";
+import { IconButton } from "../components/IconButton";
+import { Input } from "../components/Input";
+import { Select } from "../components/Select";
+import { Checkbox } from "../components/Checkbox";
 
-const COLUMNS = [
-  { key: "pending", label: "Pending", statuses: ["plan_requested", "ready_for_code", "plan_changes_requested", "code_review_requested", "changes_requested", "approved"] },
-  { key: "in-progress", label: "In Progress", statuses: ["planning", "coding", "reviewing", "merging"] },
-  { key: "need-review", label: "Need Review", statuses: ["waiting_plan_review", "waiting_code_review"] },
-  { key: "done", label: "Done", statuses: ["complete", "merged"] },
+interface Column {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  tone: Tone;
+  statuses: string[];
+}
+
+const COLUMNS: Column[] = [
+  {
+    key: "pending",
+    label: "Pending",
+    icon: PendingIcon,
+    tone: "neutral",
+    statuses: [
+      "plan_requested",
+      "ready_for_code",
+      "plan_changes_requested",
+      "code_review_requested",
+      "changes_requested",
+      "approved",
+    ],
+  },
+  {
+    key: "in-progress",
+    label: "In progress",
+    icon: InProgressIcon,
+    tone: "info",
+    statuses: ["planning", "coding", "reviewing", "merging"],
+  },
+  {
+    key: "need-review",
+    label: "Needs review",
+    icon: ReviewIcon,
+    tone: "warning",
+    statuses: ["waiting_plan_review", "waiting_code_review"],
+  },
+  {
+    key: "done",
+    label: "Done",
+    icon: CompleteIcon,
+    tone: "success",
+    statuses: ["complete", "merged"],
+  },
 ];
 
-const COLUMN_COLORS: Record<string, string> = {
-  "pending": "border-t-gray-300 dark:border-t-gray-600",
-  "in-progress": "border-t-blue-400 dark:border-t-blue-500",
-  "need-review": "border-t-yellow-400 dark:border-t-yellow-500",
-  "done": "border-t-green-400 dark:border-t-green-500",
-};
+/** Workflow order for the status filter. */
+const STATUS_ORDER = Object.keys(TASK_STATUS);
+
+const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
+
+/** Keeps an element mounted for its exit animation after `open` turns false. */
+function usePresence(open: boolean, exitMs = 180) {
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setMounted(false), exitMs);
+    return () => window.clearTimeout(timer);
+  }, [open, exitMs]);
+  return { mounted: open || mounted, closing: !open && mounted };
+}
 
 export function BoardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -30,9 +108,9 @@ export function BoardPage() {
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState("");
-  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [hiddenColumns] = useState<Set<string>>(new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [deletingTask, setDeletingTask] = useState<any>(null);
+  const [deletingTask, setDeletingTask] = useState<Task | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
@@ -47,17 +125,22 @@ export function BoardPage() {
     queryKey: ["tasks", projectId],
     queryFn: () => api.getTasks(projectId),
   });
-  const tasks = tasksRes?.data ?? [];
+  const tasks = useMemo(() => tasksRes?.data ?? [], [tasksRes]);
 
-  useSSE(useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["tasks"] });
-  }, [queryClient]));
+  useSSE(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    }, [queryClient]),
+  );
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t: any) => {
+    return tasks.filter((t) => {
       if (search) {
         const q = search.toLowerCase();
-        if (!t.title.toLowerCase().includes(q) && !(t.recommendedBranch ?? "").toLowerCase().includes(q)) {
+        if (
+          !t.title.toLowerCase().includes(q) &&
+          !(t.recommendedBranch ?? "").toLowerCase().includes(q)
+        ) {
           return false;
         }
       }
@@ -68,14 +151,50 @@ export function BoardPage() {
   }, [tasks, search, statusFilter, agentFilter]);
 
   const grouped = useMemo(() => {
-    const map: Record<string, any[]> = {};
+    const map: Record<string, Task[]> = {};
     for (const col of COLUMNS) {
       map[col.key] = filteredTasks
-        .filter((t: any) => col.statuses.includes(t.status))
-        .sort((a: any, b: any) => b.priority - a.priority || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        .filter((t) => col.statuses.includes(t.status))
+        .sort(
+          (a, b) =>
+            b.priority - a.priority ||
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
     }
     return map;
   }, [filteredTasks]);
+
+  const statusOptions = useMemo(() => {
+    const set = new Set(tasks.map((t) => t.status));
+    // Keep the active filter selectable even if no task has that status anymore.
+    if (statusFilter) set.add(statusFilter);
+    const rank = (s: string) => {
+      const i = STATUS_ORDER.indexOf(s);
+      return i === -1 ? STATUS_ORDER.length : i;
+    };
+    return [...set].sort((a, b) => rank(a) - rank(b));
+  }, [tasks, statusFilter]);
+
+  const agentOptions = useMemo(() => {
+    const set = new Set(
+      tasks.map((t) => t.assignedAgent?.name).filter((n): n is string => Boolean(n)),
+    );
+    if (agentFilter) set.add(agentFilter);
+    return [...set];
+  }, [tasks, agentFilter]);
+
+  const hasFilters = Boolean(search || statusFilter || agentFilter || projectId);
+
+  function clearFilters() {
+    setSearch("");
+    setStatusFilter("");
+    setAgentFilter("");
+    if (projectId) {
+      const params = new URLSearchParams(searchParams);
+      params.delete("projectId");
+      setSearchParams(params);
+    }
+  }
 
   const canEdit = (colKey: string) => colKey === "pending" || colKey === "need-review";
 
@@ -94,7 +213,7 @@ export function BoardPage() {
   function toggleColumn(colKey: string) {
     const colTasks = grouped[colKey] ?? [];
     if (colTasks.length === 0) return;
-    const allSelected = colTasks.every((t: any) => selectedTaskIds.has(t.id));
+    const allSelected = colTasks.every((t) => selectedTaskIds.has(t.id));
     setSelectedTaskIds((prev) => {
       const next = new Set(prev);
       for (const t of colTasks) {
@@ -108,42 +227,85 @@ export function BoardPage() {
     });
   }
 
-  const columnAllSelected = (colKey: string) => {
+  function columnSelection(colKey: string) {
     const colTasks = grouped[colKey] ?? [];
-    return colTasks.length > 0 && colTasks.every((t: any) => selectedTaskIds.has(t.id));
-  };
+    const count = colTasks.filter((t) => selectedTaskIds.has(t.id)).length;
+    return { all: colTasks.length > 0 && count === colTasks.length, some: count > 0 };
+  }
 
-  return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
-        <input
-          className="border border-border bg-surface-secondary text-text placeholder:text-text-muted rounded-lg px-3 py-1.5 text-sm w-64 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-all duration-150"
-          placeholder="Search tasks..."
+  // The floating bar keeps showing the last count while it animates out.
+  const selectedCount = selectedTaskIds.size;
+  const [barCount, setBarCount] = useState(selectedCount);
+  useEffect(() => {
+    if (selectedCount > 0) setBarCount(selectedCount);
+  }, [selectedCount]);
+  const bar = usePresence(selectedCount > 0);
+
+  // Widths live on wrappers: a width passed to `wrapperClassName` competes with the
+  // control's own `w-full`, and Tailwind doesn't guarantee which one wins.
+  const toolbar = (
+    <>
+      <div className="w-64 shrink-0">
+        <Input
+          icon={SearchIcon}
+          inputSize="sm"
+          placeholder="Search title or branch…"
+          aria-label="Search tasks"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setSearch("");
+          }}
+          trailing={
+            search ? (
+              <IconButton
+                icon={CloseIcon}
+                label="Clear search"
+                size="xs"
+                onClick={() => setSearch("")}
+                className="animate-fade-in"
+              />
+            ) : undefined
+          }
         />
-        <select
-          className="border border-border bg-surface-secondary text-text rounded-lg px-2 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-all duration-150"
+      </div>
+      <div className="w-48 shrink-0">
+        <Select
+          selectSize="sm"
+          icon={FilterIcon}
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
           <option value="">All statuses</option>
-          {[...new Set(tasks.map((t: any) => t.status))].map((s: any) => (
-            <option key={s} value={s}>{s}</option>
+          {statusOptions.map((s) => (
+            <option key={s} value={s}>
+              {taskStatusMeta(s).label}
+            </option>
           ))}
-        </select>
-        <select
-          className="border border-border bg-surface-secondary text-text rounded-lg px-2 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-all duration-150"
+        </Select>
+      </div>
+      <div className="w-40 shrink-0">
+        <Select
+          selectSize="sm"
+          icon={AgentsIcon}
+          aria-label="Filter by agent"
           value={agentFilter}
           onChange={(e) => setAgentFilter(e.target.value)}
         >
           <option value="">All agents</option>
-          {[...new Set(tasks.map((t: any) => t.assignedAgent?.name).filter(Boolean))].map((a: any) => (
-            <option key={a} value={a}>{a}</option>
+          {agentOptions.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
           ))}
-        </select>
-        <select
-          className="border border-border bg-surface-secondary text-text rounded-lg px-2 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-all duration-150"
+        </Select>
+      </div>
+      <div className="w-44 shrink-0">
+        <Select
+          selectSize="sm"
+          icon={ProjectsIcon}
+          aria-label="Filter by project"
           value={projectId ?? ""}
           onChange={(e) => {
             const params = new URLSearchParams(searchParams);
@@ -156,104 +318,194 @@ export function BoardPage() {
           }}
         >
           <option value="">All projects</option>
-          {projects.map((p: any) => (
-            <option key={p.id} value={p.id}>{p.displayName}</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.displayName}
+            </option>
           ))}
-        </select>
-        <div className="flex-1" />
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="bg-primary text-white px-3 py-1.5 rounded-lg text-sm hover:bg-primary-hover transition-colors"
-        >
-          New Task
-        </button>
+        </Select>
       </div>
-
-      {selectedTaskIds.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 bg-surface border-b border-border shrink-0 text-sm">
-          <span className="text-text font-medium">{selectedTaskIds.size} selected</span>
-          <div className="flex-1" />
-          <button
-            onClick={() => setSelectedTaskIds(new Set())}
-            className="text-text-secondary hover:text-text transition-colors"
-          >
-            Clear
-          </button>
-          <button
-            onClick={() => setShowBulkDeleteModal(true)}
-            className="bg-danger text-white px-3 py-1.5 rounded-lg text-sm hover:bg-danger-hover transition-colors"
-          >
-            Delete selected
-          </button>
-        </div>
+      {hasFilters && (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={ClearIcon}
+          onClick={clearFilters}
+          className="animate-fade-in"
+        >
+          Clear filters
+        </Button>
       )}
+    </>
+  );
 
-      <div className="flex-1 flex gap-4 p-4 overflow-x-auto">
-        {isLoading ? (
-          <>
-            {COLUMNS.map((col) => (
-              <div key={col.key} className="flex-1 min-w-[280px]">
-                <div className="flex items-center justify-between px-2 py-2">
-                  <Skeleton className="h-4 w-20" />
-                  <Skeleton className="h-3 w-6" />
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        icon={BoardIcon}
+        title="Board"
+        description="Every task in the queue, grouped by where it is in the workflow."
+        meta={
+          !isLoading && (
+            <CountPill>
+              {hasFilters ? `${filteredTasks.length} / ${tasks.length}` : tasks.length}
+            </CountPill>
+          )
+        }
+        actions={
+          <Button icon={AddIcon} onClick={() => setShowCreateModal(true)}>
+            New task
+          </Button>
+        }
+        toolbar={toolbar}
+      />
+
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 gap-4 overflow-x-auto px-6 pt-6 transition-[padding] duration-300 ease-out-expo",
+            bar.mounted && !bar.closing ? "pb-24" : "pb-6",
+          )}
+        >
+          {isLoading
+            ? COLUMNS.map((col) => (
+                <div
+                  key={col.key}
+                  className="flex min-w-[260px] flex-1 flex-col rounded-2xl border border-border-light bg-surface-secondary/60"
+                >
+                  <div className="flex h-12 shrink-0 items-center gap-2 px-3.5">
+                    <Skeleton className="h-6 w-6 rounded-md" />
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-6 rounded-full" />
+                  </div>
+                  <div className="space-y-2 px-2.5">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="card space-y-3 p-3">
+                        <div className="flex items-start gap-2">
+                          <Skeleton className="h-4 flex-1" />
+                          <Skeleton className="h-4 w-9 rounded-full" />
+                        </div>
+                        <Skeleton className="h-3 w-2/3" />
+                        <Skeleton className="h-5 w-24 rounded-full" />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-2 px-1">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="bg-surface rounded-xl border border-border p-3 space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-2/3" />
-                      <Skeleton className="h-3 w-1/3" />
+              ))
+            : COLUMNS.filter((col) => !hiddenColumns.has(col.key)).map((col, ci) => {
+                const colTasks = grouped[col.key] ?? [];
+                const editable = canEdit(col.key);
+                const selection = columnSelection(col.key);
+                const Icon = col.icon;
+                return (
+                  <section
+                    key={col.key}
+                    aria-label={col.label}
+                    style={stagger(ci)}
+                    className="stagger flex min-w-[260px] flex-1 flex-col rounded-2xl border border-border-light bg-surface-secondary/60"
+                  >
+                    <header className="flex h-12 shrink-0 items-center gap-2 px-3.5">
+                      <span
+                        className={cn(
+                          "flex h-6 w-6 items-center justify-center rounded-md",
+                          TONE_SOFT[col.tone],
+                        )}
+                      >
+                        <Icon aria-hidden className="h-3.5 w-3.5" />
+                      </span>
+                      <h2 className="text-[13px] font-semibold text-text">{col.label}</h2>
+                      <CountPill>{colTasks.length}</CountPill>
+                      {editable && colTasks.length > 0 && (
+                        <Checkbox
+                          className="ml-auto"
+                          checked={selection.all}
+                          indeterminate={selection.some && !selection.all}
+                          onChange={() => toggleColumn(col.key)}
+                          label={
+                            selection.all
+                              ? `Deselect all ${col.label.toLowerCase()} tasks`
+                              : `Select all ${col.label.toLowerCase()} tasks`
+                          }
+                        />
+                      )}
+                    </header>
+                    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 pb-2.5 pt-0.5">
+                      {colTasks.length === 0 ? (
+                        <div className="flex h-20 items-center justify-center rounded-xl border border-dashed border-border text-xs text-text-muted animate-fade-in">
+                          {hasFilters ? "No matching tasks" : "No tasks"}
+                        </div>
+                      ) : (
+                        colTasks.map((task, i) => (
+                          <div key={task.id} className="stagger" style={stagger(i)}>
+                            <TaskCard
+                              task={task}
+                              onClick={() => navigate(`/tasks/${task.id}/details`)}
+                              onDelete={editable ? () => setDeletingTask(task) : undefined}
+                              selected={selectedTaskIds.has(task.id)}
+                              onToggleSelect={editable ? () => toggleSelect(task.id) : undefined}
+                            />
+                          </div>
+                        ))
+                      )}
                     </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </>
-        ) : (
-          COLUMNS.filter((col) => !hiddenColumns.has(col.key)).map((col) => (
-            <div key={col.key} className={`flex-1 min-w-[280px] flex flex-col border-t-2 ${COLUMN_COLORS[col.key]}`}>
-              <div className="flex items-center gap-2 px-2 py-2">
-                {canEdit(col.key) && (grouped[col.key]?.length > 0) && (
-                  <input
-                    type="checkbox"
-                    checked={columnAllSelected(col.key)}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() => toggleColumn(col.key)}
-                    className="h-4 w-4 shrink-0 cursor-pointer accent-primary"
-                    title={columnAllSelected(col.key) ? "Deselect all tasks in column" : "Select all tasks in column"}
-                  />
-                )}
-                <h3 className="font-semibold text-sm text-text">{col.label}</h3>
-                <span className="text-xs text-text-muted bg-surface-secondary px-1.5 py-0.5 rounded-full">{grouped[col.key]?.length ?? 0}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-2 px-1">
-                {(grouped[col.key] ?? []).map((task: any) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onClick={() => navigate(`/tasks/${task.id}/details`)}
-                    onDelete={canEdit(col.key) ? () => setDeletingTask(task) : undefined}
-                    selected={selectedTaskIds.has(task.id)}
-                    onToggleSelect={canEdit(col.key) ? () => toggleSelect(task.id) : undefined}
-                  />
-                ))}
-              </div>
+                  </section>
+                );
+              })}
+        </div>
+
+        {bar.mounted && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center px-4">
+            <div
+              role="toolbar"
+              aria-label="Selected tasks"
+              className={cn(
+                "pointer-events-auto flex items-center gap-1.5 rounded-2xl border border-border bg-surface-elevated py-1.5 pl-4 pr-1.5 shadow-xl",
+                bar.closing ? "animate-scale-out" : "animate-scale-in",
+              )}
+            >
+              <span className="text-sm font-medium tabular-nums text-text" aria-live="polite">
+                {selectedCount || barCount} selected
+              </span>
+              <span aria-hidden className="mx-2 h-5 w-px bg-border" />
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={ClearIcon}
+                onClick={() => setSelectedTaskIds(new Set())}
+              >
+                Clear
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                icon={DeleteIcon}
+                onClick={() => setShowBulkDeleteModal(true)}
+                disabled={selectedCount === 0}
+              >
+                Delete
+              </Button>
             </div>
-          ))
+          </div>
         )}
       </div>
 
       {showCreateModal && (
-        <CreateTaskModal
-          projectId={projectId}
-          onClose={() => setShowCreateModal(false)}
-        />
+        <CreateTaskModal projectId={projectId} onClose={() => setShowCreateModal(false)} />
       )}
 
       {deletingTask && (
         <DeleteTaskModal
           task={deletingTask}
           onClose={() => setDeletingTask(null)}
+          onDeleted={() => {
+            const id = deletingTask.id;
+            setSelectedTaskIds((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }}
         />
       )}
 

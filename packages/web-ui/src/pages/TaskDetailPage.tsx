@@ -1,55 +1,140 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import type { CSSProperties, ReactNode } from "react";
+import { useParams } from "react-router-dom";
+import toast from "react-hot-toast";
 import { api } from "../lib/api";
+import type { Task } from "../lib/api";
+import {
+  AgentsIcon,
+  AiReviewIcon,
+  ApproveIcon,
+  BranchIcon,
+  CalendarIcon,
+  CancelTaskIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  CloseIcon,
+  CompleteIcon,
+  ConversationIcon,
+  CriteriaIcon,
+  DescriptionIcon,
+  EditIcon,
+  ErrorIcon,
+  GuardrailIcon,
+  HistoryIcon,
+  MergeIcon,
+  PlanIcon,
+  PriorityIcon,
+  RefreshIcon,
+  RequestChangesIcon,
+  SaveIcon,
+  SteerIcon,
+  UnblockIcon,
+  WorktreeIcon,
+} from "../lib/icons";
+import { TONE_SOFT, TOOL_TONE, priorityTone, taskStatusMeta } from "../lib/status";
+import { formatDateTime, formatRelative } from "../lib/format";
+import { cn } from "../lib/cn";
 import { Button } from "../components/Button";
-import { Badge } from "../components/Badge";
+import { IconButton } from "../components/IconButton";
+import { Badge, StatusBadge } from "../components/Badge";
 import { Input } from "../components/Input";
+import { Textarea } from "../components/Textarea";
+import { Field } from "../components/Field";
+import { Tabs } from "../components/Tabs";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { CopyButton } from "../components/CopyButton";
+import { EmptyState } from "../components/EmptyState";
+import { PageBody, PageHeader } from "../components/PageHeader";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
 import { MarkdownRenderer } from "../components/MarkdownRenderer";
-import { EditableField } from "../components/EditableField";
+import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
-import type { Task } from "../lib/api";
-
-const STATUS_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
-  plan_requested: "default",
-  ready_for_code: "info",
-  planning: "purple",
-  coding: "info",
-  reviewing: "warning",
-  merging: "warning",
-  complete: "success",
-  merged: "success",
-  canceled: "danger",
-  waiting_plan_review: "warning",
-  waiting_code_review: "warning",
-  code_review_requested: "warning",
-  changes_requested: "danger",
-  plan_changes_requested: "danger",
-  approved: "success",
-};
 
 const ACTIVE_STATUSES = new Set([
-  "plan_requested", "ready_for_code", "planning", "waiting_plan_review", "plan_changes_requested",
-  "coding", "waiting_code_review", "code_review_requested", "reviewing",
-  "changes_requested", "approved", "merging", "merged",
+  "plan_requested",
+  "ready_for_code",
+  "planning",
+  "waiting_plan_review",
+  "plan_changes_requested",
+  "coding",
+  "waiting_code_review",
+  "code_review_requested",
+  "reviewing",
+  "changes_requested",
+  "approved",
+  "merging",
+  "merged",
 ]);
 
 const EDITABLE_STATUSES = new Set([
-  "plan_requested", "ready_for_code", "plan_changes_requested", "code_review_requested", "changes_requested", "approved",
-  "waiting_plan_review", "waiting_code_review",
+  "plan_requested",
+  "ready_for_code",
+  "plan_changes_requested",
+  "code_review_requested",
+  "changes_requested",
+  "approved",
+  "waiting_plan_review",
+  "waiting_code_review",
 ]);
+
+type TaskAction =
+  | "approvePlan"
+  | "requestPlanChanges"
+  | "approveCode"
+  | "requestCodeChanges"
+  | "requestAiReview"
+  | "confirmCompletion"
+  | "unblock"
+  | "cancel";
+
+const ACTION_DONE: Record<TaskAction, string> = {
+  approvePlan: "Plan approved",
+  requestPlanChanges: "Plan changes requested",
+  approveCode: "Code approved",
+  requestCodeChanges: "Code changes requested",
+  requestAiReview: "AI review requested",
+  confirmCompletion: "Task completed",
+  unblock: "Task unblocked",
+  cancel: "Task canceled",
+};
+
+/** One line under the "Actions" eyebrow saying what the task is waiting for. */
+const ACTION_HINT: Record<string, string> = {
+  plan_requested: "Waiting for an agent to write a plan.",
+  planning: "An agent is writing the plan.",
+  waiting_plan_review: "The plan is ready for your review.",
+  plan_changes_requested: "Waiting for an agent to revise the plan.",
+  ready_for_code: "Waiting for an agent to write the code.",
+  coding: "An agent is writing the code.",
+  waiting_code_review: "The code is ready for your review.",
+  code_review_requested: "Waiting for an AI review.",
+  reviewing: "An agent is reviewing the code.",
+  changes_requested: "Waiting for an agent to apply the requested changes.",
+  approved: "Approved. Waiting for an agent to merge it.",
+  merging: "An agent is merging the branch.",
+  merged: "Merged. Confirm to mark the task complete.",
+};
+
+const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
 
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"conversation" | "history">("conversation");
   const [feedback, setFeedback] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
-  const { data: task, isLoading } = useQuery({
+  const {
+    data: task,
+    error,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["task", id],
     queryFn: () => api.getTask(id!),
     enabled: !!id,
@@ -57,15 +142,18 @@ export function TaskDetailPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: async ({ action, data }: { action: string; data?: any }) => {
-      const fn = (api as any)[action];
-      if (!fn) throw new Error(`Unknown action: ${action}`);
-      return data !== undefined ? fn(id, data) : fn(id);
+    mutationFn: ({ action, data }: { action: TaskAction; data?: { message: string } }) => {
+      const fn = api[action] as (taskId: string, data?: unknown) => Promise<Task>;
+      return data !== undefined ? fn(id!, data) : fn(id!);
     },
-    onSuccess: () => {
+    onSuccess: (_task, { action }) => {
       queryClient.invalidateQueries({ queryKey: ["task", id] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setFeedback("");
+      toast.success(ACTION_DONE[action]);
+    },
+    onError: (e: Error) => {
+      toast.error(e.message);
     },
   });
 
@@ -77,323 +165,654 @@ export function TaskDetailPage() {
     },
   });
 
-  const doAction = (action: string, data?: any) => mutation.mutate({ action, data });
+  const doAction = (action: TaskAction, data?: { message: string }) =>
+    mutation.mutate({ action, data });
+
+  const pendingAction = mutation.isPending ? mutation.variables?.action : undefined;
+  /** Spinner on the clicked button, every other action disabled meanwhile. */
+  const busy = (action: TaskAction) => ({
+    loading: pendingAction === action,
+    disabled: mutation.isPending,
+  });
 
   async function saveTitle() {
     const trimmed = titleDraft.trim();
     if (trimmed && trimmed !== task?.title) {
-      await updateMutation.mutateAsync({ title: trimmed });
+      try {
+        await updateMutation.mutateAsync({ title: trimmed });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not save the title");
+        return;
+      }
     }
     setTitleEditing(false);
   }
 
-  if (isLoading || !task) {
-    return (
-      <div className="flex-1 p-6 space-y-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Skeleton className="h-4 w-24" />
+  if (!task) {
+    if (error) {
+      return (
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <PageHeader back={{ to: "/board", label: "Back to board" }} title="Task" />
+          <PageBody>
+            <EmptyState
+              icon={ErrorIcon}
+              title="Couldn't load this task"
+              description={error.message}
+              action={
+                <Button
+                  variant="secondary"
+                  icon={RefreshIcon}
+                  loading={isRefetching}
+                  onClick={() => refetch()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          </PageBody>
         </div>
-        <Skeleton className="h-8 w-2/3" />
-        <Skeleton className="h-4 w-1/3" />
-        <div className="grid grid-cols-2 gap-4 mt-6">
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-          <Skeleton className="h-16" />
-        </div>
-      </div>
-    );
+      );
+    }
+    return <TaskDetailSkeleton />;
   }
 
   const canEdit = EDITABLE_STATUSES.has(task.status);
+  const isActive = ACTIVE_STATUSES.has(task.status);
+  const reviewingPlan = task.status === "waiting_plan_review";
+  const reviewingCode = task.status === "waiting_code_review";
+  const conversation = task.conversation ?? [];
+  const history = task.history ?? [];
+
+  const title = titleEditing ? (
+    // Padding keeps the input's focus ring inside the heading's clipped box.
+    <div className="flex w-[40rem] max-w-full items-center gap-1 p-1">
+      <Input
+        autoFocus
+        inputSize="sm"
+        aria-label="Task title"
+        value={titleDraft}
+        disabled={updateMutation.isPending}
+        onChange={(e) => setTitleDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") saveTitle();
+          if (e.key === "Escape") setTitleEditing(false);
+        }}
+        className="font-semibold"
+      />
+      <IconButton
+        icon={SaveIcon}
+        label="Save title"
+        variant="primary"
+        loading={updateMutation.isPending}
+        onClick={saveTitle}
+      />
+      <IconButton
+        icon={CloseIcon}
+        label="Cancel"
+        disabled={updateMutation.isPending}
+        onClick={() => setTitleEditing(false)}
+      />
+    </div>
+  ) : (
+    task.title
+  );
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto">
-        <div className="border-b border-border bg-surface px-6 py-4">
-          <div className="flex items-center gap-3 mb-3">
-            <button
-              onClick={() => navigate("/board")}
-              className="text-sm text-text-muted hover:text-text flex items-center gap-1 transition-colors duration-150"
-            >
-              &larr; Back to Board
-            </button>
-          </div>
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              {titleEditing ? (
-                <div className="space-y-2">
-                  <Input
-                    autoFocus
-                    value={titleDraft}
-                    onChange={(e) => setTitleDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveTitle();
-                      if (e.key === "Escape") setTitleEditing(false);
-                    }}
-                  />
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={saveTitle} disabled={updateMutation.isPending}>
-                      {updateMutation.isPending ? "Saving..." : "Save"}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setTitleEditing(false)}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h1 className="text-xl font-semibold text-text">{task.title}</h1>
-                  {canEdit && (
-                    <button
-                      onClick={() => { setTitleDraft(task.title); setTitleEditing(true); }}
-                      className="p-1 rounded text-text-muted hover:text-text hover:bg-surface-secondary transition-colors"
-                      title="Edit title"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              )}
-              <div className="flex items-center gap-2 mt-1">
-                <Badge variant={STATUS_VARIANTS[task.status] ?? "default"} dot>
-                  {task.status.replace(/_/g, " ")}
-                </Badge>
-                {task.assignedAgent && (
-                  <span className="text-sm text-text-muted">{task.assignedAgent.name}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        back={{ to: "/board", label: "Back to board" }}
+        title={title}
+        meta={
+          <>
+            {canEdit && !titleEditing && (
+              <IconButton
+                icon={EditIcon}
+                label="Edit title"
+                size="xs"
+                onClick={() => {
+                  setTitleDraft(task.title);
+                  setTitleEditing(true);
+                }}
+              />
+            )}
+            <StatusBadge status={task.status} size="md" />
+          </>
+        }
+      />
 
-        <div className="border-b border-border bg-surface px-6 py-4">
-          <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+      <PageBody>
+        <div className="mx-auto grid max-w-[1400px] gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-w-0 space-y-4 xl:col-start-1 xl:row-start-1">
+            {isActive && (
+              <section className="card p-4">
+                <h2 className="eyebrow">Actions</h2>
+                <p className="mt-1 text-sm text-text-secondary">
+                  {ACTION_HINT[task.status] ?? "Waiting for an agent."}
+                </p>
+                {(reviewingPlan || reviewingCode) && (
+                  <Field
+                    label="Feedback"
+                    icon={ConversationIcon}
+                    hint="Sent to the agent when you request changes."
+                    className="mt-4"
+                  >
+                    <Textarea
+                      rows={2}
+                      placeholder="What should change? (optional)"
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                    />
+                  </Field>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {reviewingPlan && (
+                    <>
+                      <Button
+                        icon={ApproveIcon}
+                        {...busy("approvePlan")}
+                        onClick={() => doAction("approvePlan")}
+                      >
+                        Approve plan
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={RequestChangesIcon}
+                        {...busy("requestPlanChanges")}
+                        onClick={() =>
+                          doAction("requestPlanChanges", {
+                            message: feedback || "Plan changes requested.",
+                          })
+                        }
+                      >
+                        Request changes
+                      </Button>
+                    </>
+                  )}
+                  {reviewingCode && (
+                    <>
+                      <Button
+                        icon={ApproveIcon}
+                        {...busy("approveCode")}
+                        onClick={() => doAction("approveCode")}
+                      >
+                        Approve code
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={RequestChangesIcon}
+                        {...busy("requestCodeChanges")}
+                        onClick={() =>
+                          doAction("requestCodeChanges", {
+                            message: feedback || "Code changes requested.",
+                          })
+                        }
+                      >
+                        Request changes
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={AiReviewIcon}
+                        {...busy("requestAiReview")}
+                        onClick={() => doAction("requestAiReview")}
+                      >
+                        AI review
+                      </Button>
+                    </>
+                  )}
+                  {task.status === "merged" && (
+                    <Button
+                      icon={CompleteIcon}
+                      {...busy("confirmCompletion")}
+                      onClick={() => doAction("confirmCompletion")}
+                    >
+                      Confirm complete
+                    </Button>
+                  )}
+                  {["planning", "coding", "reviewing"].includes(task.status) && (
+                    <Button
+                      variant="ghost"
+                      icon={UnblockIcon}
+                      {...busy("unblock")}
+                      onClick={() => doAction("unblock")}
+                    >
+                      Unblock
+                    </Button>
+                  )}
+                  <Button
+                    variant="danger-ghost"
+                    icon={CancelTaskIcon}
+                    className="ml-auto"
+                    {...busy("cancel")}
+                    onClick={() => setConfirmCancel(true)}
+                  >
+                    Cancel task
+                  </Button>
+                </div>
+              </section>
+            )}
+
             <EditableField
-              label="Priority"
-              value={String(task.priority)}
-              rows={1}
-              editable={canEdit}
-              display={<div className="text-sm text-text">{String(task.priority)}</div>}
-              onSubmit={async (v) => {
-                const p = parseInt(v, 10);
-                if (isNaN(p)) throw new Error("Priority must be a number");
-                await updateMutation.mutateAsync({ priority: p });
-              }}
-            />
-            <EditableField
-              label="Branch"
-              value={task.recommendedBranch || ""}
-              placeholder="Branch name"
-              rows={1}
-              editable={canEdit}
-              display={<div className={`text-sm text-text ${task.recommendedBranch ? "font-mono" : ""}`}>{task.recommendedBranch || "—"}</div>}
-              onSubmit={async (v) => await updateMutation.mutateAsync({ recommendedBranch: v.trim() })}
-            />
-            <EditableField
-              label="Merge Target"
-              value={task.mergeBranch}
-              placeholder="Merge branch"
-              rows={1}
-              editable={canEdit}
-              display={<div className="text-sm text-text font-mono">{task.mergeBranch}</div>}
-              onSubmit={async (v) => await updateMutation.mutateAsync({ mergeBranch: v.trim() })}
-            />
-            <Field label="Requires Plan" value={task.requiresPlan ? "Yes" : "No"} />
-            <Field label="Worktree" value={task.worktreePath || "—"} mono />
-          </div>
-          <div className="mt-6 space-y-4">
-            <EditableField
+              icon={DescriptionIcon}
               label="Description"
               value={task.description ?? ""}
               placeholder="Description"
               editable={canEdit}
               display={
                 task.description ? (
-                  <div className="text-sm text-text">
-                    <MarkdownRenderer content={task.description} />
-                  </div>
+                  <MarkdownRenderer content={task.description} />
                 ) : (
-                  <p className="text-sm text-text-muted italic">Description not present</p>
+                  <EmptyValue>No description</EmptyValue>
                 )
               }
-              onSubmit={async (v) => await updateMutation.mutateAsync({ description: v.trim() ? v : null })}
+              onSubmit={async (v) =>
+                await updateMutation.mutateAsync({ description: v.trim() ? v : null })
+              }
             />
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+            <EditableField
+              icon={SteerIcon}
+              label="Steer details"
+              value={task.steerDetails ?? ""}
+              placeholder="Implementation guidance, technical recommendations, preferred approaches"
+              editable={canEdit}
+              display={
+                task.steerDetails ? (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">
+                    {task.steerDetails}
+                  </p>
+                ) : (
+                  <EmptyValue>No steer details</EmptyValue>
+                )
+              }
+              onSubmit={async (v) =>
+                await updateMutation.mutateAsync({ steerDetails: v.trim() ? v : null })
+              }
+            />
+
+            <div className="grid gap-4 md:grid-cols-2">
               <EditableField
-                label="Steer Details"
-                value={task.steerDetails ?? ""}
-                placeholder="Implementation guidance, technical recommendations, preferred approaches"
-                editable={canEdit}
-                display={
-                  task.steerDetails ? (
-                    <p className="text-sm text-text-secondary whitespace-pre-wrap">{task.steerDetails}</p>
-                  ) : (
-                    <p className="text-sm text-text-muted italic">Steer details not present</p>
-                  )
-                }
-                onSubmit={async (v) => await updateMutation.mutateAsync({ steerDetails: v.trim() ? v : null })}
-              />
-              <EditableField
+                icon={GuardrailIcon}
                 label="Guardrails"
                 value={task.guardrails?.join("\n") ?? ""}
                 placeholder="One constraint per line"
                 editable={canEdit}
                 display={
                   task.guardrails?.length > 0 ? (
-                    <ul className="space-y-1">
-                      {task.guardrails.map((g: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
-                          <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold shrink-0">{i + 1}</span>
-                          <span className="pt-0.5">{g}</span>
+                    <ol className="space-y-2">
+                      {task.guardrails.map((g, i) => (
+                        <li
+                          key={i}
+                          className="flex items-start gap-2.5 text-sm text-text-secondary"
+                        >
+                          <span
+                            className={cn(
+                              "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold tabular-nums",
+                              TONE_SOFT.warning,
+                            )}
+                          >
+                            {i + 1}
+                          </span>
+                          <span className="pt-px leading-snug">{g}</span>
                         </li>
                       ))}
-                    </ul>
+                    </ol>
                   ) : (
-                    <p className="text-sm text-text-muted italic">Guardrails not present</p>
+                    <EmptyValue>No guardrails</EmptyValue>
                   )
                 }
                 onSubmit={async (v) =>
                   await updateMutation.mutateAsync({
-                    guardrails: v.split("\n").map((s) => s.trim()).filter(Boolean),
+                    guardrails: v
+                      .split("\n")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
                   })
                 }
               />
               <EditableField
-                label="Acceptance Criteria"
+                icon={CriteriaIcon}
+                label="Acceptance criteria"
                 value={task.acceptanceCriteria?.join("\n") ?? ""}
                 placeholder="One criterion per line"
                 editable={canEdit}
                 display={
                   task.acceptanceCriteria?.length > 0 ? (
-                    <ul className="space-y-1.5">
-                      {task.acceptanceCriteria.map((c: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
-                          <svg className="w-4 h-4 mt-0.5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                          <span className="pt-0.5">{c}</span>
+                    <ul className="space-y-2">
+                      {task.acceptanceCriteria.map((c, i) => (
+                        <li
+                          key={i}
+                          className="flex items-start gap-2.5 text-sm text-text-secondary"
+                        >
+                          <CheckIcon
+                            aria-hidden
+                            className="mt-0.5 h-4 w-4 shrink-0 text-success"
+                            strokeWidth={2.5}
+                          />
+                          <span className="pt-px leading-snug">{c}</span>
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-sm text-text-muted italic">Acceptance criteria not present</p>
+                    <EmptyValue>No acceptance criteria</EmptyValue>
                   )
                 }
                 onSubmit={async (v) =>
                   await updateMutation.mutateAsync({
-                    acceptanceCriteria: v.split("\n").map((s) => s.trim()).filter(Boolean),
+                    acceptanceCriteria: v
+                      .split("\n")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
                   })
                 }
               />
             </div>
           </div>
-        </div>
 
-        {ACTIVE_STATUSES.has(task.status) && (
-          <div className="border-b border-border bg-surface px-6 py-4 space-y-2">
-            {task.status === "waiting_plan_review" && (
-              <div className="flex gap-2">
-                <Button onClick={() => doAction("approvePlan")} variant="primary">Approve Plan</Button>
-                <Button onClick={() => doAction("requestPlanChanges", { message: feedback || "Plan changes requested." })} variant="secondary">
-                  Request Changes
-                </Button>
+          <aside className="min-w-0 xl:sticky xl:top-0 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:self-start">
+            <div className="card">
+              <div className="flex h-11 items-center border-b border-border-light px-4">
+                <h2 className="eyebrow">Details</h2>
               </div>
-            )}
-            {task.status === "waiting_code_review" && (
-              <div className="flex gap-2">
-                <Button onClick={() => doAction("approveCode")} variant="primary">Approve Code</Button>
-                <Button onClick={() => doAction("requestCodeChanges", { message: feedback || "Code changes requested." })} variant="secondary">
-                  Request Changes
-                </Button>
-                <Button onClick={() => doAction("requestAiReview")} variant="secondary">AI Review</Button>
+              <div className="grid px-4 py-1 sm:grid-cols-2 sm:gap-x-8 xl:grid-cols-1 xl:divide-y xl:divide-border-light">
+                <EditableField
+                  variant="property"
+                  icon={PriorityIcon}
+                  label="Priority"
+                  value={String(task.priority)}
+                  placeholder="0"
+                  rows={1}
+                  editable={canEdit}
+                  display={
+                    <Badge tone={priorityTone(task.priority)} icon={PriorityIcon}>
+                      P{task.priority}
+                    </Badge>
+                  }
+                  onSubmit={async (v) => {
+                    const p = parseInt(v, 10);
+                    if (isNaN(p)) throw new Error("Priority must be a number");
+                    await updateMutation.mutateAsync({ priority: p });
+                  }}
+                />
+                <EditableField
+                  variant="property"
+                  icon={BranchIcon}
+                  label="Branch"
+                  value={task.recommendedBranch || ""}
+                  placeholder="Branch name"
+                  rows={1}
+                  editable={canEdit}
+                  display={
+                    task.recommendedBranch ? (
+                      <>
+                        <Mono>{task.recommendedBranch}</Mono>
+                        <CopyButton size="xs" value={task.recommendedBranch} label="Copy branch" />
+                      </>
+                    ) : (
+                      <EmptyValue>—</EmptyValue>
+                    )
+                  }
+                  onSubmit={async (v) =>
+                    await updateMutation.mutateAsync({ recommendedBranch: v.trim() })
+                  }
+                />
+                <EditableField
+                  variant="property"
+                  icon={MergeIcon}
+                  label="Merge target"
+                  value={task.mergeBranch}
+                  placeholder="Merge branch"
+                  rows={1}
+                  editable={canEdit}
+                  display={<Mono>{task.mergeBranch}</Mono>}
+                  onSubmit={async (v) =>
+                    await updateMutation.mutateAsync({ mergeBranch: v.trim() })
+                  }
+                />
+                <PropertyRow icon={PlanIcon} label="Requires plan">
+                  <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
+                    {task.requiresPlan ? "Yes" : "No"}
+                  </Badge>
+                </PropertyRow>
+                <PropertyRow icon={WorktreeIcon} label="Worktree">
+                  {task.worktreePath ? (
+                    <>
+                      <Mono>{task.worktreePath}</Mono>
+                      <CopyButton size="xs" value={task.worktreePath} label="Copy worktree path" />
+                    </>
+                  ) : (
+                    <EmptyValue>—</EmptyValue>
+                  )}
+                </PropertyRow>
+                <PropertyRow icon={AgentsIcon} label="Agent">
+                  {task.assignedAgent ? (
+                    <div className="min-w-0">
+                      <div className="truncate font-medium" title={task.assignedAgent.name}>
+                        {task.assignedAgent.name}
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-center justify-end gap-1.5">
+                        <Badge tone={TOOL_TONE[task.assignedAgent.tool] ?? "neutral"}>
+                          {task.assignedAgent.tool}
+                        </Badge>
+                        {task.assignedAgent.model && <Mono muted>{task.assignedAgent.model}</Mono>}
+                      </div>
+                    </div>
+                  ) : (
+                    <EmptyValue>Unassigned</EmptyValue>
+                  )}
+                </PropertyRow>
+                <PropertyRow icon={CalendarIcon} label="Created">
+                  <RelativeTime value={task.createdAt} />
+                </PropertyRow>
+                <PropertyRow icon={ClockIcon} label="Updated">
+                  <RelativeTime value={task.updatedAt} />
+                </PropertyRow>
               </div>
-            )}
-            {task.status === "merged" && (
-              <Button onClick={() => doAction("confirmCompletion")} variant="primary">Confirm Complete</Button>
-            )}
-            {["planning", "coding", "reviewing"].includes(task.status) && (
-              <Button onClick={() => doAction("unblock")} variant="ghost">Unblock</Button>
-            )}
-            <Button onClick={() => doAction("cancel")} variant="danger">Cancel Task</Button>
-            <input
-              className="w-full border border-border rounded-lg px-3 py-1.5 text-sm mt-2 bg-surface text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface transition-all duration-150"
-              placeholder="Add feedback (optional)..."
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
+            </div>
+          </aside>
+
+          <section className="min-w-0 xl:col-start-1 xl:row-start-2">
+            <Tabs
+              label="Task activity"
+              value={tab}
+              onChange={setTab}
+              className="border-b border-border"
+              items={[
+                {
+                  value: "conversation",
+                  label: "Conversation",
+                  icon: ConversationIcon,
+                  count: conversation.length,
+                },
+                { value: "history", label: "History", icon: HistoryIcon, count: history.length },
+              ]}
             />
-          </div>
-        )}
-
-        {mutation.isPending && (
-          <div className="border-b border-border bg-surface px-6 py-2 text-sm text-primary">Processing...</div>
-        )}
-
-        <div className="border-b border-border bg-surface">
-          <div className="flex px-6">
-            {(["conversation", "history"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-4 py-3 text-sm font-medium capitalize transition-colors duration-150 ${
-                  tab === t ? "text-primary border-b-2 border-primary" : "text-text-muted hover:text-text"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="px-6 py-4">
-          {tab === "conversation" && (
-            <div className="space-y-3 max-w-3xl">
-              {task.conversation?.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-text-muted">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  <p className="text-sm">No messages yet.</p>
-                </div>
+            <div
+              key={tab}
+              role="tabpanel"
+              aria-label={tab === "conversation" ? "Conversation" : "History"}
+              className="pt-5 animate-fade-in"
+            >
+              {tab === "conversation" ? (
+                <ConversationTimeline entries={conversation} />
+              ) : (
+                <HistoryTimeline entries={history} />
               )}
-              {[...(task.conversation ?? [])].reverse().map((entry: any, i: number) => (
-                <ConversationEntryCard key={i} entry={entry} />
-              ))}
             </div>
-          )}
-
-          {tab === "history" && (
-            <div className="space-y-2 max-w-3xl">
-              {task.history?.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-12 text-text-muted">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <p className="text-sm">No history yet.</p>
-                </div>
-              )}
-              {task.history?.map((h: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  <span className="text-text-muted">{new Date(h.timestamp).toLocaleString()}</span>
-                  <span className="text-text-muted">&rarr;</span>
-                  <span className="font-medium text-text-secondary">{h.new_status.replace(/_/g, " ")}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          </section>
         </div>
-      </div>
+      </PageBody>
+
+      {confirmCancel && (
+        <ConfirmDialog
+          title="Cancel this task?"
+          icon={CancelTaskIcon}
+          confirmLabel="Cancel task"
+          cancelLabel="Keep task"
+          message={
+            <>
+              Agents stop working on <span className="font-medium text-text">{task.title}</span> and
+              it leaves the queue. This cannot be undone.
+            </>
+          }
+          // Rejects on failure (already toasted), which keeps the dialog open.
+          onConfirm={() => mutation.mutateAsync({ action: "cancel" })}
+          onClose={() => setConfirmCancel(false)}
+        />
+      )}
     </div>
   );
 }
 
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function ConversationTimeline({ entries }: { entries: Task["conversation"] }) {
+  if (entries.length === 0) {
+    return (
+      <EmptyState
+        compact
+        icon={ConversationIcon}
+        title="No messages yet"
+        description="Plans, reviews and agent notes will show up here."
+      />
+    );
+  }
+  // Newest first; keys are the original indexes, which stay stable as entries are appended.
+  const newestFirst = entries.map((entry, index) => ({ entry, index })).reverse();
   return (
-    <div>
-      <label className="text-xs font-medium text-text-muted uppercase tracking-wider">{label}</label>
-      <div className={`text-sm text-text mt-0.5 ${mono ? "font-mono" : ""}`}>{value}</div>
+    <ol className="space-y-5">
+      {newestFirst.map(({ entry, index }, i) => (
+        <li key={index} className="stagger relative" style={stagger(i)}>
+          {i < newestFirst.length - 1 && (
+            <span
+              aria-hidden
+              className="absolute -bottom-4 left-4 top-9 w-px -translate-x-1/2 bg-border"
+            />
+          )}
+          <ConversationEntryCard entry={entry} />
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function HistoryTimeline({ entries }: { entries: Task["history"] }) {
+  if (entries.length === 0) {
+    return (
+      <EmptyState
+        compact
+        icon={HistoryIcon}
+        title="No history yet"
+        description="Status changes will be listed here."
+      />
+    );
+  }
+  return (
+    <ol>
+      {entries.map((h, i) => {
+        const meta = taskStatusMeta(h.new_status);
+        const Icon = meta.icon;
+        return (
+          <li key={i} className="stagger relative flex gap-3 pb-5 last:pb-0" style={stagger(i)}>
+            {i < entries.length - 1 && (
+              <span
+                aria-hidden
+                className="absolute bottom-1 left-3.5 top-8 w-px -translate-x-1/2 bg-border"
+              />
+            )}
+            <div
+              className={cn(
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+                TONE_SOFT[meta.tone],
+              )}
+            >
+              <Icon aria-hidden className="h-3.5 w-3.5" />
+            </div>
+            <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+              {h.pre_status && (
+                <>
+                  <span className="text-[13px] text-text-muted">
+                    {taskStatusMeta(h.pre_status).label}
+                  </span>
+                  <ChevronRightIcon aria-hidden className="h-3.5 w-3.5 text-text-muted" />
+                </>
+              )}
+              <StatusBadge status={h.new_status} />
+              <RelativeTime value={h.timestamp} className="ml-auto text-xs text-text-muted" />
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function EmptyValue({ children }: { children: ReactNode }) {
+  return <span className="text-sm italic text-text-muted">{children}</span>;
+}
+
+function Mono({ children, muted = false }: { children: string; muted?: boolean }) {
+  return (
+    <span
+      title={children}
+      className={cn("truncate font-mono text-xs", muted ? "text-text-muted" : "text-text")}
+    >
+      {children}
+    </span>
+  );
+}
+
+function RelativeTime({ value, className }: { value: string; className?: string }) {
+  return (
+    <time dateTime={value} title={formatDateTime(value)} className={className}>
+      {formatRelative(value)}
+    </time>
+  );
+}
+
+function TaskDetailSkeleton() {
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden" aria-busy="true">
+      <div className="flex min-h-16 shrink-0 items-center gap-4 border-b border-border bg-surface/80 px-6 py-3">
+        <Skeleton className="h-8 w-8 rounded-lg" />
+        <Skeleton className="h-5 w-72 max-w-[50%]" />
+        <Skeleton className="h-6 w-28 rounded-full" />
+      </div>
+      <div className="flex-1 overflow-hidden px-6 py-6">
+        <div className="mx-auto grid max-w-[1400px] gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4">
+            <div className="card space-y-3 p-4">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-4 w-1/2" />
+              <div className="flex gap-2 pt-1">
+                <Skeleton className="h-9 w-32 rounded-lg" />
+                <Skeleton className="h-9 w-36 rounded-lg" />
+              </div>
+            </div>
+            <div className="card space-y-3 p-4">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-11/12" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {[0, 1].map((i) => (
+                <div key={i} className="card space-y-3 p-4">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card space-y-4 self-start p-4">
+            <Skeleton className="h-3 w-14" />
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="flex items-center justify-between gap-4">
+                <Skeleton className="h-3.5 w-20" />
+                <Skeleton className="h-3.5 w-24" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

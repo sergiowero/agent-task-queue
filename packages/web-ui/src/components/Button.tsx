@@ -1,41 +1,103 @@
 import { forwardRef } from "react";
+import type { LucideIcon } from "../lib/icons";
+import { cn } from "../lib/cn";
+import { Spinner } from "./Spinner";
+
+export type ButtonVariant =
+  "primary" | "secondary" | "ghost" | "danger" | "danger-ghost" | "subtle";
+export type ButtonSize = "sm" | "md" | "lg";
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "danger" | "ghost";
-  size?: "sm" | "md" | "lg";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  /** Leading icon. Replaced by a spinner while `loading`. */
+  icon?: LucideIcon;
+  /** Trailing icon. */
+  iconRight?: LucideIcon;
+  /** Shows a spinner and disables the button. */
+  loading?: boolean;
 }
 
-const variantStyles = {
-  primary: "bg-primary text-white hover:bg-primary-hover shadow-sm hover:shadow-md active:scale-[0.97]",
-  secondary: "bg-transparent border border-border text-text hover:bg-surface-secondary hover:border-text-muted active:scale-[0.97]",
-  danger: "bg-danger text-white hover:bg-danger-hover shadow-sm hover:shadow-md active:scale-[0.97]",
-  ghost: "bg-transparent text-text-secondary hover:text-text hover:bg-surface-secondary active:scale-[0.97]",
+export const buttonVariants: Record<ButtonVariant, string> = {
+  primary:
+    "bg-primary text-primary-fg shadow-sm hover:bg-primary-hover hover:shadow-glow " +
+    "[background-image:linear-gradient(180deg,rgb(255_255_255/0.12),transparent)]",
+  secondary:
+    "border border-border bg-surface text-text shadow-xs hover:border-border-strong hover:bg-surface-secondary",
+  ghost: "text-text-secondary hover:bg-surface-secondary hover:text-text",
+  subtle: "bg-primary/10 text-primary hover:bg-primary/15",
+  danger:
+    "bg-danger text-danger-fg shadow-sm hover:bg-danger-hover " +
+    "[background-image:linear-gradient(180deg,rgb(255_255_255/0.12),transparent)]",
+  "danger-ghost": "text-danger hover:bg-danger/10",
 };
 
-const sizeStyles = {
-  sm: "px-3 py-1.5 text-xs",
-  md: "px-4 py-2 text-sm",
-  lg: "px-6 py-2.5 text-base",
+const sizeStyles: Record<ButtonSize, string> = {
+  sm: "h-8 gap-1.5 rounded-lg px-2.5 text-xs",
+  md: "h-9 gap-2 rounded-lg px-3.5 text-sm",
+  lg: "h-10 gap-2 rounded-xl px-5 text-sm",
 };
+
+const iconSize: Record<ButtonSize, string> = {
+  sm: "h-3.5 w-3.5",
+  md: "h-4 w-4",
+  lg: "h-4 w-4",
+};
+
+export const buttonBase =
+  "group/button relative inline-flex select-none items-center justify-center whitespace-nowrap font-medium " +
+  "transition-all duration-150 ease-out active:scale-[0.97] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface " +
+  "disabled:pointer-events-none disabled:opacity-50";
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = "primary", size = "md", className = "", disabled, children, ...props }, ref) => {
+  (
+    {
+      variant = "primary",
+      size = "md",
+      icon: Icon,
+      iconRight: IconRight,
+      loading = false,
+      className,
+      disabled,
+      children,
+      type = "button",
+      ...props
+    },
+    ref,
+  ) => {
     return (
       <button
         ref={ref}
-        disabled={disabled}
-        className={`
-          inline-flex items-center justify-center font-medium rounded-lg
-          transition-all duration-150 ease-in-out
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface
-          disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100
-          ${variantStyles[variant]}
-          ${sizeStyles[size]}
-          ${className}
-        `}
+        type={type}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
+        className={cn(buttonBase, buttonVariants[variant], sizeStyles[size], className)}
         {...props}
       >
+        {loading ? (
+          <Spinner className={iconSize[size]} />
+        ) : (
+          Icon && (
+            <Icon
+              aria-hidden
+              className={cn(
+                iconSize[size],
+                "shrink-0 transition-transform duration-200 ease-out-expo",
+              )}
+            />
+          )
+        )}
         {children}
+        {IconRight && !loading && (
+          <IconRight
+            aria-hidden
+            className={cn(
+              iconSize[size],
+              "shrink-0 transition-transform duration-200 ease-out-expo group-hover/button:translate-x-0.5",
+            )}
+          />
+        )}
       </button>
     );
   },

@@ -1,125 +1,263 @@
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { useState, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import type { Project } from "../lib/api";
 import { api } from "../lib/api";
-import { EditProjectModal } from "../components/EditProjectModal";
+import {
+  AddIcon,
+  BrowseIcon,
+  CalendarIcon,
+  ChevronRightIcon,
+  DeleteIcon,
+  EditIcon,
+  FolderIcon,
+  HashIcon,
+  ProjectsIcon,
+  RefreshIcon,
+} from "../lib/icons";
+import { formatDate, formatDateTime } from "../lib/format";
 import { Button } from "../components/Button";
+import { CopyButton } from "../components/CopyButton";
+import { DeleteProjectDialog, EditProjectModal } from "../components/EditProjectModal";
+import { EmptyState } from "../components/EmptyState";
+import { Field } from "../components/Field";
+import { IconButton } from "../components/IconButton";
 import { Input } from "../components/Input";
+import { Modal, useModal } from "../components/Modal";
+import { CountPill, PageBody, PageHeader } from "../components/PageHeader";
 import { Skeleton } from "../components/Skeleton";
 
-function CreateProjectModal({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const [id, setId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [workingDirectory, setWorkingDirectory] = useState("");
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The API requires project ids to be UUIDs. */
+function newProjectId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  // randomUUID only exists in secure contexts (e.g. not over plain http on a LAN IP).
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+const sanitizeId = (value: string) => value.toLowerCase().replace(/[^0-9a-f-]/g, "");
+
+/** Path input with a Browse button. Takes the `id` a surrounding Field hands out. */
+function DirectoryInput({
+  id,
+  value,
+  onChange,
+}: {
+  id?: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const dirInputRef = useRef<HTMLInputElement>(null);
-
-  const sanitizeId = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-  const mutation = useMutation({
-    mutationFn: () => api.createProject({ id, displayName, workingDirectory }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      onClose();
-    },
-  });
 
   const handleDirSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const relativePath = files[0].webkitRelativePath;
       if (relativePath) {
-        setWorkingDirectory(relativePath.split("/")[0]);
+        onChange(relativePath.split("/")[0]);
       }
     }
     e.target.value = "";
   };
 
-  const canCreate = id && displayName && workingDirectory && !mutation.isPending;
+  return (
+    <div className="flex gap-2">
+      <Input
+        id={id}
+        placeholder="/path/to/repo"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="font-mono"
+        spellCheck={false}
+        wrapperClassName="flex-1"
+      />
+      <Button variant="secondary" icon={BrowseIcon} onClick={() => dirInputRef.current?.click()}>
+        Browse
+      </Button>
+      <input
+        ref={dirInputRef}
+        type="file"
+        // `webkitdirectory` is not in React's input typings.
+        {...({ webkitdirectory: "" } as object)}
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden
+        onChange={handleDirSelect}
+      />
+    </div>
+  );
+}
+
+function CreateProjectModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const modal = useModal(onClose);
+  const [id, setId] = useState(newProjectId);
+  const [displayName, setDisplayName] = useState("");
+  const [workingDirectory, setWorkingDirectory] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () => api.createProject({ id, displayName, workingDirectory }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project created");
+      modal.close();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const idValid = UUID_RE.test(id);
+  const canCreate = idValid && !!displayName && !!workingDirectory && !mutation.isPending;
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-surface rounded-xl shadow-lg w-full max-w-lg p-6 transition-colors duration-300">
-        <h2 className="text-lg font-semibold mb-4 text-text">New Project</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">ID *</label>
-            <Input
-              placeholder="lowercase-alphanumeric"
-              value={id}
-              onChange={(e) => setId(sanitizeId(e.target.value))}
-              className="font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Display Name *</label>
-            <Input
-              placeholder="Display Name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-text mb-1">Working Directory *</label>
-            <div className="flex gap-2">
-              <Input
-                className="flex-1 font-mono"
-                placeholder="Working Directory"
-                value={workingDirectory}
-                onChange={(e) => setWorkingDirectory(e.target.value)}
-              />
-              <button
-                onClick={() => dirInputRef.current?.click()}
-                className="border border-border bg-surface-secondary text-text px-3 py-2 rounded-lg text-sm hover:bg-primary hover:text-white transition-colors"
-              >
-                Browse...
-              </button>
-              <input
-                ref={dirInputRef}
-                type="file"
-                // @ts-ignore
-                webkitdirectory=""
-                className="hidden"
-                onChange={handleDirSelect}
-              />
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <Button onClick={onClose} variant="secondary">Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={!canCreate} variant="primary">
-            {mutation.isPending ? "Creating..." : "Create"}
+    <Modal
+      {...modal.props}
+      dismissible={!mutation.isPending}
+      icon={AddIcon}
+      title="New project"
+      description="A project maps tasks to a working directory on disk."
+      onSubmit={() => canCreate && mutation.mutate()}
+      footer={
+        <>
+          <Button variant="secondary" onClick={modal.close}>
+            Cancel
           </Button>
+          <Button type="submit" icon={AddIcon} loading={mutation.isPending} disabled={!canCreate}>
+            Create project
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field
+          label="ID"
+          icon={HashIcon}
+          required
+          hint={idValid || !id ? "A UUID, generated for you." : undefined}
+        >
+          <Input
+            value={id}
+            onChange={(e) => setId(sanitizeId(e.target.value))}
+            error={id && !idValid ? "Must be a UUID (8-4-4-4-12 hex digits)." : undefined}
+            className="font-mono"
+            spellCheck={false}
+            trailing={
+              <IconButton
+                icon={RefreshIcon}
+                label="Generate new ID"
+                size="xs"
+                onClick={() => setId(newProjectId())}
+              />
+            }
+          />
+        </Field>
+        <Field label="Display name" required>
+          <Input
+            placeholder="My project"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            autoFocus
+          />
+        </Field>
+        <Field label="Working directory" icon={FolderIcon} required>
+          <DirectoryInput value={workingDirectory} onChange={setWorkingDirectory} />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+function ProjectCard({
+  project,
+  index,
+  onOpen,
+  onEdit,
+  onDelete,
+}: {
+  project: Project;
+  index: number;
+  onOpen: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const initial = project.displayName.trim().charAt(0).toUpperCase();
+
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      aria-label={`Open ${project.displayName} board`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target === e.currentTarget) onOpen();
+      }}
+      className="card-interactive group stagger flex flex-col p-4"
+      style={{ "--i": index } as CSSProperties}
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-accent/10 text-base font-semibold text-primary ring-1 ring-inset ring-primary/15 transition-transform duration-300 ease-spring group-hover:scale-105">
+          {initial || <FolderIcon aria-hidden className="h-5 w-5" />}
         </div>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <h3 className="truncate text-sm font-semibold text-text">{project.displayName}</h3>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 text-text-muted">
+            <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate font-mono text-xs" title={project.workingDirectory}>
+              {project.workingDirectory}
+            </span>
+            <CopyButton value={project.workingDirectory} label="Copy path" size="xs" />
+          </div>
+        </div>
+        <div
+          className="-mr-1 -mt-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <IconButton icon={EditIcon} label="Edit project" onClick={onEdit} />
+          <IconButton
+            icon={DeleteIcon}
+            label="Delete project"
+            variant="danger"
+            onClick={onDelete}
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border-light pt-3 text-xs text-text-muted">
+        <span className="flex items-center gap-1.5" title={formatDateTime(project.createdAt)}>
+          <CalendarIcon aria-hidden className="h-3.5 w-3.5" />
+          Created {formatDate(project.createdAt)}
+        </span>
+        <span className="flex items-center gap-0.5 font-medium transition-colors duration-150 group-hover:text-primary">
+          Open board
+          <ChevronRightIcon
+            aria-hidden
+            className="h-3.5 w-3.5 transition-transform duration-200 ease-out-expo group-hover:translate-x-0.5"
+          />
+        </span>
       </div>
     </div>
   );
 }
 
-function DeleteConfirmModal({ project, onClose }: { project: any; onClose: () => void }) {
-  const queryClient = useQueryClient();
-
-  const mutation = useMutation({
-    mutationFn: () => api.deleteProject(project.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      onClose();
-    },
-  });
-
+function ProjectCardSkeleton() {
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-      <div className="bg-surface rounded-xl shadow-lg w-full max-w-sm p-6 transition-colors duration-300">
-        <h2 className="text-lg font-semibold mb-2 text-text">Delete Project</h2>
-        <p className="text-sm text-text-secondary mb-4">
-          Are you sure you want to delete <span className="font-medium text-text">{project.displayName}</span>? Tasks in this project will become orphaned.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary">Cancel</Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} variant="danger">
-            {mutation.isPending ? "Deleting..." : "Delete"}
-          </Button>
+    <div className="card flex flex-col p-4">
+      <div className="flex items-start gap-3">
+        <Skeleton className="h-11 w-11 rounded-xl" />
+        <div className="flex-1 space-y-2 pt-1">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-3 w-48" />
         </div>
+      </div>
+      <div className="mt-4 flex justify-between border-t border-border-light pt-3">
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="h-3 w-16" />
       </div>
     </div>
   );
@@ -128,8 +266,8 @@ function DeleteConfirmModal({ project, onClose }: { project: any; onClose: () =>
 export function ProjectsPage() {
   const navigate = useNavigate();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingProject, setEditingProject] = useState<any>(null);
-  const [deletingProject, setDeletingProject] = useState<any>(null);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
@@ -137,94 +275,62 @@ export function ProjectsPage() {
   });
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
-        <h2 className="font-semibold text-text">Projects</h2>
-        <div className="flex-1" />
-        <Button onClick={() => setShowCreateModal(true)} variant="primary" size="sm">
-          New Project
-        </Button>
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        icon={ProjectsIcon}
+        title="Projects"
+        description="Each project points tasks at a working directory."
+        meta={!isLoading && <CountPill>{projects.length}</CountPill>}
+        actions={
+          <Button icon={AddIcon} onClick={() => setShowCreateModal(true)}>
+            New project
+          </Button>
+        }
+      />
 
-      <div className="flex-1 overflow-auto p-4">
+      <PageBody>
         {isLoading && (
-          <div className="space-y-2">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-4 p-4 rounded-xl border border-border">
-                <Skeleton className="w-10 h-10 rounded-full" />
-                <div className="flex-1 space-y-1">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-3 w-60" />
-                </div>
-                <Skeleton className="h-3 w-16" />
-              </div>
+              <ProjectCardSkeleton key={i} />
             ))}
           </div>
         )}
         {!isLoading && projects.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-text-muted">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2 7.5V16a2 2 0 002 2h16a2 2 0 002-2V7.5M2 7.5l10-5 10 5M2 7.5l10 5 10-5M2 7.5v9l10 5 10-5v-9" />
-            </svg>
-            <p className="text-sm">No projects yet.</p>
-            <p className="text-xs mt-1">Create one to get started.</p>
-          </div>
+          <EmptyState
+            icon={ProjectsIcon}
+            title="No projects yet"
+            description="Create a project to group tasks and tell agents where the code lives."
+            action={
+              <Button icon={AddIcon} onClick={() => setShowCreateModal(true)}>
+                New project
+              </Button>
+            }
+          />
         )}
         {projects.length > 0 && (
-          <div className="space-y-2">
-            {projects.map((project: any) => (
-              <div
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {projects.map((project, i) => (
+              <ProjectCard
                 key={project.id}
-                className="flex items-center gap-4 p-4 rounded-xl border border-border bg-surface hover:bg-surface-secondary hover:border-primary/30 hover:shadow-sm transition-all duration-150 cursor-pointer group"
-                onClick={() => navigate(`/board?projectId=${project.id}`)}
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2 7.5V16a2 2 0 002 2h16a2 2 0 002-2V7.5M2 7.5l10-5 10 5M2 7.5l10 5 10-5M2 7.5v9l10 5 10-5v-9" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-text truncate">{project.displayName}</div>
-                  <div className="text-xs text-text-muted font-mono truncate">{project.workingDirectory}</div>
-                </div>
-                <div className="text-xs text-text-muted shrink-0">
-                  {new Date(project.createdAt).toLocaleDateString()}
-                </div>
-                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingProject(project);
-                    }}
-                    className="p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-secondary transition-colors"
-                    title="Edit"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeletingProject(project);
-                    }}
-                    className="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                    title="Delete"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
+                project={project}
+                index={i}
+                onOpen={() => navigate(`/board?projectId=${project.id}`)}
+                onEdit={() => setEditingProject(project)}
+                onDelete={() => setDeletingProject(project)}
+              />
             ))}
           </div>
         )}
-      </div>
+      </PageBody>
 
       {showCreateModal && <CreateProjectModal onClose={() => setShowCreateModal(false)} />}
-      {editingProject && <EditProjectModal project={editingProject} onClose={() => setEditingProject(null)} />}
-      {deletingProject && <DeleteConfirmModal project={deletingProject} onClose={() => setDeletingProject(null)} />}
+      {editingProject && (
+        <EditProjectModal project={editingProject} onClose={() => setEditingProject(null)} />
+      )}
+      {deletingProject && (
+        <DeleteProjectDialog project={deletingProject} onClose={() => setDeletingProject(null)} />
+      )}
     </div>
   );
 }

@@ -1,61 +1,60 @@
+import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
+import type { LucideIcon } from "../lib/icons";
+import { ChevronRightIcon, DownloadIcon, ToolsIcon } from "../lib/icons";
 import { TOOLS } from "../lib/tools";
+import { Badge } from "../components/Badge";
+import { PageBody, PageHeader } from "../components/PageHeader";
 
-function ToolIcon({ icon }: { icon: string }) {
-  if (icon === "download") {
-    return (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="h-8 w-8"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={1.5}
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
-        />
-      </svg>
-    );
-  }
-  return null;
-}
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  download: DownloadIcon,
+};
 
 export function ToolsPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="h-14 border-b border-border bg-surface flex items-center px-4 gap-4 shrink-0 text-text">
-        <h2 className="font-semibold text-text">Tools</h2>
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <PageHeader
+        icon={ToolsIcon}
+        title="Tools"
+        description="Helpers for setting up AgentQ on your machine."
+      />
 
-      <div className="flex-1 overflow-auto p-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {TOOLS.map((tool) => (
-            <button
-              key={tool.id}
-              onClick={() => navigate(`/tools/${tool.id}`)}
-              className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 cursor-pointer group text-left"
-            >
-              <div className="text-primary group-hover:text-primary/80 mb-3">
-                <ToolIcon icon={tool.icon} />
-              </div>
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="font-semibold text-text">{tool.name}</h3>
-                {tool.badge && (
-                  <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 leading-none">
-                    {tool.badge}
-                  </span>
-                )}
-              </div>
-              <p className="text-sm text-text-secondary">{tool.description}</p>
-            </button>
-          ))}
+      <PageBody>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {TOOLS.map((tool, i) => {
+            const Icon = TOOL_ICONS[tool.icon] ?? ToolsIcon;
+            return (
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => navigate(`/tools/${tool.id}`)}
+                className="card-interactive group stagger flex flex-col p-5 text-left"
+                style={{ "--i": i } as CSSProperties}
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-accent/10 text-primary ring-1 ring-inset ring-primary/15 transition-transform duration-300 ease-spring group-hover:scale-105">
+                  <Icon aria-hidden className="h-5 w-5" />
+                </div>
+                <div className="mt-4 flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-text">{tool.name}</h3>
+                  {tool.badge && <Badge tone="warning">{tool.badge}</Badge>}
+                </div>
+                <p className="mt-1 flex-1 text-sm leading-relaxed text-text-secondary">
+                  {tool.description}
+                </p>
+                <span className="mt-4 inline-flex items-center gap-0.5 text-xs font-medium text-text-muted transition-colors duration-150 group-hover:text-primary">
+                  Open
+                  <ChevronRightIcon
+                    aria-hidden
+                    className="h-3.5 w-3.5 transition-transform duration-200 ease-out-expo group-hover:translate-x-0.5"
+                  />
+                </span>
+              </button>
+            );
+          })}
         </div>
-      </div>
+      </PageBody>
     </div>
   );
 }

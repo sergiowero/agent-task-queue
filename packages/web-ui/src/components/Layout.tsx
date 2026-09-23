@@ -1,171 +1,238 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { useLayoutEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import type { LucideIcon } from "../lib/icons";
+import {
+  ActivityIcon,
+  AgentsIcon,
+  BoardIcon,
+  CollapseIcon,
+  ExpandIcon,
+  ProjectsIcon,
+  RunnersIcon,
+  ToolsIcon,
+} from "../lib/icons";
+import { cn } from "../lib/cn";
+import { IconButton } from "./IconButton";
 import { ThemeToggle } from "./ThemeToggle";
+import { Tooltip } from "./Tooltip";
 
-function BoardIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
-      />
-    </svg>
-  );
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  /** Extra path prefixes that highlight this item. */
+  match?: string[];
 }
 
-function ProjectsIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M2 7.5V16a2 2 0 002 2h16a2 2 0 002-2V7.5M2 7.5l10-5 10 5M2 7.5l10 5 10-5M2 7.5v9l10 5 10-5v-9"
-      />
-    </svg>
-  );
-}
-
-function AgentsIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5"
-      />
-    </svg>
-  );
-}
-
-function RunnersIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z"
-      />
-    </svg>
-  );
-}
-
-function ActivityIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"
-      />
-    </svg>
-  );
-}
-
-function ToolsIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M11.42 15.17l-5.384 3.18A1.125 1.125 0 014.5 17.29V6.71a1.125 1.125 0 011.536-1.06l5.384 3.18m0 0l5.384-3.18A1.125 1.125 0 0118.375 6.71v10.58a1.125 1.125 0 01-1.536 1.06l-5.384-3.18m0-7.26v7.26"
-      />
-    </svg>
-  );
-}
-
-const NAV_ITEMS = [
-  { to: "/board", label: "Board", icon: BoardIcon },
-  { to: "/projects", label: "Projects", icon: ProjectsIcon },
-  { to: "/agents", label: "Agents", icon: AgentsIcon },
-  { to: "/runners", label: "Runners", icon: RunnersIcon },
-  { to: "/activity", label: "Activity", icon: ActivityIcon },
-  { to: "/tools", label: "Tools", icon: ToolsIcon },
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Work",
+    items: [
+      { to: "/board", label: "Board", icon: BoardIcon, match: ["/tasks"] },
+      { to: "/projects", label: "Projects", icon: ProjectsIcon },
+    ],
+  },
+  {
+    label: "Automation",
+    items: [
+      { to: "/runners", label: "Runners", icon: RunnersIcon },
+      { to: "/agents", label: "Agents", icon: AgentsIcon },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [
+      { to: "/activity", label: "Activity", icon: ActivityIcon },
+      { to: "/tools", label: "Tools", icon: ToolsIcon },
+    ],
+  },
 ];
 
-export function Layout() {
+const COLLAPSED_KEY = "agentq-sidebar-collapsed";
+
+function readCollapsed() {
+  try {
+    const stored = localStorage.getItem(COLLAPSED_KEY);
+    if (stored !== null) return stored === "1";
+  } catch {
+    // Fall back to the viewport width.
+  }
+  return window.innerWidth < 900;
+}
+
+function isActive(item: NavItem, pathname: string) {
+  return [item.to, ...(item.match ?? [])].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/** Brand mark: a gradient tile with three queue lines. */
+function Logo({ className }: { className?: string }) {
   return (
-    <div className="flex h-screen bg-surface-secondary">
-      <aside className="w-56 bg-surface border-r border-border flex flex-col">
-        <div className="px-4 py-5 border-b border-border">
-          <h1 className="text-text font-bold text-lg tracking-tight">AgentQ</h1>
-          <p className="text-xs text-text-muted">your 100x engineer tool</p>
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
+      <defs>
+        <linearGradient id="agentq-logo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#6366f1" />
+          <stop offset="1" stopColor="#a855f7" />
+        </linearGradient>
+      </defs>
+      <rect width="32" height="32" rx="9" fill="url(#agentq-logo)" />
+      <path
+        d="M9 11h14M9 16h10M9 21h6"
+        stroke="white"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+export function Layout() {
+  const { pathname } = useLocation();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const navRef = useRef<HTMLElement>(null);
+  const [indicator, setIndicator] = useState<{ top: number; height: number } | null>(null);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      try {
+        localStorage.setItem(COLLAPSED_KEY, prev ? "0" : "1");
+      } catch {
+        // Not persisting is fine.
+      }
+      return !prev;
+    });
+  }
+
+  // Slide the highlight to the active item.
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>("[data-active='true']");
+    if (!nav || !active) {
+      setIndicator(null);
+      return;
+    }
+    setIndicator({ top: active.offsetTop, height: active.offsetHeight });
+  }, [pathname, collapsed]);
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-canvas">
+      <aside
+        className={cn(
+          "relative z-30 flex shrink-0 flex-col border-r border-border bg-surface/60 backdrop-blur-xl",
+          "transition-[width] duration-300 ease-out-expo",
+          collapsed ? "w-[68px]" : "w-[244px]",
+        )}
+      >
+        <div className="flex h-16 shrink-0 items-center gap-3 overflow-hidden px-4">
+          <Logo className="h-9 w-9 shrink-0 drop-shadow-[0_4px_12px_rgb(99_102_241/0.35)] transition-transform duration-300 ease-spring hover:rotate-[-6deg] hover:scale-105" />
+          <div
+            className={cn(
+              "min-w-0 transition-all duration-200",
+              collapsed ? "pointer-events-none -translate-x-2 opacity-0" : "opacity-100",
+            )}
+          >
+            <div className="truncate text-[15px] font-bold tracking-tight text-text">AgentQ</div>
+            <div className="truncate text-[11px] text-text-muted">your 100x engineer tool</div>
+          </div>
         </div>
 
-        <nav className="flex-1 px-2 py-4 space-y-0.5">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-150 relative ${
-                  isActive
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-text-secondary hover:text-text hover:bg-surface-secondary"
-                }`
-              }
+        <nav ref={navRef} className="relative flex-1 overflow-y-auto overflow-x-hidden px-3 py-3">
+          {indicator && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute left-3 right-3 rounded-lg bg-primary/10 ring-1 ring-inset ring-primary/15 transition-all duration-300 ease-out-expo"
+              style={{ top: indicator.top, height: indicator.height }}
             >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-full" />
-                  )}
-                  <item.icon />
-                  <span>{item.label}</span>
-                </>
-              )}
-            </NavLink>
+              <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-x-[5px] -translate-y-1/2 rounded-full bg-primary" />
+            </span>
+          )}
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.label} className={cn(gi > 0 && "mt-5")}>
+              <div
+                className={cn(
+                  "eyebrow mb-1.5 h-4 overflow-hidden whitespace-nowrap px-3 transition-opacity duration-200",
+                  collapsed && "opacity-0",
+                )}
+              >
+                {group.label}
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = isActive(item, pathname);
+                  const link = (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      data-active={active}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "group/nav relative flex h-9 items-center gap-3 rounded-lg px-3 text-sm",
+                        "transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                        active
+                          ? "font-medium text-primary"
+                          : "text-text-secondary hover:bg-surface-secondary hover:text-text",
+                      )}
+                    >
+                      <item.icon
+                        aria-hidden
+                        className={cn(
+                          "h-[18px] w-[18px] shrink-0 transition-transform duration-300 ease-spring",
+                          !active && "group-hover/nav:scale-110",
+                        )}
+                        strokeWidth={active ? 2.25 : 2}
+                      />
+                      <span
+                        className={cn(
+                          "truncate transition-opacity duration-200",
+                          collapsed && "opacity-0",
+                        )}
+                      >
+                        {item.label}
+                      </span>
+                    </NavLink>
+                  );
+                  return collapsed ? (
+                    <Tooltip key={item.to} content={item.label} side="right" delay={100}>
+                      {link}
+                    </Tooltip>
+                  ) : (
+                    link
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </nav>
 
-        <div className="px-4 py-3 border-t border-border">
-          <ThemeToggle />
+        <div className="shrink-0 space-y-2 border-t border-border p-3">
+          {collapsed ? (
+            <div className="flex justify-center">
+              <ThemeToggle compact />
+            </div>
+          ) : (
+            <ThemeToggle />
+          )}
+          <div className={cn("flex", collapsed ? "justify-center" : "justify-end")}>
+            <IconButton
+              icon={collapsed ? ExpandIcon : CollapseIcon}
+              label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              tooltipSide="right"
+              onClick={toggleCollapsed}
+            />
+          </div>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Outlet />
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(ellipse_60%_100%_at_50%_0%,rgb(var(--primary)/0.07),transparent)]"
+        />
+        <div key={pathname} className="relative flex min-h-0 flex-1 flex-col animate-page-in">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

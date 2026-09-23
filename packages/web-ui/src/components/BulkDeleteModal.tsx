@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
 import toast from "react-hot-toast";
 import { api } from "../lib/api";
-import { Button } from "./Button";
+import { DeleteIcon } from "../lib/icons";
+import { pluralize } from "../lib/format";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface BulkDeleteModalProps {
   taskIds: string[];
@@ -12,52 +13,41 @@ interface BulkDeleteModalProps {
 
 export function BulkDeleteModal({ taskIds, onClose, onDeleted }: BulkDeleteModalProps) {
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  const count = pluralize(taskIds.length, "task");
 
   const mutation = useMutation({
     mutationFn: () => Promise.all(taskIds.map((id) => api.deleteTask(id))),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      toast.success(`${taskIds.length} tasks deleted`);
+      toast.success(`${count} deleted`);
       onDeleted?.();
-      onClose();
     },
     onError: (e: Error) => {
       toast.error(e.message);
     },
+    // Some deletions may have gone through even when another failed.
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
   });
 
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in"
-      role="dialog"
-      aria-modal="true"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="bg-surface rounded-xl shadow-lg w-full max-w-sm p-6 transition-colors duration-300">
-        <h2 className="text-lg font-semibold mb-2 text-text">Delete {taskIds.length} tasks</h2>
-        <p className="text-sm text-text-secondary mb-4">
-          Are you sure you want to delete all {taskIds.length} selected tasks? This cannot be undone.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button onClick={onClose} variant="secondary" disabled={mutation.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending} variant="danger">
-            {mutation.isPending ? "Deleting..." : "Delete all"}
-          </Button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      title={`Delete ${count}`}
+      icon={DeleteIcon}
+      confirmLabel={taskIds.length === 1 ? "Delete" : "Delete all"}
+      message={
+        taskIds.length === 1 ? (
+          "The selected task will be permanently deleted. This cannot be undone."
+        ) : (
+          <>
+            All <span className="font-medium text-text">{count}</span> you selected will be
+            permanently deleted. This cannot be undone.
+          </>
+        )
+      }
+      // Rejects on failure, which keeps the dialog open for a retry.
+      onConfirm={() => mutation.mutateAsync()}
+      onClose={onClose}
+    />
   );
 }

@@ -1,51 +1,35 @@
-import { MarkdownRenderer } from "./MarkdownRenderer";
+import type { LucideIcon } from "../lib/icons";
+import {
+  AgentsIcon,
+  InfoIcon,
+  MergeIcon,
+  PlanIcon,
+  ReviewIcon,
+  TerminalIcon,
+  UserIcon,
+} from "../lib/icons";
+import type { Tone } from "../lib/status";
+import { TONE_SOFT } from "../lib/status";
+import { formatDateTime, formatRelative } from "../lib/format";
+import { cn } from "../lib/cn";
 import { Badge } from "./Badge";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface ConversationEntry {
   authorName: string;
   timestamp: string;
   message: string;
-  messageType?: "user" | "agent" | "plan" | "code" | "review" | "merge" | "system";
+  messageType?: "user" | "agent" | "plan" | "code" | "review" | "merge" | "system" | (string & {});
 }
 
-const TYPE_VARIANTS: Record<string, "default" | "success" | "warning" | "danger" | "info" | "purple"> = {
-  plan: "purple",
-  code: "info",
-  review: "warning",
-  merge: "success",
-  user: "default",
-  agent: "default",
-  system: "default",
-};
-
-const TYPE_LABELS: Record<string, string> = {
-  plan: "Plan",
-  code: "Code",
-  review: "Review",
-  merge: "Merge",
-  user: "User",
-  agent: "Agent",
-  system: "System",
-};
-
-const BORDER_COLORS: Record<string, string> = {
-  plan: "border-violet-400 dark:border-violet-500",
-  code: "border-blue-400 dark:border-blue-500",
-  review: "border-amber-400 dark:border-amber-500",
-  merge: "border-green-400 dark:border-green-500",
-  user: "border-gray-300 dark:border-gray-600",
-  agent: "border-gray-300 dark:border-gray-600",
-  system: "border-gray-200 dark:border-gray-700",
-};
-
-const BG_TINTS: Record<string, string> = {
-  plan: "bg-violet-50/40 dark:bg-violet-900/10",
-  code: "bg-blue-50/40 dark:bg-blue-900/10",
-  review: "bg-amber-50/40 dark:bg-amber-900/10",
-  merge: "bg-green-50/40 dark:bg-green-900/10",
-  user: "bg-transparent",
-  agent: "bg-surface-secondary/50",
-  system: "bg-transparent",
+const TYPE_META: Record<string, { label: string; tone: Tone; icon: LucideIcon }> = {
+  plan: { label: "Plan", tone: "accent", icon: PlanIcon },
+  code: { label: "Code", tone: "info", icon: TerminalIcon },
+  review: { label: "Review", tone: "warning", icon: ReviewIcon },
+  merge: { label: "Merge", tone: "success", icon: MergeIcon },
+  user: { label: "User", tone: "primary", icon: UserIcon },
+  agent: { label: "Agent", tone: "neutral", icon: AgentsIcon },
+  system: { label: "System", tone: "neutral", icon: InfoIcon },
 };
 
 interface ConversationEntryCardProps {
@@ -54,20 +38,43 @@ interface ConversationEntryCardProps {
 
 export function ConversationEntryCard({ entry }: ConversationEntryCardProps) {
   const type = entry.messageType ?? "agent";
-  const variant = TYPE_VARIANTS[type] ?? "default";
-  const label = TYPE_LABELS[type] ?? "Agent";
-  const borderColor = BORDER_COLORS[type] ?? "border-border";
-  const bgTint = BG_TINTS[type] ?? "bg-transparent";
+  const meta = TYPE_META[type] ?? TYPE_META.agent;
   const isSystem = type === "system";
+  const Icon = meta.icon;
 
   return (
-    <div className={`border-l-2 ${borderColor} pl-3 py-2 ${bgTint} rounded-r-lg ${isSystem ? "opacity-70 italic" : ""} animate-slide-up`}>
-      <div className="flex items-baseline gap-2 flex-wrap mb-1">
-        <Badge variant={variant} size="sm">{label}</Badge>
-        <span className="text-xs font-medium text-text-secondary">{entry.authorName}</span>
-        <span className="text-xs text-text-muted">{new Date(entry.timestamp).toLocaleString()}</span>
+    <article className="flex gap-3">
+      <div
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+          TONE_SOFT[meta.tone],
+        )}
+      >
+        <Icon aria-hidden className="h-4 w-4" />
       </div>
-      <MarkdownRenderer content={entry.message} className="mt-1" />
-    </div>
+      <div className="min-w-0 flex-1">
+        <header className="flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-sm font-medium text-text">{entry.authorName}</span>
+          <Badge tone={meta.tone}>{meta.label}</Badge>
+          <time
+            dateTime={entry.timestamp}
+            title={formatDateTime(entry.timestamp)}
+            className="text-xs text-text-muted"
+          >
+            {formatRelative(entry.timestamp)}
+          </time>
+        </header>
+        {isSystem ? (
+          // A descendant selector outranks the renderer's own `text-text` regardless of CSS order.
+          <div className="mt-0.5 [&_.markdown-content]:text-text-muted">
+            <MarkdownRenderer content={entry.message} />
+          </div>
+        ) : (
+          <div className="card mt-1.5 px-4 py-3">
+            <MarkdownRenderer content={entry.message} />
+          </div>
+        )}
+      </div>
+    </article>
   );
 }
