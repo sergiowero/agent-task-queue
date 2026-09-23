@@ -252,7 +252,7 @@ export function appendContext(task: Task, context?: string): Task {
   return updateTask(task.id, { contexts: [...(task.contexts || []), context] })!;
 }
 
-// ─── Agent submissions (shared by the CLI and the MCP server) ──────────
+// ─── Agent submissions (used by the MCP server) ────────────────────────
 
 /** Thrown when a submission is not allowed in the task's current state. */
 export class WorkflowError extends Error {

@@ -9,17 +9,24 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   createProject,
   createTask,
+  deleteTask,
+  getTasks,
   getTaskById,
   getActivityEvents,
   updateTask,
   TaskStatus,
 } from "@agentq/shared";
 import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
+import {
+  MCP_ENTRY,
+  MCP_SERVER_NAME,
+  RUNNER_MCP_TOOLS,
+  mcpServerLaunch,
+  mcpServersConfig,
+} from "./launch.js";
 
 // Set test DB before any DB access (the path is resolved lazily in getDb()).
 process.env.AGENTQ_DB_PATH = ":memory:";
-
-const MCP_ENTRY = join(import.meta.dir, "index.ts");
 
 const TOOL_NAMES = [
   "claim_task",
@@ -28,6 +35,7 @@ const TOOL_NAMES = [
   "submit_review",
   "submit_merge",
   "get_task",
+  "list_tasks",
   "list_projects",
   "create_task",
   "post_comment",
@@ -46,6 +54,21 @@ function parse(result: CallToolResult): any {
   const first = result.content[0];
   expect(first.type).toBe("text");
   return JSON.parse((first as { type: "text"; text: string }).text);
+}
+
+/** Text of a call rejected by input validation (the SDK reports it as a plain-text error). */
+function validationError(result: CallToolResult): string {
+  expect(result.isError).toBe(true);
+  const first = result.content[0] as { type: "text"; text: string };
+  expect(first.text).toContain("Input validation error");
+  return first.text;
+}
+
+/** Other test files share the in-memory database: leave no claimable task behind. */
+function removeProjectTasks(...projectIds: string[]): void {
+  for (const projectId of projectIds) {
+    for (const task of getTasks(projectId, { includeArchived: true })) deleteTask(task.id);
+  }
 }
 
 function resourceText(content: { text?: string; blob?: string }): string {
@@ -93,7 +116,16 @@ describe("AgentQ MCP server", () => {
     expect(resources.map((r) => r.uri)).toContain("agentq://projects");
   });
 
-  it("list_projects matches `agentq projects --json`", async () => {
+  it("exposes every tool a runner job is allowed to use", async () => {
+    const { tools } = await client.listTools();
+    const names = tools.map((t) => t.name);
+    for (const name of RUNNER_MCP_TOOLS) {
+      expect(names).toContain(name);
+    }
+    expect(RUNNER_MCP_TOOLS).not.toContain("claim_task");
+  });
+
+  it("list_projects returns every project", async () => {
     const result = parse(
       (await client.callTool({ name: "list_projects", arguments: {} })) as CallToolResult,
     );
@@ -101,7 +133,7 @@ describe("AgentQ MCP server", () => {
     expect(result.projects.map((p: any) => p.id)).toContain(projectId);
   });
 
-  it("create_task -> claim_task (senior) -> submit_plan follows the CLI transitions", async () => {
+  it("create_task -> claim_task (senior) -> submit_plan follows the workflow transitions", async () => {
     const created = parse(
       (await client.callTool({
         name: "create_task",
@@ -187,7 +219,7 @@ describe("AgentQ MCP server", () => {
     });
   });
 
-  it("invalid transition returns isError with the CLI error message", async () => {
+  it("invalid transition returns isError with the workflow error message", async () => {
     const task = createTask({ title: "not planning", description: "d", projectId });
     const result = (await client.callTool({
       name: "submit_plan",
@@ -205,7 +237,7 @@ describe("AgentQ MCP server", () => {
     expect(parse(missing)).toEqual({ success: false, error: "Task not found." });
   });
 
-  it("submit_code, submit_review and submit_merge mirror the CLI", async () => {
+  it("submit_code, submit_review and submit_merge record their submissions", async () => {
     const coding = createTask({ title: "coding", description: "d", projectId });
     updateTask(coding.id, {
       status: TaskStatus.Coding,
@@ -372,6 +404,380 @@ describe("AgentQ MCP server", () => {
   });
 });
 
+describe("AgentQ MCP agent workflow", () => {
+  // Same scenarios agents go through: every role, every claim and submit transition.
+  const projectId = "mcp-workflow-" + Date.now();
+  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model" };
+  let client: Client;
+  let planTaskId: string;
+  let codeTaskId: string;
+
+  async function call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+    return (await client.callTool({ name, arguments: args })) as CallToolResult;
+  }
+
+  async function ok(name: string, args: Record<string, unknown>): Promise<any> {
+    const result = await call(name, args);
+    expect(result.isError).toBeFalsy();
+    const out = parse(result);
+    expect(result.structuredContent).toEqual(out);
+    return out;
+  }
+
+  function claim(role: string, sessionId: string) {
+    return ok("claim_task", { ...agent, role, sessionId, projectId });
+  }
+
+  async function status(taskId: string): Promise<string> {
+    const out = await ok("get_task", { taskId });
+    return out.task.status;
+  }
+
+  beforeAll(async () => {
+    createProject({
+      id: projectId,
+      displayName: "Workflow Project",
+      workingDirectory: "/tmp/workflow",
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    client = new Client({ name: "workflow-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+
+    planTaskId = (
+      await ok("create_task", {
+        title: "Workflow plan task",
+        projectId,
+        description: "d",
+        requiresPlan: true,
+        priority: 100,
+      })
+    ).task.id;
+    codeTaskId = (
+      await ok("create_task", {
+        title: "Workflow code task",
+        projectId,
+        description: "d",
+        priority: 100,
+      })
+    ).task.id;
+  });
+
+  afterAll(async () => {
+    await client.close();
+    removeProjectTasks(projectId);
+  });
+
+  it("rejects a claim with missing identity fields or an invalid role", async () => {
+    const missing = validationError(await call("claim_task", { role: "planner" }));
+    for (const field of ["toolName", "version", "model", "sessionId"]) {
+      expect(missing).toContain(field);
+    }
+    const wizard = validationError(
+      await call("claim_task", { ...agent, role: "wizard", sessionId: "s0", projectId }),
+    );
+    expect(wizard).toContain("role");
+  });
+
+  it("planner claims the plan_requested task -> planning", async () => {
+    const out = await claim("planner", "s1");
+    expect(out.success).toBe(true);
+    expect(out.task.id).toBe(planTaskId);
+    expect(out.task.status).toBe(TaskStatus.Planning);
+    expect(out.agent.role).toBe("planner");
+    expect(typeof out.agent.id).toBe("string");
+  });
+
+  it("submit_plan moves the task to waiting_plan_review", async () => {
+    const out = await ok("submit_plan", { taskId: planTaskId, message: "Here is the plan" });
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(planTaskId);
+    expect(await status(planTaskId)).toBe(TaskStatus.WaitingPlanReview);
+  });
+
+  it("submit_plan is rejected when the task is not in Planning", async () => {
+    const res = await call("submit_plan", { taskId: planTaskId, message: "again" });
+    expect(res.isError).toBe(true);
+    expect(parse(res)).toEqual({ success: false, error: "Task must be in Planning status." });
+  });
+
+  it("returns no_tasks_available when nothing is claimable for the role", async () => {
+    // No task is in code_review_requested yet, so a reviewer has nothing to claim.
+    const out = await claim("reviewer", "s2");
+    expect(out).toMatchObject({ success: false, reason: "no_tasks_available" });
+    expect(typeof out.message).toBe("string");
+  });
+
+  it("architect does not claim implementation work", async () => {
+    // Only the ready_for_code task is claimable here, and architects plan and review.
+    expect(await claim("architect", "s2b")).toMatchObject({
+      success: false,
+      reason: "no_tasks_available",
+    });
+  });
+
+  it("implementer claims the ready_for_code task -> coding", async () => {
+    const out = await claim("implementer", "s3");
+    expect(out.success).toBe(true);
+    expect(out.task.id).toBe(codeTaskId);
+    expect(out.task.status).toBe(TaskStatus.Coding);
+    expect(out.agent.role).toBe("implementer");
+  });
+
+  it("submit_code requires the worktree", async () => {
+    const text = validationError(await call("submit_code", { taskId: codeTaskId, message: "x" }));
+    expect(text).toContain("worktree");
+    expect(await status(codeTaskId)).toBe(TaskStatus.Coding);
+  });
+
+  it("submit_code moves the task to waiting_code_review and stores the worktree", async () => {
+    const out = await ok("submit_code", {
+      taskId: codeTaskId,
+      worktree: "/tmp/wt/code-task",
+      message: "Implemented",
+    });
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(codeTaskId);
+
+    const got = await ok("get_task", { taskId: codeTaskId });
+    expect(got.task.status).toBe(TaskStatus.WaitingCodeReview);
+    expect(got.task.worktreePath).toBe("/tmp/wt/code-task");
+    expect(got.task.assignedAgent).toBeNull();
+  });
+
+  it("senior claims a code_review_requested task as reviewer -> reviewing", async () => {
+    updateTask(codeTaskId, { status: TaskStatus.CodeReviewRequested });
+    const out = await claim("senior", "s4");
+    expect(out.success).toBe(true);
+    expect(out.task.id).toBe(codeTaskId);
+    expect(out.task.status).toBe(TaskStatus.Reviewing);
+    expect(out.agent.role).toBe("reviewer");
+  });
+
+  it("submit_review moves the task back to waiting_code_review", async () => {
+    const out = await ok("submit_review", { taskId: codeTaskId, message: "Looks good" });
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(codeTaskId);
+    expect(await status(codeTaskId)).toBe(TaskStatus.WaitingCodeReview);
+  });
+
+  it("implementer claims an approved task -> merging", async () => {
+    updateTask(codeTaskId, { status: TaskStatus.Approved });
+    const out = await claim("implementer", "s5");
+    expect(out.success).toBe(true);
+    expect(out.task.id).toBe(codeTaskId);
+    expect(out.task.status).toBe(TaskStatus.Merging);
+    expect(out.agent.role).toBe("implementer");
+  });
+
+  it("submit_merge requires mergeBranch, commit and authors, then moves the task to merged", async () => {
+    const missing = validationError(
+      await call("submit_merge", { taskId: codeTaskId, mergeBranch: "feat/x" }),
+    );
+    expect(missing).toContain("commit");
+    expect(missing).toContain("authors");
+    expect(await status(codeTaskId)).toBe(TaskStatus.Merging);
+
+    const out = await ok("submit_merge", {
+      taskId: codeTaskId,
+      mergeBranch: "feat/x",
+      commit: "abc123",
+      authors: "dev1,dev2",
+    });
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(codeTaskId);
+
+    const got = await ok("get_task", { taskId: codeTaskId });
+    expect(got.task.status).toBe(TaskStatus.Merged);
+    expect(got.task.assignedAgent).toBeNull();
+    const last = got.task.conversation[got.task.conversation.length - 1];
+    expect(last.message).toContain("Branch: feat/x");
+    expect(last.message).toContain("Commit: abc123");
+    expect(last.message).toContain("Authors: dev1,dev2");
+  });
+
+  it("senior claims a plan_changes_requested task as planner -> planning", async () => {
+    updateTask(planTaskId, { status: TaskStatus.PlanChangesRequested });
+    const out = await claim("senior", "s6");
+    expect(out.success).toBe(true);
+    expect(out.task.id).toBe(planTaskId);
+    expect(out.task.status).toBe(TaskStatus.Planning);
+    expect(out.agent.role).toBe("planner");
+  });
+});
+
+describe("AgentQ MCP create, list and archive", () => {
+  const projectId = "mcp-create-" + Date.now();
+  const archiveRoot = mkdtempSync(join(tmpdir(), "agentq-mcp-archive-list-"));
+  const archiveProjectId = "mcp-archive-list-" + Date.now();
+  let client: Client;
+
+  async function call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+    return (await client.callTool({ name, arguments: args })) as CallToolResult;
+  }
+
+  async function ok(name: string, args: Record<string, unknown>): Promise<any> {
+    const result = await call(name, args);
+    expect(result.isError).toBeFalsy();
+    return parse(result);
+  }
+
+  beforeAll(async () => {
+    createProject({
+      id: projectId,
+      displayName: "Create Project",
+      workingDirectory: "/tmp/create",
+    });
+    createProject({
+      id: archiveProjectId,
+      displayName: "Archive List",
+      workingDirectory: archiveRoot,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    client = new Client({ name: "create-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+  });
+
+  afterAll(async () => {
+    await client.close();
+    removeProjectTasks(projectId, archiveProjectId);
+    rmSync(archiveRoot, { recursive: true, force: true });
+  });
+
+  it("create_task stores every option and trims list entries", async () => {
+    const out = await ok("create_task", {
+      title: "Plan me",
+      projectId,
+      description: "A task that needs a plan",
+      steerDetails: "Use the existing helpers",
+      acceptanceCriteria: ["a", " b ", ""],
+      guardrails: ["no force push", " keep it small "],
+      context: "initial context",
+      requiresPlan: true,
+      priority: 7,
+      branch: "feat/plan-me",
+      mergeBranch: "main",
+    });
+    expect(out.success).toBe(true);
+    expect(typeof out.task.id).toBe("string");
+    expect(out.task).toMatchObject({
+      title: "Plan me",
+      status: TaskStatus.PlanRequested,
+      requiresPlan: true,
+      priority: 7,
+      steerDetails: "Use the existing helpers",
+      recommendedBranch: "feat/plan-me",
+      mergeBranch: "main",
+      acceptanceCriteria: ["a", "b"],
+      guardrails: ["no force push", "keep it small"],
+      contexts: ["initial context"],
+    });
+    expect(out.task.project.id).toBe(projectId);
+  });
+
+  it("create_task defaults to ready_for_code, priority 0 and the develop merge branch", async () => {
+    const out = await ok("create_task", { title: "Just code", projectId, description: "d" });
+    expect(out.task).toMatchObject({
+      status: TaskStatus.ReadyForCode,
+      requiresPlan: false,
+      priority: 0,
+      mergeBranch: "develop",
+      contexts: [],
+    });
+  });
+
+  it("create_task fails without the required projectId and description", async () => {
+    const text = validationError(await call("create_task", { title: "Missing" }));
+    expect(text).toContain("projectId");
+    expect(text).toContain("description");
+  });
+
+  it("list_tasks returns tasks with their project, filtered by status and project", async () => {
+    const all = await ok("list_tasks", {});
+    expect(all.success).toBe(true);
+    const planned = all.tasks.find((t: any) => t.title === "Plan me");
+    expect(planned.project.id).toBe(projectId);
+
+    const ready = await ok("list_tasks", { projectId, status: TaskStatus.ReadyForCode });
+    expect(ready.tasks.map((t: any) => t.title)).toEqual(["Just code"]);
+
+    validationError(await call("list_tasks", { status: "done-ish" }));
+  });
+
+  it("archive_task: complete tasks only, off the list afterwards, refuses a second time", async () => {
+    const done = createTask({
+      title: "Finished work",
+      description: "All done",
+      projectId: archiveProjectId,
+    });
+    updateTask(done.id, { status: TaskStatus.Complete });
+    const pending = createTask({
+      title: "Still pending",
+      description: "d",
+      projectId: archiveProjectId,
+    });
+
+    const complete = await ok("list_tasks", {
+      status: TaskStatus.Complete,
+      projectId: archiveProjectId,
+    });
+    expect(complete.tasks.map((t: { id: string }) => t.id)).toEqual([done.id]);
+
+    const early = await call("archive_task", { taskId: pending.id });
+    expect(early.isError).toBe(true);
+    expect(parse(early).error).toContain("Only complete tasks can be archived");
+
+    const out = await ok("archive_task", {
+      taskId: done.id,
+      pullRequests: ["https://github.com/org/repo/pull/5", "#6"],
+      overview: "- Shipped it.",
+    });
+    expect(out.success).toBe(true);
+    expect(out.taskId).toBe(done.id);
+    expect(out.directory).toBe(join(archiveRoot, "archive"));
+    expect(out.pullRequests).toEqual(["https://github.com/org/repo/pull/5", "#6"]);
+    const summary = readFileSync(out.summaryPath, "utf8");
+    expect(summary).toStartWith("# Finished work\n");
+    expect(summary).toContain("## Overview\n\n- Shipped it.");
+    expect(summary).toContain("<https://github.com/org/repo/pull/5>, #6");
+    expect(readFileSync(out.detailedPath, "utf8")).toContain("# Finished work — full record");
+
+    const listed = await ok("list_tasks", { projectId: archiveProjectId });
+    expect(listed.tasks.map((t: { id: string }) => t.id)).toEqual([pending.id]);
+    const got = await ok("get_task", { taskId: done.id });
+    expect(got.task.archivePath).toBe(out.summaryPath);
+
+    const again = await call("archive_task", { taskId: done.id });
+    expect(again.isError).toBe(true);
+    expect(parse(again).error).toContain("already archived");
+  });
+
+  it("archive_task writes to another directory when asked", async () => {
+    const task = createTask({ title: "Elsewhere", description: "d", projectId: archiveProjectId });
+    updateTask(task.id, { status: TaskStatus.Complete });
+    const directory = join(archiveRoot, "custom-archive");
+    const out = await ok("archive_task", { taskId: task.id, directory });
+    expect(out.directory).toBe(directory);
+    expect(existsSync(out.summaryPath)).toBe(true);
+    expect(out.summaryPath.startsWith(directory)).toBe(true);
+  });
+});
+
+describe("mcpServerLaunch", () => {
+  it("starts the stdio entry with bun, bound to the given database", () => {
+    const launch = mcpServerLaunch("/data/agentq.db", "/usr/local/bin/bun");
+    expect(launch).toEqual({
+      command: "/usr/local/bin/bun",
+      args: ["run", MCP_ENTRY],
+      env: { AGENTQ_DB_PATH: "/data/agentq.db" },
+    });
+    expect(existsSync(MCP_ENTRY)).toBe(true);
+    expect(mcpServersConfig(launch)).toEqual({ mcpServers: { [MCP_SERVER_NAME]: launch } });
+    expect(mcpServerLaunch("/x.db").command).toBe(process.execPath);
+  });
+});
+
 describe("AgentQ MCP server over stdio", () => {
   const dbPath = join(
     tmpdir(),
@@ -386,17 +792,10 @@ describe("AgentQ MCP server over stdio", () => {
     }
   });
 
-  it("initializes and lists tools through the bin entry point", async () => {
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined) env[k] = v;
-    }
-    const transport = new StdioClientTransport({
-      command: "bun",
-      args: ["run", MCP_ENTRY],
-      env: { ...env, AGENTQ_DB_PATH: dbPath },
-      stderr: "pipe",
-    });
+  it("initializes and lists tools from the launch spec alone", async () => {
+    // Like a real MCP client: only the SDK's default environment plus the spec's env.
+    const launch = mcpServerLaunch(dbPath);
+    const transport = new StdioClientTransport({ ...launch, stderr: "pipe" });
     const client = new Client({ name: "stdio-test", version: "0.0.0" });
     try {
       await client.connect(transport);
@@ -409,6 +808,53 @@ describe("AgentQ MCP server over stdio", () => {
       expect(projects).toEqual({ success: true, projects: [] });
     } finally {
       await client.close();
+    }
+  });
+
+  it("writes nothing but JSON-RPC messages on stdout", async () => {
+    const launch = mcpServerLaunch(dbPath);
+    const proc = Bun.spawn([launch.command, ...launch.args], {
+      env: { ...process.env, ...launch.env },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const send = (message: object) => proc.stdin.write(JSON.stringify(message) + "\n");
+    send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "raw", version: "0" },
+      },
+    });
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "get_task", arguments: { taskId: "nope" } },
+    });
+    await proc.stdin.flush();
+
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let out = "";
+    while (!out.includes('"id":2')) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    proc.stdin.end();
+    proc.kill();
+    await proc.exited;
+
+    const lines = out.split("\n").filter((line) => line.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) {
+      expect(JSON.parse(line).jsonrpc).toBe("2.0");
     }
   });
 });

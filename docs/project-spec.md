@@ -1,5 +1,7 @@
 # AgentQ
 
+> **Outdated (historical spec).** This document describes the original design, where agents used an `agentq` command-line binary. That binary no longer exists: agents now use the AgentQ MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
+
 ATQ is a local tool designed to act as a "100x engineer" assistant for managing coding-agent work across multiple projects.
 
 ## Purpose

@@ -28,18 +28,44 @@ function resolveDbPath(p: string): string {
 
 // Resolved lazily on first use so callers (e.g. tests) can set AGENTQ_DB_PATH
 // after importing this module — ESM imports are hoisted above env assignments.
-function getDbPath(): string {
+/** Absolute database path from AGENTQ_DB_PATH (default `~/agentq/agentq.db`), `~` expanded. */
+export function getDbPath(): string {
   return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/agentq/agentq.db");
 }
 
 let db: Database | null = null;
 
+const OPEN_ATTEMPTS = 8;
+
+/**
+ * Opens the database in WAL mode. Several processes (the web server, MCP
+ * servers started by runner jobs) may open the file at the same moment; on
+ * Windows the loser of the race to rebuild the WAL index gets a transient
+ * SQLITE_IOERR / SQLITE_BUSY that busy_timeout does not cover, so retry briefly.
+ */
+function openDatabase(path: string): Database {
+  for (let attempt = 1; ; attempt++) {
+    const conn = new Database(path);
+    try {
+      conn.exec("PRAGMA busy_timeout = 5000");
+      // WAL is persistent: only switch when needed.
+      const mode = conn.query("PRAGMA journal_mode").get() as { journal_mode: string } | null;
+      if (mode?.journal_mode !== "wal") conn.exec("PRAGMA journal_mode = WAL");
+      conn.exec("PRAGMA foreign_keys = ON");
+      return conn;
+    } catch (error) {
+      try { conn.close(); } catch {}
+      const code = String((error as { code?: unknown }).code ?? "");
+      const transient = code.startsWith("SQLITE_IOERR") || code.startsWith("SQLITE_BUSY");
+      if (!transient || attempt >= OPEN_ATTEMPTS) throw error;
+      Bun.sleepSync(20 * attempt);
+    }
+  }
+}
+
 function getDb(): Database {
   if (!db) {
-    db = new Database(getDbPath());
-    db.exec("PRAGMA busy_timeout = 5000");
-    db.exec("PRAGMA journal_mode = WAL");
-    db.exec("PRAGMA foreign_keys = ON");
+    db = openDatabase(getDbPath());
     initSchema();
     runMigrations();
   }

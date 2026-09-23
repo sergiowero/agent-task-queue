@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
+import { MCP_SERVER_NAME } from "@agentq/mcp";
 import type { Agent, Project, Task } from "@agentq/shared";
 import { TaskStatus } from "@agentq/shared";
 
@@ -23,11 +24,34 @@ export function phaseForStatus(status: TaskStatus): Phase | null {
   return PHASE_BY_STATUS[status] ?? null;
 }
 
-const SUBMIT_COMMAND: Record<Phase, (taskId: string) => string> = {
-  plan: (id) => `agentq submit-plan ${id} --json -m "<markdown plan>"`,
-  code: (id) => `agentq submit-code ${id} --json -m "<markdown summary>" --worktree <worktreePath>`,
-  review: (id) => `agentq submit-review ${id} --json -m "<markdown findings with verdict>"`,
-  merge: (id) => `agentq submit-merge ${id} --json -b <branch> -c <commit> --authors <authors>`,
+const CONTEXT_ARG = "<short summary of the state, findings or blockers for the next agent>";
+
+/** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
+export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, string> }> = {
+  plan: (taskId) => ({
+    tool: "submit_plan",
+    args: { taskId, message: "<markdown plan>", context: CONTEXT_ARG },
+  }),
+  code: (taskId) => ({
+    tool: "submit_code",
+    args: { taskId, message: "<markdown summary>", worktree: "<absolute worktree path>", context: CONTEXT_ARG },
+  }),
+  review: (taskId) => ({
+    tool: "submit_review",
+    args: { taskId, message: "<markdown findings with verdict>", context: CONTEXT_ARG },
+  }),
+  merge: (taskId) => ({
+    tool: "submit_merge",
+    args: {
+      taskId,
+      mergeBranch: "<task.mergeBranch>",
+      commit: "<feature-branch head SHA>",
+      authors: "<comma-separated authors>",
+      worktree: "<task.worktreePath>",
+      message: "<markdown with the PR URL>",
+      context: CONTEXT_ARG,
+    },
+  }),
 };
 
 const SKILLS_DIR = resolve(import.meta.dir, "../../../../skills");
@@ -57,6 +81,7 @@ export function buildPrompt(input: BuildPromptInput): string {
   const { task, project, agent, effectiveRole } = input;
   const phase = phaseForStatus(task.status) ?? "code";
   const skill = input.phaseSkill ?? readPhaseSkill(phase);
+  const submit = SUBMIT_TOOL[phase](task.id);
 
   const taskJson = {
     id: task.id,
@@ -83,9 +108,17 @@ export function buildPrompt(input: BuildPromptInput): string {
     `# AgentQ ${effectiveRole} agent`,
     "",
     `You are an AgentQ **${effectiveRole}** agent (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
-    `Task \`${task.id}\` has ALREADY been claimed for you by the runner. Do **NOT** run \`agentq claim\`.`,
+    `Task \`${task.id}\` has ALREADY been claimed for you by the runner. Do **NOT** call \`claim_task\`.`,
     `Current status: \`${task.status}\` (phase: ${phase}).`,
     project ? `Project working directory: \`${project.workingDirectory}\` (you are running inside it).` : "",
+    "",
+    "## AgentQ MCP tools",
+    "",
+    `This run has the \`${MCP_SERVER_NAME}\` MCP server (Claude Code names its tools \`mcp__${MCP_SERVER_NAME}__<tool>\`). Do all queue work through its tools:`,
+    "",
+    "- `get_task` — re-read this task (conversation, contexts, worktree path)",
+    "- `post_comment` — add a note to the task conversation without changing its status",
+    `- \`${submit.tool}\` — submit this phase (see Finish)`,
     "",
     "## Task",
     "",
@@ -99,17 +132,18 @@ export function buildPrompt(input: BuildPromptInput): string {
     "",
     "## Finish",
     "",
-    "When the work for this phase is done, submit it with:",
+    `When the work for this phase is done, call the \`${submit.tool}\` tool of the \`${MCP_SERVER_NAME}\` MCP server with:`,
     "",
-    "```bash",
-    SUBMIT_COMMAND[phase](task.id),
+    "```json",
+    JSON.stringify(submit.args, null, 2),
     "```",
     "",
     "Rules:",
     "- You are running headless. Never ask for permission or confirmation; decide and proceed.",
     "- Do not claim other tasks. Work only on the task above.",
-    "- Stop immediately after the submit command succeeds.",
-    "- If you cannot complete the phase, still submit with a message explaining what blocks you.",
+    "- Write every message in Markdown and pass a short `context` for the next agent.",
+    `- Stop immediately after \`${submit.tool}\` returns \`"success": true\`.`,
+    "- If it returns an error, fix the arguments and call it again. If you cannot complete the phase, still submit with a message explaining what blocks you.",
     "",
   ]
     .filter((line) => line !== undefined)

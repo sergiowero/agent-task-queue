@@ -26,16 +26,16 @@ Five roles with distinct permissions:
 - **Architect** — Planning + reviewing (no implementation)
 
 ### Real-Time Updates
-SSE-powered live updates propagate changes across web UI and CLI instantly. Task creation and status changes appear without manual refresh.
+SSE-powered live updates propagate changes to the web UI instantly, including the claims and submissions agents make through the MCP server. Task creation and status changes appear without manual refresh.
 
 ### Web Dashboard
 Kanban-style board with four columns (Pending, In Progress, Need Review, Done), task detail drawer, agent monitoring, activity feed, project management, and install tools.
 
-### CLI for Agents
-Standalone binary (`agentq`) that operates directly on the local database — no running server required. Supports listing, creating, claiming, and submitting tasks with structured JSON output for machine consumption.
+### MCP Server for Agents
+Stdio MCP server (`packages/mcp`) that operates directly on the local database — no running server required. It is the only agent channel: claiming, submitting, reading, listing, creating and archiving tasks are typed tools with JSON results. `bun run install:mcp` registers it with every installed coding tool, and runner jobs get it automatically.
 
 ### AI Skills
-Pre-built agent skill files that guide coding agents on how to use the CLI and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails.
+Pre-built agent skill files that guide coding agents on how to use the AgentQ MCP tools and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails.
 
 ### Feedback Loops
 Both planning and coding phases support iteration: plans can be revised, code can be reworked after review, and stuck tasks can be unblocked.
@@ -44,7 +44,7 @@ Both planning and coding phases support iteration: plans can be revised, code ca
 Users can request an automated AI code review from the web UI, which opens the task for a reviewer agent to claim and evaluate.
 
 ### Task Archive
-Complete tasks can be archived from the board (**Archive** button on complete cards and on the task page), the CLI (`agentq archive`), the MCP server (`archive_task`) or the `agentq-archive` skill. Archiving writes two Markdown files to `{project.workingDirectory}/archive/`: `<date>-<id8>-<slug>.summary.md` (key facts, description, what was done, agents) and `<date>-<id8>-<slug>.detailed.md` (every field, message, status change, agent session and activity event, plus the raw task JSON). The pull request is read from the conversation, or passed explicitly. The task then gets `archivedAt` / `archivePath` and leaves the board and `agentq list`. The logic lives in `packages/shared/src/archive.ts`.
+Complete tasks can be archived from the board (**Archive** button on complete cards and on the task page), the MCP server (`archive_task`) or the `agentq-archive` skill. Archiving writes two Markdown files to `{project.workingDirectory}/archive/`: `<date>-<id8>-<slug>.summary.md` (key facts, description, what was done, agents) and `<date>-<id8>-<slug>.detailed.md` (every field, message, status change, agent session and activity event, plus the raw task JSON). The pull request is read from the conversation, or passed explicitly. The task then gets `archivedAt` / `archivePath` and leaves the board and `list_tasks`. The logic lives in `packages/shared/src/archive.ts`.
 
 ### Soft Delete
 Tasks, projects, and agents support soft deletion with restore capability. Hard deletion available via explicit flag.
@@ -65,7 +65,7 @@ React SPA dashboard for human supervision. Features:
 - **Agents view** — Table with agent ID, tool, model, role, last seen, session; filterable by role and tool
 - **Activity feed** — Global timeline of all task lifecycle events with filters for task, agent, and date range
 - **Projects management** — CRUD for projects
-- **Tools page** — Install cards for binary, skills, and agent setup
+- **Tools page** — Install steps for the MCP server and the skills
 - **Real-time updates** — SSE connection for live board refresh
 - **Light/dark theme** — Persistent via localStorage
 
@@ -78,20 +78,19 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - Automatic Vite dev server management in development mode
 - CORS support for development
 
-### CLI
-Standalone binary (`agentq`) built with Commander for agent-to-system interaction. Capabilities:
-- **List** all tasks with project info
-- **Get** a single task by ID
-- **Create** tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement)
-- **Claim** the highest-priority eligible task for a given agent role (planner, implementer, reviewer, senior, architect)
-- **Submit plan** — transitions task from Planning to Waiting Plan Review
-- **Submit code** — transitions from Coding to Waiting Code Review, stores worktree path
-- **Submit review** — transitions from Reviewing back to Waiting Code Review
-- **Submit merge** — transitions from Merging to Merged with branch, commit, and author info
-- **Archive** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`--pr`, `--summary`, `--force`, `--dir`)
-- **List filters** — `agentq list --status <status> --project <id>`
-- **JSON output** — all commands support `--json` for structured machine-readable output
-- **Direct database access** — no server dependency
+### MCP Server
+Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction; see `docs/mcp.md`. Tools:
+- **claim_task** — claims the highest-priority eligible task for a given agent role (planner, implementer, reviewer, senior, architect)
+- **submit_plan** — transitions task from Planning to Waiting Plan Review
+- **submit_code** — transitions from Coding to Waiting Code Review, stores worktree path
+- **submit_review** — transitions from Reviewing back to Waiting Code Review
+- **submit_merge** — transitions from Merging to Merged with branch, commit, and author info
+- **get_task** / **post_comment** — read a task, or add a note without changing its status
+- **list_tasks** — tasks with project info, filtered by status and project (archived tasks left out)
+- **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement)
+- **archive_task** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`pullRequests`, `overview`, `force`, `directory`)
+- **JSON results** — every tool returns `{ success, ... }` as text and structured content
+- **Direct database access** — no server dependency; `AGENTQ_DB_PATH` comes from the tool's MCP config
 
 ### Database
 Local SQLite database storing all system data:
@@ -104,16 +103,15 @@ Local SQLite database storing all system data:
 
 ### AI Skills
 Agent instruction files that define the exact protocol for interacting with AgentQ:
-- **agentq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, CLI command reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails
-- **agentq-create-task** — Instructions for creating well-structured tasks via the CLI with project discovery, task elaboration, and acceptance criteria generation
-- **agentq-archive** — Archives complete tasks with `agentq archive` (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
+- **agentq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, MCP tool reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails
+- **agentq-create-task** — Instructions for creating well-structured tasks through the MCP tools with project discovery, task elaboration, and acceptance criteria generation
+- **agentq-archive** — Archives complete tasks with the `archive_task` MCP tool (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
 - Agent skills are installed to multiple AI tool configs (opencode, claude, codex, kimi, junie) via a single install command
 
 ### Installer
 Scripts for one-click setup:
-- **Binary installer** — Compiles the CLI into a standalone binary and copies it to `~/.local/bin`
+- **MCP setup** — `bun run install:mcp` registers the AgentQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI) on macOS, Linux and Windows; safe to run again
 - **Skills installer** — Copies the workflow skill to all supported agent config directories
-- **Agent installer** — Copies subagent definitions (e.g., task fetcher) to the opencode agents directory
 
 ---
 

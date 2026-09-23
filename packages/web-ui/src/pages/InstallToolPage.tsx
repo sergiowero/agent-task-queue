@@ -5,19 +5,15 @@ import { PageBody, PageHeader } from "../components/PageHeader";
 
 const INSTALL_STEPS = [
   {
-    title: "Install CLI Binary",
-    description: "Build and install the AgentQ CLI so it is available on your PATH.",
-    command: "bun run install:bin",
+    title: "Register the MCP Server",
+    description:
+      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI) to the AgentQ MCP server. Safe to run again.",
+    command: "bun run install:mcp",
   },
   {
     title: "Install Workflow Skills",
     description: "Copy the AgentQ workflow skill to all detected coding-agent tool directories.",
     command: "bun run install:skills",
-  },
-  {
-    title: "Install Agents",
-    description: "Register the AgentQ agent definitions for your coding agents.",
-    command: "bun run install:agents",
   },
 ];
 

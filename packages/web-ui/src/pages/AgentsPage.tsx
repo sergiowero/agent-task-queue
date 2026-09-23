@@ -149,7 +149,7 @@ export function AgentsPage() {
       <PageHeader
         icon={AgentsIcon}
         title="Agents"
-        description="Coding agents that registered through the CLI."
+        description="Coding agents that claimed tasks through the AgentQ MCP server or a runner."
         meta={!isLoading && <CountPill>{agentsRes?.total ?? agents.length}</CountPill>}
         actions={
           <>
@@ -204,7 +204,7 @@ export function AgentsPage() {
             description={
               filtered
                 ? "Try another role or tool."
-                : "Agents register when they claim a task via the CLI."
+                : "Agents register when they claim a task."
             }
             action={
               filtered && (

@@ -207,7 +207,8 @@ function stopKeepAlive() {
   stopDbWatcher();
 }
 
-// CLI / MCP / runner children write straight to SQLite, bypassing this process.
+// MCP servers (started by coding tools and runner jobs) write straight to SQLite,
+// bypassing this process.
 // While someone is listening we poll tasks.updated_at and re-broadcast changes.
 const DB_WATCH_INTERVAL_MS = 1500;
 let dbWatcher: Timer | null = null;

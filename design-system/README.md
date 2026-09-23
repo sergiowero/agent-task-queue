@@ -8,7 +8,7 @@ AgentQ is a local task queue for coding agents. The portal is a calm, dense, neu
 - Give empty states a "No … yet" title and one sentence about what will appear and when: "No jobs yet" / "Jobs appear here as soon as the runner claims a task."
 - Keep toasts to object + past participle: "Task created", "Project deleted". Errors say what failed, plainly: "Couldn't load this task", "Could not copy to clipboard".
 - Page descriptions are one sentence that says what the page holds: "What happened across all tasks, newest first."
-- Address the reader as "you" ("An agent writes a plan for your review before coding."). Agents are "agents", runtimes are "runners", and tools are named in lowercase as the CLI spells them: claude, codex, opencode, gemini.
+- Address the reader as "you" ("An agent writes a plan for your review before coding."). Agents are "agents", runtimes are "runners", and tools are named in lowercase as their commands are spelled: claude, codex, opencode, gemini.
 - No emoji and no exclamation marks. The one exception is the transient "Copied!" tooltip.
 - The product is **AgentQ**, with capital A and Q. Its tagline is lowercase: "your 100x engineer tool".
 - Set branch names, paths, ids and commands in `mono` (`font-mono text-xs`), never in quotes.

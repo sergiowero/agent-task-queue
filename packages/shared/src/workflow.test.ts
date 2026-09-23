@@ -19,7 +19,6 @@ import { claimNextTask, releaseTask, buildAgentRef } from "./workflow.js";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 const SHARED_INDEX = join(import.meta.dir, "index.ts");
-const CLI_PATH = join(import.meta.dir, "../../cli/src/index.ts");
 
 const agentA = { toolName: "AgentA", version: "1.0", model: "model-a", sessionId: "session-a" };
 const agentB = { toolName: "AgentB", version: "1.0", model: "model-b", sessionId: "session-b" };
@@ -235,7 +234,8 @@ describe("releaseTask", () => {
   });
 });
 
-describe("concurrent claims via CLI subprocesses", () => {
+describe("concurrent claims from separate processes", () => {
+  // Each agent (e.g. one MCP server per coding tool) is its own process on the same database file.
   const dbPaths: string[] = [];
 
   function tempDbPath(): string {
@@ -282,11 +282,20 @@ describe("concurrent claims via CLI subprocesses", () => {
     return JSON.parse(result.stdout.trim());
   }
 
-  function claim(dbPath: string, agentName: string) {
-    return run(
-      [CLI_PATH, "claim", "-n", agentName, "-v", "1.0", "-m", "model", "-r", "implementer", "-s", `session-${agentName}`, "--json"],
-      dbPath,
-    );
+  /** Claims in a fresh process and prints `{ success, task?, agent?, reason? }` like the MCP claim_task tool. */
+  function claim(dbPath: string, agentName: string, projectId?: string) {
+    const script = `
+      import { claimNextTask, getProjectByTaskId } from ${JSON.stringify(SHARED_INDEX)};
+      const result = claimNextTask({
+        role: "implementer",
+        agent: { toolName: ${JSON.stringify(agentName)}, version: "1.0", model: "model", sessionId: ${JSON.stringify(`session-${agentName}`)} },
+        projectId: ${JSON.stringify(projectId ?? null)} ?? undefined,
+      });
+      console.log(JSON.stringify(result
+        ? { success: true, task: { ...result.task, project: getProjectByTaskId(result.task.id) }, agent: { id: result.agent.id, role: result.effectiveRole } }
+        : { success: false, reason: "no_tasks_available" }));
+    `;
+    return run(["-e", script], dbPath);
   }
 
   it("two simultaneous claims get different tasks", async () => {
@@ -325,15 +334,11 @@ describe("concurrent claims via CLI subprocesses", () => {
     expect(losers[0].reason).toBe("no_tasks_available");
   });
 
-  it("respects --project", async () => {
+  it("respects the project filter", async () => {
     const dbPath = tempDbPath();
     const [id] = await seed(dbPath, 1);
 
-    const claimFor = (project: string) =>
-      run(
-        [CLI_PATH, "claim", "-n", "AgentC", "-v", "1.0", "-m", "model", "-r", "implementer", "-s", "s", "--project", project, "--json"],
-        dbPath,
-      );
+    const claimFor = (project: string) => claim(dbPath, "AgentC", project);
 
     const miss = await claimFor("nope");
     expect(JSON.parse(miss.stdout).reason).toBe("no_tasks_available");

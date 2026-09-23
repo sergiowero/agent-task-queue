@@ -2,10 +2,12 @@ import { randomUUID } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir, hostname } from "os";
 import { join } from "path";
+import { mcpServerLaunch, mcpServersConfig } from "@agentq/mcp";
 import type { Agent, Runner, RunnerTool, Task, TaskStatus } from "@agentq/shared";
 import {
   buildAgentRef,
   claimNextTask,
+  getDbPath,
   getProjectById,
   getRunnerById,
   getRunners,
@@ -50,6 +52,11 @@ export interface RunnerEngineOptions {
   jobTimeoutMs?: number;
   /** Grace period between SIGTERM and SIGKILL. */
   killGraceMs?: number;
+  /**
+   * How long to keep reading output after the tool exited. A grandchild that
+   * outlives the tool can hold the pipes open; the job must still finish.
+   */
+  drainMs?: number;
   /** Max lines kept in memory per job. */
   tailLines?: number;
   /** Job history kept per runner. */
@@ -70,6 +77,7 @@ interface ActiveJob {
   agentModel: string;
   runnerName: string;
   killReason: string | null;
+  readers: ReadableStreamDefaultReader<Uint8Array>[];
   timeout: Timer | null;
   killTimer: Timer | null;
   exited: Promise<void>;
@@ -87,6 +95,7 @@ interface RunnerRuntime {
 }
 
 const OUTPUT_FLUSH_MS = 100;
+const IS_WINDOWS = process.platform === "win32";
 const MAX_BACKOFF_MS = 30 * 60_000;
 
 function expandHome(p: string): string {
@@ -105,6 +114,7 @@ export class RunnerEngine {
   private readonly broadcast: (event: string, data: unknown) => void;
   private readonly jobTimeoutMs: number;
   private readonly killGraceMs: number;
+  private readonly drainMs: number;
   private readonly tailLines: number;
   private readonly historyLimit: number;
   private readonly revertBackoffMs: number;
@@ -120,6 +130,7 @@ export class RunnerEngine {
     this.jobTimeoutMs =
       opts.jobTimeoutMs ?? (Number.isFinite(envMin) && envMin > 0 ? envMin : 60) * 60_000;
     this.killGraceMs = opts.killGraceMs ?? 10_000;
+    this.drainMs = opts.drainMs ?? 2000;
     this.tailLines = opts.tailLines ?? 200;
     this.historyLimit = opts.historyLimit ?? 50;
     this.revertBackoffMs = opts.revertBackoffMs ?? 30_000;
@@ -337,6 +348,7 @@ export class RunnerEngine {
     const dir = runsDir(task.id);
     const logPath = join(dir, `${jobId}.log`);
     const promptFile = join(dir, `${jobId}.prompt.md`);
+    const mcpConfigFile = join(dir, `${jobId}.mcp.json`);
     const phase = phaseForStatus(task.status) ?? "code";
 
     const job: RunnerJob = {
@@ -366,10 +378,15 @@ export class RunnerEngine {
       mkdirSync(dir, { recursive: true });
       const prompt = buildPrompt({ task, project, agent, effectiveRole });
       writeFileSync(promptFile, prompt);
+      // Every job gets the AgentQ MCP server, bound to this server's database.
+      const mcp = mcpServerLaunch(getDbPath());
+      writeFileSync(mcpConfigFile, JSON.stringify(mcpServersConfig(mcp), null, 2));
       built = this.build(runner.tool, {
         cwd,
         prompt,
         promptFile,
+        mcp,
+        mcpConfigFile,
         taskId: task.id,
         role: effectiveRole,
         model: runner.model,
@@ -377,6 +394,7 @@ export class RunnerEngine {
         permissionMode: runner.permissionMode,
         extraArgs: runner.extraArgs,
       });
+      for (const file of built.files ?? []) writeFileSync(file.path, file.content);
     } catch (e: any) {
       const reason = `Runner ${runner.name}: could not build the ${runner.tool} command: ${e?.message ?? e}`;
       this.finishWithoutSpawn(rt, job, reason, task.id);
@@ -385,7 +403,11 @@ export class RunnerEngine {
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      appendFileSync(logPath, `[agentq] ${job.startedAt} ${runner.name} → ${built.cmd[0]} (task ${task.id}, phase ${phase})\n`);
+      appendFileSync(
+        logPath,
+        `[agentq] ${job.startedAt} ${runner.name} → ${built.cmd[0]} (task ${task.id}, phase ${phase})\n` +
+          `[agentq] AgentQ MCP server: ${mcpConfigFile}\n`,
+      );
       proc = Bun.spawn(built.cmd, {
         cwd: built.cwd,
         env: built.env,
@@ -408,6 +430,7 @@ export class RunnerEngine {
       agentModel: runner.model ?? "default",
       runnerName: runner.name,
       killReason: null,
+      readers: [],
       timeout: null,
       killTimer: null,
       exited: Promise.resolve(),
@@ -421,13 +444,19 @@ export class RunnerEngine {
     }, this.jobTimeoutMs);
 
     const pump = Promise.all([
-      this.pump(proc.stdout as ReadableStream<Uint8Array>, job),
-      this.pump(proc.stderr as ReadableStream<Uint8Array>, job),
+      this.pump(proc.stdout as ReadableStream<Uint8Array>, active),
+      this.pump(proc.stderr as ReadableStream<Uint8Array>, active),
     ]);
 
     active.exited = (async () => {
       const code = await proc.exited;
-      await pump;
+      const drained = await Promise.race([
+        pump.then(() => true),
+        Bun.sleep(this.drainMs).then(() => false),
+      ]);
+      if (!drained) {
+        for (const reader of active.readers) reader.cancel().catch(() => {});
+      }
       this.onExit(rt, active, code);
     })();
   }
@@ -448,9 +477,11 @@ export class RunnerEngine {
     this.emitRunner(rt.id);
   }
 
-  private async pump(stream: ReadableStream<Uint8Array> | null | undefined, job: RunnerJob) {
+  private async pump(stream: ReadableStream<Uint8Array> | null | undefined, active: ActiveJob) {
     if (!stream) return;
+    const { job } = active;
     const reader = stream.getReader();
+    active.readers.push(reader);
     const decoder = new TextDecoder();
     try {
       for (;;) {
@@ -506,6 +537,13 @@ export class RunnerEngine {
   private kill(active: ActiveJob, reason: string): void {
     if (active.killReason) return;
     active.killReason = reason;
+    if (IS_WINDOWS) {
+      // No SIGTERM on Windows, and ending only the tool would leave its children
+      // (a shell's commands, the tool's MCP servers) running: end the whole tree.
+      this.appendOutput(active.job, `\n[agentq] ${reason}; ending the process tree\n`);
+      killProcessTree(active.proc);
+      return;
+    }
     this.appendOutput(active.job, `\n[agentq] ${reason}; sending SIGTERM\n`);
     try {
       active.proc.kill("SIGTERM");
@@ -584,6 +622,23 @@ export class RunnerEngine {
     this.versions.set(tool, version ?? "unknown");
     return version ?? "unknown";
   }
+}
+
+/** Windows: `taskkill /T /F` on the tree, then a plain kill in case taskkill failed. */
+function killProcessTree(proc: ReturnType<typeof Bun.spawn>): void {
+  void (async () => {
+    try {
+      const taskkill = Bun.spawn(["taskkill", "/pid", String(proc.pid), "/T", "/F"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await taskkill.exited;
+    } catch {}
+    try {
+      proc.kill("SIGKILL");
+    } catch {}
+  })();
 }
 
 /** `<tool> --version` trimmed to its first line, or null when not installed / it fails. */

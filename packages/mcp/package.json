@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "src/launch.ts",
+  "types": "src/launch.ts",
   "bin": {
     "agentq-mcp": "src/index.ts"
   },

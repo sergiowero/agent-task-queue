@@ -3,7 +3,9 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Project, SubmitResult, Task } from "@agentq/shared";
 import {
+  TaskStatus,
   createTask,
+  getTasks,
   getTaskById,
   getProjects,
   getProjectByTaskId,
@@ -16,22 +18,24 @@ import {
   archiveTask,
   WorkflowError,
 } from "@agentq/shared";
+import { MCP_SERVER_NAME } from "./launch.js";
 
-export const SERVER_NAME = "agentq";
+export const SERVER_NAME = MCP_SERVER_NAME;
 export const SERVER_VERSION = "0.1.0";
 
 const ROLES = ["planner", "implementer", "reviewer", "senior", "architect"] as const;
 
 export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents. Protocol:
-1. Call claim_task with your identity (toolName, version, model, role, sessionId). Roles: planner, implementer, reviewer, senior (all three), architect (planner + reviewer).
+1. Call claim_task with your identity (toolName, version, model, role, sessionId). Roles: planner, implementer, reviewer, senior (all three), architect (planner + reviewer). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
 2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do.
 3. Read task.status to know what to do, working in task.project.workingDirectory:
    - planning: write an implementation plan, then call submit_plan.
-   - coding: implement in a git worktree on the recommended branch, then call submit_code with the worktree path.
-   - reviewing: review the submitted code (task.worktreePath), then call submit_review with your findings.
-   - merging: merge the task branch into task.mergeBranch, then call submit_merge with branch, commit and authors.
-4. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-5. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
+   - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
+   - reviewing: review the submitted code (task.worktreePath), then call submit_review with your findings and a verdict.
+   - merging: push the feature branch and open a pull request into task.mergeBranch, then call submit_merge with mergeBranch, the pushed commit, authors and the PR in the message.
+4. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
+5. Pass a short context (state, findings, blockers) on every claim_task and submit_* call, and write every message in Markdown.
+6. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
 // ─── Result helpers ────────────────────────────────────────────────────
@@ -62,6 +66,11 @@ function run(fn: () => JsonObject): CallToolResult {
 function withProject(task: Task): Task & { project: Project | null } {
   const project = task.projectId ? getProjectByTaskId(task.id) : null;
   return { ...task, project };
+}
+
+/** Trims each entry and drops the empty ones; undefined stays undefined. */
+function cleanList(items: string[] | undefined): string[] | undefined {
+  return items?.map((item) => item.trim()).filter(Boolean);
 }
 
 function submitResponse(result: SubmitResult): JsonObject {
@@ -102,7 +111,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Claim next task",
       description:
-        "Atomically claim the highest-priority task eligible for your role and move it to its in-progress status (planning, coding, reviewing or merging). Same as `agentq claim --json`.",
+        "Atomically claim the highest-priority task eligible for your role and move it to its in-progress status (planning, coding, reviewing or merging).",
       inputSchema: {
         toolName: z.string().min(1).describe('Agent tool name, e.g. "claude-code"'),
         version: z.string().min(1).describe("Agent tool version"),
@@ -150,7 +159,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status. Moves it to `waiting_plan_review` and releases it. Same as `agentq submit-plan --json`.",
+        "Submit an implementation plan for a task you claimed in `planning` status. Moves it to `waiting_plan_review` and releases it.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
@@ -175,7 +184,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status. Stores the worktree path, moves it to `waiting_code_review` and releases it. Same as `agentq submit-code --json`.",
+        "Submit implemented code for a task you claimed in `coding` status. Stores the worktree path, moves it to `waiting_code_review` and releases it.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Summary of the changes (markdown)"),
@@ -205,7 +214,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Submit review",
       description:
-        "Submit review findings for a task you claimed in `reviewing` status. Moves it back to `waiting_code_review` and releases it. Same as `agentq submit-review --json`.",
+        "Submit review findings for a task you claimed in `reviewing` status. Moves it back to `waiting_code_review` and releases it.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Review findings (markdown)"),
@@ -230,7 +239,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Submit merge",
       description:
-        "Record a completed merge for a task you claimed in `merging` status. Moves it to `merged` and releases it. Same as `agentq submit-merge --json`.",
+        "Record a completed merge for a task you claimed in `merging` status. Moves it to `merged` and releases it.",
       inputSchema: {
         taskId: taskIdSchema,
         mergeBranch: z.string().min(1).describe("Branch the task was merged into"),
@@ -262,7 +271,7 @@ export function createAgentQMcpServer(): McpServer {
     "get_task",
     {
       title: "Get task",
-      description: "Fetch a task by ID, including its project. Same as `agentq get --json`.",
+      description: "Fetch a task by ID, including its project, conversation, history and contexts.",
       inputSchema: { taskId: taskIdSchema },
       annotations: { readOnlyHint: true },
     },
@@ -277,11 +286,34 @@ export function createAgentQMcpServer(): McpServer {
   );
 
   server.registerTool(
+    "list_tasks",
+    {
+      title: "List tasks",
+      description:
+        "List tasks with their project, highest priority first. Archived and deleted tasks are left out. Use it to find work outside the claim loop, e.g. the `complete` tasks to archive.",
+      inputSchema: {
+        status: z
+          .nativeEnum(TaskStatus)
+          .optional()
+          .describe("Only tasks in this status (e.g. complete)"),
+        projectId: z.string().optional().describe("Only tasks of this project"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    (input) =>
+      run(() => {
+        const tasks = getTasks(input.projectId).filter(
+          (task) => !input.status || task.status === input.status,
+        );
+        return { success: true, tasks: tasks.map(withProject) };
+      }),
+  );
+
+  server.registerTool(
     "list_projects",
     {
       title: "List projects",
-      description:
-        "List all projects (id, displayName, workingDirectory). Same as `agentq projects --json`.",
+      description: "List all projects (id, displayName, workingDirectory).",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
@@ -293,7 +325,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Create task",
       description:
-        "Create a new task in a project. Starts in `plan_requested` when requiresPlan is true, otherwise `ready_for_code`. Same as `agentq create --json`.",
+        "Create a new task in a project. Starts in `plan_requested` when requiresPlan is true, otherwise `ready_for_code`.",
       inputSchema: {
         title: z.string().min(1).describe("Short task title"),
         projectId: z.string().min(1).describe("Project ID (see list_projects)"),
@@ -330,14 +362,14 @@ export function createAgentQMcpServer(): McpServer {
           title: input.title,
           description: input.description,
           steerDetails: input.steerDetails,
-          guardrails: input.guardrails,
+          guardrails: cleanList(input.guardrails),
           priority: input.priority ?? 0,
           recommendedBranch: input.branch || "",
           requiresPlan: input.requiresPlan || false,
           mergeBranch: input.mergeBranch || "develop",
           projectId: input.projectId,
           contexts: input.context ? [input.context] : [],
-          acceptanceCriteria: input.acceptanceCriteria,
+          acceptanceCriteria: cleanList(input.acceptanceCriteria),
         });
         return { success: true, task: { ...task, project: getProjectByTaskId(task.id) } };
       }),
@@ -367,7 +399,7 @@ export function createAgentQMcpServer(): McpServer {
     {
       title: "Archive task",
       description:
-        "Archive a task in `complete` status: writes `<name>.summary.md` (description + what was done) and `<name>.detailed.md` (every message, status change, agent session and activity event, with PR and branch) to {project.workingDirectory}/archive/, then takes the task off the board. Same as the board's Archive button and `agentq archive --json`.",
+        "Archive a task in `complete` status: writes `<name>.summary.md` (description + what was done) and `<name>.detailed.md` (every message, status change, agent session and activity event, with PR and branch) to {project.workingDirectory}/archive/, then takes the task off the board. Same as the board's Archive button.",
       inputSchema: {
         taskId: taskIdSchema,
         pullRequests: z
@@ -384,6 +416,11 @@ export function createAgentQMcpServer(): McpServer {
           .boolean()
           .optional()
           .describe("Archive again a task that is already archived (rewrites its files)"),
+        directory: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Write the files to this folder instead of {project.workingDirectory}/archive"),
         author: authorSchema,
       },
     },
@@ -393,6 +430,7 @@ export function createAgentQMcpServer(): McpServer {
           pullRequests: input.pullRequests,
           overview: input.overview,
           force: input.force,
+          directory: input.directory,
           actor: input.author ?? "agent",
         });
         return {

@@ -14,6 +14,7 @@ export {
 } from "./types.js";
 
 export {
+  getDbPath,
   createTask,
   defaultBranchName,
   slugify,
