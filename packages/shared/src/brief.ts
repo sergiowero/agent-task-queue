@@ -142,5 +142,14 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
 
 /** The phase whose handoff an agent in `phase` should read first. */
 export function previousPhase(phase: Phase): Phase | null {
-  return ({ plan: null, code: "plan", verify: "code", review: "code", merge: "review" } as const)[phase];
+  const previous: Record<Phase, Phase | null> = {
+    refine: null,
+    plan: "refine",
+    plan_review: "plan",
+    code: "plan",
+    verify: "code",
+    review: "code",
+    merge: "review",
+  };
+  return previous[phase];
 }

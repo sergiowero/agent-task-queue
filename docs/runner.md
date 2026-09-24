@@ -140,9 +140,12 @@ with a per-phase hint of what they should contain, and the job's `claimToken`), 
 `report_blocker` when something outside its control blocks the phase (never submit
 partial work), never to ask for permission, and to stop once the submit succeeds.
 
-Phase by status: `plan_requested` / `plan_changes_requested` → plan,
-`ready_for_code` / `changes_requested` → code, `code_review_requested` → review,
-`approved` → merge.
+Phase by status (each phase has its skill, `skills/agentq-<phase>`): `draft` → refine,
+`plan_requested` / `plan_changes_requested` → plan, `plan_review_requested` →
+plan-review, `ready_for_code` / `changes_requested` → code, `verify_requested` →
+verify, `code_review_requested` → review, `approved` → merge (integrator). Existing
+`implementer` runners were migrated to `builder` (implementer + integrator) so they
+keep opening PRs.
 
 ## What happens when the tool exits
 

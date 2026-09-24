@@ -491,6 +491,8 @@ describe("Migration Status", () => {
       "018_task_handoffs",
       "019_task_info",
       "020_drop_legacy_tables",
+      "021_subtasks_plan_submission",
+      "022_runner_roles_builder",
     ]) {
       expect(names).toContain(n);
     }

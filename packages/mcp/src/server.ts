@@ -6,6 +6,7 @@ import {
   MIN_COMPATIBLE_SKILLS_VERSION,
   ROLES,
   STATUS_INFO,
+  skillForPhase,
   TaskStatus,
   compareVersions,
   createTaskForProject,
@@ -23,6 +24,9 @@ import {
   readSkill,
   referenceSchema,
   submitVerification,
+  submitPlanReview,
+  createSubtask,
+  submitRefinement,
   criteriaInputSchema,
   riskSchema,
   taskTypeSchema,
@@ -116,7 +120,7 @@ function taskDetails(task: Task) {
 /** The skill the claimed status belongs to (e.g. agentq-code), with its version. */
 function phaseSkillOf(_role: string, status: Task["status"]) {
   const phase = STATUS_INFO[status]?.phase;
-  const name = phase ? `agentq-${phase === "merge" ? "merge" : phase}` : null;
+  const name = phase ? skillForPhase(phase) : null;
   const skill = name ? readSkill(name) : null;
   return skill ? { name: skill.name, version: skill.version } : null;
 }
@@ -301,7 +305,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan: how each acceptance criterion will be verified. Moves it to `waiting_plan_review` and releases it; once approved, the validation plan is frozen and the verifier runs its commands.",
+        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
@@ -322,6 +326,14 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
               .describe("Commands that must keep passing (e.g. bun test, bun run typecheck)"),
           })
           .optional(),
+        openQuestions: z
+          .array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) }))
+          .max(20)
+          .optional()
+          .describe("Questions for a person; a blocking one sends the task to needs_human before anything else"),
+        suggestedRisk: riskSchema.optional().describe("Your risk estimate (can only raise the task's risk)"),
+        proposedSubtasks: z.array(z.string()).max(20).optional().describe("Subtask titles (create them with create_subtask)"),
+        touchedPaths: z.array(z.string()).max(200).optional().describe("Paths the plan will touch; protected ones raise the risk"),
         author: authorSchema,
         context: submitContextSchema,
         decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
@@ -337,6 +349,10 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           submitPlan(input.taskId, {
             message: input.message,
             validationPlan: input.validationPlan,
+            openQuestions: input.openQuestions,
+            suggestedRisk: input.suggestedRisk,
+            proposedSubtasks: input.proposedSubtasks,
+            touchedPaths: input.touchedPaths,
             author: input.author,
             context: input.context,
             decisions: input.decisions,
@@ -494,6 +510,139 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             tampering: input.tampering,
             verifiedSha: input.verifiedSha,
             author: input.author,
+            ...auth(input),
+          }),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "submit_plan_review",
+    {
+      title: "Submit plan critique",
+      description:
+        "Critique a plan for a task you claimed in `plan_reviewing`: a verdict and findings (ids P<round>-<n>). approve sends a low-risk plan straight to coding (otherwise to a person for approval); request_changes back to the planner (after the project's limit, to a person); needs_human asks a person. Approve is refused while blocker or major findings are open.",
+      inputSchema: {
+        taskId: taskIdSchema,
+        verdict: verdictSchema,
+        findings: z
+          .array(
+            z.object({
+              severity: severitySchema,
+              file: z.string().optional(),
+              line: z.number().int().optional(),
+              text: z.string().min(1),
+            }),
+          )
+          .max(20)
+          .default([]),
+        verifiedFindings: z.array(z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) })).default([]),
+        suggestedRisk: riskSchema.optional().describe("Raise the task's risk if the plan is riskier than rated"),
+        question: z.string().optional().describe("Required with needs_human"),
+        message: z.string().min(1).describe("Critique summary (markdown)"),
+        author: authorSchema,
+        context: submitContextSchema,
+        decisions: handoffListSchema,
+        risks: handoffListSchema,
+        next: handoffListSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
+      },
+    },
+    (input) =>
+      run(() =>
+        submitResponse(
+          submitPlanReview(input.taskId, {
+            verdict: input.verdict,
+            findings: input.findings,
+            verifiedFindings: input.verifiedFindings,
+            suggestedRisk: input.suggestedRisk,
+            question: input.question,
+            message: input.message,
+            author: input.author,
+            context: input.context,
+            decisions: input.decisions,
+            risks: input.risks,
+            next: input.next,
+            ...auth(input),
+          }),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "create_subtask",
+    {
+      title: "Create subtask",
+      description:
+        "Planner only, while you hold the parent in `planning`: split the work into a subtask (one reviewable PR, under ~400 changed lines). Subtasks are held until the parent's plan is approved; then they run (in blockedBy order) and the parent completes when they all do.",
+      inputSchema: {
+        taskId: taskIdSchema.describe("The parent task you are planning"),
+        title: z.string().min(1),
+        description: z.string().min(1),
+        acceptanceCriteria: criteriaInputSchema.optional(),
+        type: taskTypeSchema.optional(),
+        risk: riskSchema.optional(),
+        requiresPlan: z.boolean().optional(),
+        blockedBy: z.array(z.string()).optional().describe("Ids of subtasks that must be complete first"),
+        author: authorSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
+      },
+    },
+    (input) =>
+      run(() => {
+        const child = createSubtask(input.taskId, {
+          title: input.title,
+          description: input.description,
+          acceptanceCriteria: input.acceptanceCriteria,
+          type: input.type,
+          risk: input.risk,
+          requiresPlan: input.requiresPlan,
+          blockedBy: input.blockedBy,
+          author: input.author,
+          ...auth(input),
+        });
+        return { success: true, subtask: { id: child.id, title: child.title, status: child.status, held: child.held } };
+      }),
+  );
+
+  server.registerTool(
+    "submit_refinement",
+    {
+      title: "Submit refinement",
+      description:
+        "For refiner agents, on a task you claimed in `refining`: make the draft ready (testable criteria, type, risk, non-goals, whether it needs a plan). It moves on to planning or coding; a blocking question sends it to a person.",
+      inputSchema: {
+        taskId: taskIdSchema,
+        description: z.string().optional(),
+        acceptanceCriteria: criteriaInputSchema.optional(),
+        type: taskTypeSchema.optional(),
+        risk: riskSchema.optional(),
+        nonGoals: z.array(z.string()).optional(),
+        requiresPlan: z.boolean().optional(),
+        openQuestions: z.array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) })).optional(),
+        message: z.string().min(1).describe("What you changed and why (markdown)"),
+        author: authorSchema,
+        context: submitContextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
+      },
+    },
+    (input) =>
+      run(() =>
+        submitResponse(
+          submitRefinement(input.taskId, {
+            description: input.description,
+            acceptanceCriteria: input.acceptanceCriteria,
+            type: input.type,
+            risk: input.risk,
+            nonGoals: input.nonGoals,
+            requiresPlan: input.requiresPlan,
+            openQuestions: input.openQuestions,
+            message: input.message,
+            author: input.author,
+            context: input.context,
             ...auth(input),
           }),
         ),
@@ -706,6 +855,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           ),
         type: taskTypeSchema.optional().describe("feature, bug, refactor, docs or chore (default feature)"),
         nonGoals: z.array(z.string()).optional().describe("What the task deliberately does not do"),
+        draft: z.boolean().optional().describe("Create a rough draft a refiner agent makes ready"),
         references: z.array(referenceSchema).optional().describe("Files, issues and links to look at first"),
         risk: riskSchema.optional().describe("low, medium or high (default from the type)"),
         priority: z
@@ -744,6 +894,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             type: input.type,
             risk: input.risk,
             nonGoals: cleanList(input.nonGoals),
+            draft: input.draft,
             references: input.references,
           },
           input.author ?? "agent",

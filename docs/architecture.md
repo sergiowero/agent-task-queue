@@ -121,6 +121,7 @@ Scripts for one-click setup:
 A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (objects: id `ACn`, text, how it is verified, status, evidence ids)
+- **Subtasks**: parentId, blockedBy (claimable only when those are complete), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths)
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
 - **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons; evidence rows live in `task_evidence`
@@ -136,7 +137,7 @@ A unit of work assigned to an agent. Contains:
 ### Agent
 A coding agent that claims and works on tasks. Contains:
 - **Identity**: auto-generated ID (`tool@version|model`), toolName, version, model
-- **Role**: planner, implementer, reviewer, senior, or architect
+- **Role**: refiner, planner, plan_reviewer, implementer, verifier, reviewer, integrator, or a compound role (senior, architect, qa, builder)
 - **Session**: sessionId (UUID), host, started_at, last_seen
 - **Lifecycle**: soft delete support
 
@@ -170,7 +171,7 @@ A record of a task status transition. Contains:
 
 ## 4. Task Workflow
 
-### States (18 total)
+### States (23 total)
 
 The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee. The web UI reads the same catalog (`@agentq/shared/catalog`).
 
@@ -205,6 +206,14 @@ The task lifecycle moves through these states:
 **complete** → All work finished. Terminal state.
 
 **canceled** → Work stopped. Can be entered from any state.
+
+**draft** → A rough task; a refiner agent (or a person, "Promote") makes it ready.
+
+**refining** → A refiner agent is writing the criteria, risk and scope.
+
+**plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never the planner's own session).
+
+**split** → The plan split the task into subtasks; it completes when they all finish.
 
 **verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier.
 

@@ -29,6 +29,7 @@ function project(extra: Record<string, unknown> = {}) {
     id,
     displayName: "Brief",
     workingDirectory: "/tmp/brief",
+    autonomy: 1,
     profile: { commands: { test: "bun test" }, guardrails: ["No new dependencies"], conventionFiles: ["CLAUDE.md"], ...extra } as any,
   });
   return id;

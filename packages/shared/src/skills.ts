@@ -12,7 +12,7 @@ export const SKILL_PREFIX = "agentq-";
  * Oldest skills bundle the server still works with. Agents that report an older
  * `skillsVersion` on claim_task are refused with `reason: "skills_outdated"`.
  */
-export const MIN_COMPATIBLE_SKILLS_VERSION = "4.1.0";
+export const MIN_COMPATIBLE_SKILLS_VERSION = "4.3.0";
 
 /** Where each coding tool looks for skills (resolved at call time, so HOME overrides apply). */
 export function toolSkillDirs(): Record<string, string> {

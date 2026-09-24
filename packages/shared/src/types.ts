@@ -136,6 +136,16 @@ export interface Verification {
   at: string;
 }
 
+/** What the planner said beyond the plan text. */
+export interface PlanSubmission {
+  openQuestions: { text: string; blocking: boolean }[];
+  suggestedRisk: Risk | null;
+  /** Subtasks the planner proposes (created with create_subtask). */
+  proposedSubtasks: string[];
+  /** Paths the plan expects to touch (protected ones raise the risk). */
+  touchedPaths: string[];
+}
+
 /** Notes one phase leaves for the next (what was decided, what is risky, what to do next). */
 export interface Handoff {
   id: number;
@@ -230,6 +240,13 @@ export interface Task {
   references: TaskReference[];
   /** Definition-of-Ready problems found when the task was created or edited. */
   dorIssues: string[];
+  /** The task this one was split from. */
+  parentId: string | null;
+  /** Tasks that must be complete before this one can be claimed. */
+  blockedBy: string[];
+  planSubmission: PlanSubmission | null;
+  /** A subtask waiting for its parent's plan to be approved. */
+  held: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

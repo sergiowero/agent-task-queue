@@ -98,6 +98,8 @@ export const createTaskSchema = z.object({
   autonomy: autonomySchema.nullable().optional(),
   nonGoals: listOfLines.optional(),
   references: z.array(referenceSchema).max(30).optional(),
+  /** Start as a draft that a refiner (or a person) makes ready. */
+  draft: z.boolean().optional(),
 });
 
 /**
@@ -142,6 +144,7 @@ export const transitionTaskSchema = z.object({
     "comment",
     "unblock",
     "resolve_blocker",
+    "promote_draft",
     "archive",
   ]),
   authorName: z.string().optional(),

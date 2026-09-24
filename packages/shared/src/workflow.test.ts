@@ -166,9 +166,10 @@ describe("claimNextTask", () => {
     expect(result!.task.status).toBe(TaskStatus.Reviewing);
   });
 
-  it("implementer claims approved into merging", () => {
+  it("the integrator claims approved into merging (the implementer no longer does)", () => {
     const approved = createTestTask({ title: "approved", status: TaskStatus.Approved });
-    const result = claimNextTask({ role: "implementer", agent: agentA, projectId });
+    expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
+    const result = claimNextTask({ role: "integrator", agent: agentA, projectId });
     expect(result!.task.id).toBe(approved.id);
     expect(result!.task.status).toBe(TaskStatus.Merging);
   });
@@ -462,7 +463,7 @@ describe("workflow actions", () => {
     const again = claimNextTask({ role: "implementer", agent: planner, projectId })!;
     submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken });
     expect(approveCode(task.id).status).toBe(TaskStatus.Approved);
-    const merger = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    const merger = claimNextTask({ role: "builder", agent: planner, projectId })!;
     submitMerge(task.id, { branch: "main", commit: "abc", authors: "a", claimToken: merger.claimToken });
     expect(completeTask(task.id).status).toBe(TaskStatus.Complete);
     expect(() => cancelTask(task.id)).toThrow("cannot be canceled");
@@ -685,9 +686,10 @@ describe("autonomy L2: reviews that decide", () => {
     expect(touchLease(task.id, "wrong")).toBe(false);
     expect(touchLease(task.id, c.claimToken)).toBe(true);
 
-    expect(sweepQueue(new Date()).expired).toEqual([]);
+    expect(sweepQueue(new Date()).expired).not.toContain(task.id);
     const later = new Date(Date.now() + 3 * 60 * 60_000);
-    expect(sweepQueue(later).expired).toEqual([task.id]);
+    // Other test files may leave claims behind; they expire too.
+    expect(sweepQueue(later).expired).toContain(task.id);
     const released = getTaskById(task.id)!;
     expect(released.status).toBe(TaskStatus.ReadyForCode);
     expect(released.leaseExpiresAt).toBeNull();
@@ -699,9 +701,9 @@ describe("autonomy L2: reviews that decide", () => {
 
   it("a review nobody eligible picks up goes to a person after reviewStarvationMin", () => {
     const id = coded();
-    expect(sweepQueue(new Date()).starved).toEqual([]);
+    expect(sweepQueue(new Date()).starved).not.toContain(id);
     const later = new Date(Date.now() + 21 * 60_000);
-    expect(sweepQueue(later).starved).toEqual([id]);
+    expect(sweepQueue(later).starved).toContain(id);
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.WaitingCodeReview);
     expect(task.history.at(-1)!.actor).toBe("system:sweeper");
@@ -714,7 +716,8 @@ describe("evidence, validation plans and findings by id", () => {
   const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "e-reviewer" };
 
   beforeAll(() => {
-    createProject({ id: projectId, displayName: "Evidence", workingDirectory: "/tmp/evidence" });
+    // L1: a person approves plans (L2 would send them to an AI critic first).
+    createProject({ id: projectId, displayName: "Evidence", workingDirectory: "/tmp/evidence", autonomy: 1 });
   });
 
   afterAll(() => {
@@ -722,9 +725,9 @@ describe("evidence, validation plans and findings by id", () => {
   });
 
   /** A project of its own, so a claim can only return this test's task. */
-  function fresh() {
+  function fresh(autonomy: 0 | 1 | 2 | 3 = 2) {
     const id = `evidence-${Math.random().toString(36).slice(2)}`;
-    createProject({ id, displayName: "Evidence", workingDirectory: "/tmp/evidence" });
+    createProject({ id, displayName: "Evidence", workingDirectory: "/tmp/evidence", autonomy });
     return id;
   }
 
