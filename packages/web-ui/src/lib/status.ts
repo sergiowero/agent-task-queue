@@ -51,6 +51,11 @@ const STATUS_LOOK: Record<TaskStatus, Omit<StatusMeta, "label">> = {
   [TaskStatus.NeedsHuman]: { tone: "danger", icon: NeedsHumanIcon },
   [TaskStatus.VerifyRequested]: { tone: "info", icon: VerifyIcon },
   [TaskStatus.Verifying]: { tone: "info", icon: VerifyIcon, live: true },
+  [TaskStatus.PlanReviewRequested]: { tone: "accent", icon: ReviewIcon },
+  [TaskStatus.PlanReviewing]: { tone: "accent", icon: ReviewIcon, live: true },
+  [TaskStatus.Draft]: { tone: "neutral", icon: PendingIcon },
+  [TaskStatus.Refining]: { tone: "neutral", icon: PlanIcon, live: true },
+  [TaskStatus.Split]: { tone: "info", icon: InProgressIcon },
 };
 
 export const TASK_STATUS: Record<string, StatusMeta> = Object.fromEntries(

@@ -46,6 +46,9 @@ const TOOL_NAMES = [
   "submit_verification",
   "get_task_brief",
   "get_skill",
+  "submit_plan_review",
+  "create_subtask",
+  "submit_refinement",
 ];
 
 const senior = {
@@ -632,13 +635,14 @@ describe("AgentQ MCP agent workflow", () => {
     client = primaryClient!;
   });
 
-  it("implementer claims an approved task -> merging", async () => {
+  it("the integrator (not the implementer) claims an approved task -> merging", async () => {
     updateTask(codeTaskId, { status: TaskStatus.Approved });
-    const out = await claim("implementer", "s5");
+    expect((await claim("implementer", "s5")).reason).toBe("no_tasks_available");
+    const out = await claim("builder", "s5");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(codeTaskId);
     expect(out.task.status).toBe(TaskStatus.Merging);
-    expect(out.agent.role).toBe("implementer");
+    expect(out.agent.role).toBe("integrator");
   });
 
   it("submit_merge requires mergeBranch, commit and authors, then moves the task to merged", async () => {
@@ -895,7 +899,8 @@ describe("AgentQ MCP claims and blockers", () => {
       claimToken: claimed.claimToken,
     });
     expect(withToken.isError).toBeFalsy();
-    expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingPlanReview);
+    // L2: the plan goes to an AI critic first.
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanReviewRequested);
   });
 
   it("a server started with a claim (runner job) submits it without passing the token", async () => {
@@ -926,7 +931,7 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(getActivityEvents({ taskId: task.id }).some((e) => e.eventType === "task_blocked")).toBe(true);
 
     // Nothing claims a task that waits for a person.
-    const none = parse(await call(client, "claim_task", { ...agent, role: "senior", sessionId: "s3", projectId }));
+    const none = parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "s3", projectId }));
     expect(none.reason).toBe("no_tasks_available");
   });
 

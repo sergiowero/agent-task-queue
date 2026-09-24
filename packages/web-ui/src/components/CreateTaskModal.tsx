@@ -49,6 +49,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [branch, setBranch] = useState("");
   const [mergeBranch, setMergeBranch] = useState("");
   const [requiresPlan, setRequiresPlan] = useState(false);
+  const [draft, setDraft] = useState(false);
   const [type, setType] = useState<TaskType>("feature");
   const [risk, setRisk] = useState<Risk | "">("");
   const [autonomy, setAutonomy] = useState<string>("");
@@ -73,6 +74,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         recommendedBranch: branch || undefined,
         mergeBranch: mergeBranch.trim() || undefined,
         requiresPlan,
+        draft: draft || undefined,
         type,
         risk: risk || undefined,
         autonomy: autonomy === "" ? undefined : (Number(autonomy) as AutonomyLevel),
@@ -223,8 +225,16 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
             onChange={setRequiresPlan}
             icon={PlanIcon}
             label="Requires planning"
-            description="An agent writes a plan for your review before coding."
+            description="An agent writes a plan (reviewed by an AI critic and/or you) before coding."
           />
+          <div className="mt-3">
+            <Toggle
+              checked={draft}
+              onChange={setDraft}
+              label="Save as draft"
+              description="Rough idea: a refiner agent turns it into a ready task (criteria, risk, scope), or you promote it later."
+            />
+          </div>
         </div>
 
         <div>

@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "4.2.0"
+  version: "4.3.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -21,7 +21,7 @@ If the `agentq` tools are missing, the server is not registered: tell the user t
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
 - **sessionId**: Current session ID from the invoking tool (do not generate)
-- **role**: Specified by user at skill invocation, default: `senior`
+- **role**: Specified by user at skill invocation, default: `senior`. Base roles: `refiner`, `planner`, `plan_reviewer`, `implementer`, `verifier`, `reviewer`, `integrator` (pushes and opens the PR). Compound: `senior` (all but verifier), `architect` (planner + plan_reviewer + reviewer), `qa` (verifier + reviewer), `builder` (implementer + integrator)
 
 ## Claim a Task
 
@@ -29,7 +29,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "4.2.0",
+  "skillsVersion": "4.3.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -48,7 +48,7 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "4.2.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "4.3.0" }
 ```
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
@@ -78,12 +78,17 @@ The claim moves the task to its in-progress status; route on the status it was c
 
 | Claimed from | In progress | Phase | Skill to read next |
 |--------------|-------------|-------|--------------------|
+| `draft` | `refining` | Refining | `agentq-refine` |
 | `plan_requested` | `planning` | Planning | `agentq-plan` |
 | `plan_changes_requested` | `planning` | Planning | `agentq-plan` |
+| `plan_review_requested` | `plan_reviewing` | Plan critique | `agentq-plan-review` |
 | `ready_for_code` | `coding` | Coding | `agentq-code` |
 | `changes_requested` | `coding` | Coding | `agentq-code` |
+| `verify_requested` | `verifying` | Verifying | `agentq-verify` |
 | `code_review_requested` | `reviewing` | Reviewing | `agentq-review` |
-| `approved` | `merging` | Merging | `agentq-merge` |
+| `approved` | `merging` | Merging (integrator) | `agentq-merge` |
+
+`claim_task` also returns `phaseSkill` with the name to follow.
 
 After claiming, read the skill for the phase and follow it. Do not read the other phase skills.
 

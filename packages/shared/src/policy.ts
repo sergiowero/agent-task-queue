@@ -57,8 +57,9 @@ export interface GatePolicy extends PolicySettings {
 export const LEVEL_GATES: Record<AutonomyLevel, { plan: Gate; code: Gate }> = {
   0: { plan: "human", code: "human" },
   1: { plan: "human", code: "agent" },
-  2: { plan: "human", code: "agent" },
-  3: { plan: "human", code: "agent" },
+  // An AI critic reviews the plan; a person still approves it unless the task is low risk.
+  2: { plan: "agent", code: "agent" },
+  3: { plan: "agent", code: "agent" },
 };
 
 export interface PolicyProject {
@@ -89,9 +90,38 @@ export function reviewRoundsUsed(task: RoutingTask): number {
   return task.codeRound - (task.roundBaseline.code ?? 0);
 }
 
-/** After submit_plan. */
-export function afterPlan(_task: RoutingTask, p: GatePolicy): TaskStatus {
-  return p.plan === "none" ? TaskStatus.ReadyForCode : TaskStatus.WaitingPlanReview;
+/** After submit_plan. A blocking open question goes to a person before anything else. */
+export function afterPlan(_task: RoutingTask, p: GatePolicy, opts: { blockingQuestions?: boolean } = {}): TaskStatus {
+  if (opts.blockingQuestions) return TaskStatus.NeedsHuman;
+  if (p.plan === "agent") return TaskStatus.PlanReviewRequested;
+  if (p.plan === "human") return TaskStatus.WaitingPlanReview;
+  return TaskStatus.ReadyForCode;
+}
+
+/** Plan critiques counted against the limit: those since the last human reset. */
+export function planRoundsUsed(task: RoutingTask): number {
+  return task.planRound - (task.roundBaseline.plan ?? 0);
+}
+
+export interface PlanReviewRouting {
+  status: TaskStatus;
+  reason?: "round_limit" | "needs_human" | "risk";
+}
+
+/**
+ * After submit_plan_review. `task.planRound` already counts this critique.
+ * An approved low-risk plan goes straight to coding; otherwise a person approves it.
+ */
+export function afterPlanReview(task: RoutingTask, p: GatePolicy, verdict: Verdict): PlanReviewRouting {
+  if (verdict === "needs_human") return { status: TaskStatus.NeedsHuman, reason: "needs_human" };
+  if (verdict === "request_changes") {
+    return planRoundsUsed(task) >= p.maxPlanRounds
+      ? { status: TaskStatus.NeedsHuman, reason: "round_limit" }
+      : { status: TaskStatus.PlanChangesRequested };
+  }
+  return task.risk === "low"
+    ? { status: TaskStatus.ReadyForCode }
+    : { status: TaskStatus.WaitingPlanReview, reason: "risk" };
 }
 
 /** Where reviewed-for-correctness code goes next: a person (L0) or an AI reviewer. */

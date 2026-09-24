@@ -18,11 +18,29 @@ and existing projects start at **L2**.
 |---|---|---|---|---|
 | **L0 Supervised** | Person | Person (AI review on request) | Person | High risk, new repos, a trust period |
 | **L1 Human plan** | Person | AI reviewer | Person | Medium features |
-| **L2 Human PR** (default) | Person* | AI reviewer | Person | Most tasks |
-| **L3 Autonomous** | Person* | AI reviewer | Person, or auto-merge when green and low risk | Docs, tests, chores |
+| **L2 Human PR** (default) | AI critic, then a person unless low risk | AI reviewer | Person | Most tasks |
+| **L3 Autonomous** | AI critic, then a person unless low risk | AI reviewer | Person, or auto-merge when green and low risk | Docs, tests, chores |
 
-\* An AI plan critic replaces the person for low-risk plans in a later phase
-of the roadmap; until then every plan is approved by a person.
+## Plan routing (L2–L3)
+
+`submit_plan` goes to `plan_review_requested`: a `plan_reviewer` agent (never the
+planner's own session) critiques it with a verdict and findings (`P<round>-<n>`).
+Approve sends a **low-risk** plan straight to coding and anything riskier to a
+person; request changes goes back to the planner (at most `maxPlanRounds`, then a
+person); needs_human asks a person. A **blocking open question** in the plan
+sends the task to a person before any critique. The planner's `suggestedRisk` and
+`touchedPaths` can only raise the risk (protected paths make it high).
+
+## Subtasks and drafts
+
+A planner can split a task with `create_subtask` (with `blockedBy` for order). The
+subtasks are held until the parent's plan is approved; then they run like any
+task (a blocked one waits for its dependencies to be complete) and the parent,
+in `split`, completes when they are all finished. Re-planning drops the held
+subtasks of the previous plan.
+
+A task created as a **draft** waits for a `refiner` agent to make it ready
+(criteria, type, risk, scope) or for a person to promote it.
 
 L0 reproduces the original behaviour exactly: the reviewer's verdict is advice
 and a person approves or requests changes.
@@ -68,6 +86,8 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | The reviewer reopens a finding the coder answered, twice | `needs_human` to arbitrate |
 | A runner job ends `AGENTQ_MAX_REVERTS` (3) times without submitting | `needs_human` with the last output |
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
+| No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
+| Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
 
 Answering a `needs_human` task (task page → answer + next status) records the
 answer in the conversation and resets the round limits, so the agents get a
@@ -79,7 +99,8 @@ Nobody reviews code they wrote. Each claim carries a `sessionKey`:
 `runner:<runnerId>` for runner claims (stable across jobs), `mcp:<instance>` for
 agents that claim through their own MCP session. Every submit records who
 produced the artifact (`task.producers`), and a claim of `code_review_requested`
-skips tasks whose code was produced under the same `sessionKey`. With
+skips tasks whose code was produced under the same `sessionKey`; a claim of
+`plan_review_requested` skips plans the same session wrote. With
 `requireDifferentModel`, the reviewer's model must also differ from the coder's.
 
 With a single `senior` runner on an L1+ project, reviews therefore wait for a

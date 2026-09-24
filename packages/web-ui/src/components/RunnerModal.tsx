@@ -38,8 +38,9 @@ import { Modal, useModal } from "./Modal";
 import type { SegmentOption } from "./SegmentedControl";
 import { SegmentedControl } from "./SegmentedControl";
 import { Select } from "./Select";
+import { ROLES as CATALOG_ROLES, ROLE_INFO } from "@agentq/shared/catalog";
 
-const ROLES: RunnerRole[] = ["planner", "implementer", "reviewer", "senior", "architect"];
+const ROLES = CATALOG_ROLES as readonly RunnerRole[];
 
 /** Sentinel value of the model select that reveals the free-text input. */
 const CUSTOM_MODEL = "__custom__";
@@ -335,7 +336,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
               )}
             </Select>
           </Field>
-          <Field label="Role" icon={UserIcon} required>
+          <Field label="Role" icon={UserIcon} required hint={ROLE_INFO[role]}>
             <Select value={role} onChange={(e) => setRole(e.target.value as RunnerRole)}>
               {ROLES.map((r) => (
                 <option key={r} value={r}>

@@ -536,6 +536,27 @@ const MIGRATIONS: Migration[] = [
     },
     down: (d) => createLegacyTables(d),
   },
+  {
+    // Subtasks (parent, dependencies, held until the parent's plan is approved) and plan extras.
+    name: "021_subtasks_plan_submission",
+    up: (d) => {
+      addColumn(d, "tasks", "parent_id TEXT");
+      addColumn(d, "tasks", "blocked_by TEXT DEFAULT '[]'");
+      addColumn(d, "tasks", "plan_submission TEXT");
+      addColumn(d, "tasks", "held INTEGER NOT NULL DEFAULT 0");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id)");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET parent_id = NULL, blocked_by = '[]', plan_submission = NULL, held = 0"); } catch {}
+      d.exec("DROP INDEX IF EXISTS idx_tasks_parent_id");
+    },
+  },
+  {
+    // Integrators now open PRs; implementer runners become builders so they keep doing so.
+    name: "022_runner_roles_builder",
+    up: (d) => d.exec("UPDATE runners SET role = 'builder' WHERE role = 'implementer'"),
+    down: (d) => d.exec("UPDATE runners SET role = 'implementer' WHERE role = 'builder'"),
+  },
 ];
 
 function runMigrations(): void {
@@ -657,6 +678,10 @@ function rowToTask(row: any): Task {
     nonGoals: parseJson(row.non_goals, []),
     references: parseJson(row.refs, []),
     dorIssues: parseJson(row.dor_issues, []),
+    parentId: row.parent_id ?? null,
+    blockedBy: parseJson(row.blocked_by, []),
+    planSubmission: parseJson(row.plan_submission, null),
+    held: row.held === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -763,6 +788,11 @@ export function createTask(data: {
   nonGoals?: string[];
   references?: TaskReference[];
   dorIssues?: string[];
+  parentId?: string | null;
+  blockedBy?: string[];
+  held?: boolean;
+  /** Start as a draft (a refiner, or a person, makes it ready). */
+  draft?: boolean;
 }): Task {
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -778,7 +808,7 @@ export function createTask(data: {
     realBranch: null,
     requiresPlan: data.requiresPlan ?? false,
     mergeBranch: data.mergeBranch?.trim() || "main",
-    status: data.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode,
+    status: data.draft ? TaskStatus.Draft : data.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode,
     assignedAgent: null,
     conversation: [],
     history: [],
@@ -807,6 +837,10 @@ export function createTask(data: {
     nonGoals: data.nonGoals ?? [],
     references: data.references ?? [],
     dorIssues: data.dorIssues ?? [],
+    parentId: data.parentId ?? null,
+    blockedBy: data.blockedBy ?? [],
+    planSubmission: null,
+    held: data.held ?? false,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -818,8 +852,8 @@ export function createTask(data: {
     `INSERT INTO tasks (id, title, description, steer_details, guardrails, acceptance_criteria, priority,
       recommended_branch, real_branch, requires_plan, merge_branch, status,
       assigned_agent_id, conversation, history, contexts, project_id, worktree_path, created_at, updated_at,
-      type, risk, autonomy, non_goals, refs, dor_issues)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      type, risk, autonomy, non_goals, refs, dor_issues, parent_id, blocked_by, held)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   stmt.run(
     task.id,
@@ -848,6 +882,9 @@ export function createTask(data: {
     JSON.stringify(task.nonGoals),
     JSON.stringify(task.references),
     JSON.stringify(task.dorIssues),
+    task.parentId,
+    JSON.stringify(task.blockedBy),
+    task.held ? 1 : 0,
   );
 
   return task;
@@ -876,7 +913,13 @@ export function getClaimableTasks(
   if (statuses.length === 0) return [];
   const placeholders = statuses.map(() => "?").join(", ");
   let sql = `SELECT t.* FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-    WHERE t.status IN (${placeholders}) AND t.assigned_agent_id IS NULL AND t.deleted_at IS NULL AND t.archived_at IS NULL`;
+    WHERE t.status IN (${placeholders}) AND t.assigned_agent_id IS NULL AND t.deleted_at IS NULL AND t.archived_at IS NULL
+      AND COALESCE(t.held, 0) = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(COALESCE(NULLIF(t.blocked_by, ''), '[]')) dep
+        LEFT JOIN tasks o ON o.id = dep.value
+        WHERE o.id IS NULL OR o.status != 'complete'
+      )`;
   const params: any[] = [...statuses];
   if (projectId) {
     sql += " AND t.project_id = ?";
@@ -973,6 +1016,10 @@ const TASK_COLUMNS = {
   // "references" is an SQL keyword.
   references: { column: "refs", json: true },
   dorIssues: { column: "dor_issues", json: true },
+  parentId: { column: "parent_id", json: false },
+  blockedBy: { column: "blocked_by", json: true },
+  planSubmission: { column: "plan_submission", json: true },
+  held: { column: "held", json: false },
 } as const;
 
 export type TaskPatch = {
@@ -1048,6 +1095,14 @@ export function setTaskArchive(id: string, archivedAt: string, archivePath: stri
     .prepare("UPDATE tasks SET archived_at = ?, archive_path = ?, updated_at = ? WHERE id = ?")
     .run(archivedAt, archivePath, new Date().toISOString(), id);
   return result.changes > 0;
+}
+
+/** Subtasks of a task, oldest first. */
+export function getSubtasks(parentId: string): Task[] {
+  return getDb()
+    .prepare("SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY created_at ASC")
+    .all(parentId)
+    .map(rowToTask);
 }
 
 /** Live tasks; archived ones are left out unless `includeArchived` is set. */

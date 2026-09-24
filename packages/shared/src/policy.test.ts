@@ -1,6 +1,14 @@
 import { describe, it, expect } from "bun:test";
 import { TaskStatus, type AutonomyLevel, type Risk, type Verdict } from "./catalog.js";
-import { DEFAULT_POLICY, afterCode, afterPlan, afterReview, resolvePolicy, type RoutingTask } from "./policy.js";
+import {
+  DEFAULT_POLICY,
+  afterCode,
+  afterPlan,
+  afterPlanReview,
+  afterReview,
+  resolvePolicy,
+  type RoutingTask,
+} from "./policy.js";
 
 const task = (over: Partial<RoutingTask> = {}): RoutingTask => ({
   risk: "medium",
@@ -15,7 +23,7 @@ describe("resolvePolicy", () => {
   it("defaults to L2 and the default settings", () => {
     const p = resolvePolicy(null);
     expect(p.level).toBe(2);
-    expect(p).toMatchObject({ ...DEFAULT_POLICY, plan: "human", code: "agent" });
+    expect(p).toMatchObject({ ...DEFAULT_POLICY, plan: "agent", code: "agent" });
   });
 
   it("a task override beats the project level; project settings override defaults", () => {
@@ -27,10 +35,27 @@ describe("resolvePolicy", () => {
 });
 
 describe("routing", () => {
-  it("plans always reach a person in this phase", () => {
-    for (const level of [0, 1, 2, 3] as AutonomyLevel[]) {
-      expect(afterPlan(task(), resolvePolicy({ autonomy: level }))).toBe(TaskStatus.WaitingPlanReview);
-    }
+  it("plans go to a person under L0/L1 and to an AI critic from L2; blocking questions go to a person first", () => {
+    expect(afterPlan(task(), resolvePolicy({ autonomy: 0 }))).toBe(TaskStatus.WaitingPlanReview);
+    expect(afterPlan(task(), resolvePolicy({ autonomy: 1 }))).toBe(TaskStatus.WaitingPlanReview);
+    expect(afterPlan(task(), resolvePolicy({ autonomy: 2 }))).toBe(TaskStatus.PlanReviewRequested);
+    expect(afterPlan(task(), resolvePolicy({ autonomy: 3 }))).toBe(TaskStatus.PlanReviewRequested);
+    expect(afterPlan(task(), resolvePolicy({ autonomy: 2 }), { blockingQuestions: true })).toBe(TaskStatus.NeedsHuman);
+  });
+
+  it("the critic's verdict: low risk goes to coding, higher risk to a person, changes back to the planner", () => {
+    const p = resolvePolicy({ autonomy: 2 });
+    expect(afterPlanReview(task({ risk: "low", planRound: 1 }), p, "approve").status).toBe(TaskStatus.ReadyForCode);
+    expect(afterPlanReview(task({ risk: "medium", planRound: 1 }), p, "approve")).toEqual({
+      status: TaskStatus.WaitingPlanReview,
+      reason: "risk",
+    });
+    expect(afterPlanReview(task({ planRound: 1 }), p, "request_changes").status).toBe(TaskStatus.PlanChangesRequested);
+    expect(afterPlanReview(task({ planRound: 2 }), p, "request_changes")).toEqual({
+      status: TaskStatus.NeedsHuman,
+      reason: "round_limit",
+    });
+    expect(afterPlanReview(task(), p, "needs_human").status).toBe(TaskStatus.NeedsHuman);
   });
 
   it("code goes to a person at L0 and to an AI reviewer from L1", () => {

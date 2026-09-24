@@ -23,6 +23,11 @@ export enum TaskStatus {
   NeedsHuman = "needs_human",
   VerifyRequested = "verify_requested",
   Verifying = "verifying",
+  PlanReviewRequested = "plan_review_requested",
+  PlanReviewing = "plan_reviewing",
+  Draft = "draft",
+  Refining = "refining",
+  Split = "split",
 }
 
 export function normalizeStatus(status: string): TaskStatus {
@@ -31,13 +36,14 @@ export function normalizeStatus(status: string): TaskStatus {
 }
 
 /** Work phases; each has a skill (`skills/agentq-<phase>`) and a submit tool. */
-export type Phase = "plan" | "code" | "verify" | "review" | "merge";
+export type Phase = "refine" | "plan" | "plan_review" | "code" | "verify" | "review" | "merge";
 
 /**
  * queued: waiting for an agent to claim it · active: an agent holds it ·
- * human: waiting for a person · done / terminal: finished.
+ * human: waiting for a person · waiting: waiting for other tasks (subtasks) ·
+ * done / terminal: finished.
  */
-export type StatusKind = "queued" | "active" | "human" | "done" | "terminal";
+export type StatusKind = "queued" | "active" | "human" | "waiting" | "done" | "terminal";
 
 export type BoardColumn = "pending" | "in-progress" | "need-review" | "done";
 
@@ -210,6 +216,51 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     editable: false,
     hint: "The verifier is running the project's commands in the task's worktree.",
   },
+  [TaskStatus.PlanReviewRequested]: {
+    label: "Plan critique requested",
+    kind: "queued",
+    phase: "plan_review",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for a plan-reviewer agent (another model) to critique the plan.",
+  },
+  [TaskStatus.PlanReviewing]: {
+    label: "Plan critique",
+    kind: "active",
+    phase: "plan_review",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "A plan-reviewer agent is critiquing the plan.",
+  },
+  [TaskStatus.Draft]: {
+    label: "Draft",
+    kind: "queued",
+    phase: "refine",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "A rough task: a refiner agent makes it ready (criteria, risk, questions), or promote it yourself.",
+  },
+  [TaskStatus.Refining]: {
+    label: "Refining",
+    kind: "active",
+    phase: "refine",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "A refiner agent is turning the draft into a ready task.",
+  },
+  [TaskStatus.Split]: {
+    label: "Split into subtasks",
+    kind: "waiting",
+    phase: null,
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: true,
+    hint: "The work continues in its subtasks; this task completes when they all do.",
+  },
   [TaskStatus.NeedsHuman]: {
     label: "Needs you",
     kind: "human",
@@ -222,6 +273,11 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
 };
 
 export const ALL_STATUSES = Object.values(TaskStatus) as TaskStatus[];
+
+/** The skill that covers a phase: skills/agentq-<phase with dashes>/SKILL.md. */
+export function skillForPhase(phase: Phase): string {
+  return `agentq-${phase.replace(/_/g, "-")}`;
+}
 
 export function statusLabel(status: string): string {
   return STATUS_INFO[status as TaskStatus]?.label ?? status.replace(/_/g, " ");
@@ -241,32 +297,71 @@ export interface ClaimRule {
 
 /** What each base role claims, and the active status the claim moves the task to. */
 export const CLAIM_RULES: ClaimRule[] = [
+  { role: "refiner", from: [TaskStatus.Draft], to: TaskStatus.Refining },
   {
     role: "planner",
     from: [TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested],
     to: TaskStatus.Planning,
   },
+  { role: "plan_reviewer", from: [TaskStatus.PlanReviewRequested], to: TaskStatus.PlanReviewing },
   {
     role: "implementer",
     from: [TaskStatus.ReadyForCode, TaskStatus.ChangesRequested],
     to: TaskStatus.Coding,
   },
-  { role: "reviewer", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
-  { role: "implementer", from: [TaskStatus.Approved], to: TaskStatus.Merging },
-  // The server's built-in verifier (no LLM) runs the project's commands.
+  // The server's built-in verifier (no LLM) claims these too.
   { role: "verifier", from: [TaskStatus.VerifyRequested], to: TaskStatus.Verifying },
+  { role: "reviewer", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
+  { role: "integrator", from: [TaskStatus.Approved], to: TaskStatus.Merging },
 ];
 
-export const BASE_ROLES = ["planner", "implementer", "reviewer"] as const;
+export const BASE_ROLES = [
+  "refiner",
+  "planner",
+  "plan_reviewer",
+  "implementer",
+  "verifier",
+  "reviewer",
+  "integrator",
+] as const;
 
 export const COMPOUND_ROLES: Record<string, string[]> = {
-  senior: ["planner", "implementer", "reviewer"],
-  architect: ["planner", "reviewer"],
+  // The built-in verifier covers verification, so senior agents do not claim it.
+  senior: ["refiner", "planner", "plan_reviewer", "implementer", "reviewer", "integrator"],
+  architect: ["planner", "plan_reviewer", "reviewer"],
+  qa: ["verifier", "reviewer"],
+  builder: ["implementer", "integrator"],
 };
 
 /** Every role an agent or runner may use. */
-export const ROLES = ["planner", "implementer", "reviewer", "senior", "architect"] as const;
+export const ROLES = [
+  "planner",
+  "plan_reviewer",
+  "implementer",
+  "reviewer",
+  "integrator",
+  "verifier",
+  "refiner",
+  "senior",
+  "architect",
+  "qa",
+  "builder",
+] as const;
 export type Role = (typeof ROLES)[number];
+
+export const ROLE_INFO: Record<Role, string> = {
+  planner: "Writes implementation plans with a validation plan",
+  plan_reviewer: "Critiques plans (use a different model than the planner)",
+  implementer: "Writes the code and tests, with evidence",
+  reviewer: "Reviews code with a verdict (use a different model than the coder)",
+  integrator: "Pushes the branch and opens the pull request",
+  verifier: "Runs the verification commands (the server has a built-in one)",
+  refiner: "Turns rough drafts into ready tasks",
+  senior: "Everything except verification (for a single agent)",
+  architect: "Plans, critiques plans and reviews code; never writes code",
+  qa: "Verifies and reviews",
+  builder: "Implements and integrates (opens the PR)",
+};
 
 /** Base roles a (possibly compound) role stands for. */
 export function baseRolesOf(role: string): string[] {
@@ -290,6 +385,8 @@ export const REVERT_FALLBACK: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
   [TaskStatus.Merging]: TaskStatus.Approved,
   [TaskStatus.Verifying]: TaskStatus.VerifyRequested,
+  [TaskStatus.PlanReviewing]: TaskStatus.PlanReviewRequested,
+  [TaskStatus.Refining]: TaskStatus.Draft,
 };
 
 /** Where a person's "Unblock" sends an active task (the agent is dropped). */
@@ -299,10 +396,20 @@ export const UNBLOCK_TARGET: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
   [TaskStatus.Merging]: TaskStatus.Approved,
   [TaskStatus.Verifying]: TaskStatus.VerifyRequested,
+  [TaskStatus.PlanReviewing]: TaskStatus.PlanReviewRequested,
+  [TaskStatus.Refining]: TaskStatus.Draft,
 };
 
 /** Statuses a person may send a `needs_human` task to, by the phase it was blocked in. */
 export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
+  refine: [TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode, TaskStatus.Canceled],
+  plan_review: [
+    TaskStatus.PlanReviewRequested,
+    TaskStatus.PlanChangesRequested,
+    TaskStatus.WaitingPlanReview,
+    TaskStatus.ReadyForCode,
+    TaskStatus.Canceled,
+  ],
   plan: [
     TaskStatus.PlanChangesRequested,
     TaskStatus.PlanRequested,
@@ -351,7 +458,18 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
   }
   for (const [active, target] of Object.entries(UNBLOCK_TARGET)) add(active as TaskStatus, target!);
   // Submissions (where each one lands is decided by the autonomy policy).
-  add(TaskStatus.Planning, TaskStatus.WaitingPlanReview);
+  add(TaskStatus.Planning, TaskStatus.WaitingPlanReview, TaskStatus.PlanReviewRequested, TaskStatus.ReadyForCode, TaskStatus.Split);
+  add(
+    TaskStatus.PlanReviewing,
+    TaskStatus.ReadyForCode,
+    TaskStatus.WaitingPlanReview,
+    TaskStatus.PlanChangesRequested,
+    TaskStatus.Split,
+  );
+  add(TaskStatus.Refining, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
+  add(TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
+  add(TaskStatus.PlanReviewRequested, TaskStatus.WaitingPlanReview);
+  add(TaskStatus.Split, TaskStatus.Complete);
   add(
     TaskStatus.Coding,
     TaskStatus.WaitingCodeReview,
@@ -376,7 +494,7 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
   // Nobody eligible picked the review up in time: a person reviews instead.
   add(TaskStatus.CodeReviewRequested, TaskStatus.WaitingCodeReview);
   // Human decisions.
-  add(TaskStatus.WaitingPlanReview, TaskStatus.ReadyForCode, TaskStatus.PlanChangesRequested);
+  add(TaskStatus.WaitingPlanReview, TaskStatus.ReadyForCode, TaskStatus.PlanChangesRequested, TaskStatus.Split);
   add(
     TaskStatus.WaitingCodeReview,
     TaskStatus.Approved,
@@ -406,6 +524,7 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
  */
 export const SEPARATION: Partial<Record<TaskStatus, Phase>> = {
   [TaskStatus.CodeReviewRequested]: "code",
+  [TaskStatus.PlanReviewRequested]: "plan",
 };
 
 // ─── Autonomy, risk and task types ────────────────────────────────────
@@ -527,6 +646,11 @@ export const EVENT_TYPES: Record<string, string> = {
   verification_skipped: "Verification skipped",
   risk_raised: "Risk raised",
   dor_warning: "Not ready",
+  plan_review_submitted: "Plan critique submitted",
+  subtask_created: "Subtask created",
+  task_split: "Split into subtasks",
+  draft_refined: "Draft refined",
+  draft_promoted: "Draft promoted",
   task_reverted: "Reverted",
   task_archived: "Archived",
   comment_added: "Comment",

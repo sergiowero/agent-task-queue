@@ -106,7 +106,8 @@ function lastJob(engine: RunnerEngine, runnerId: string) {
 
 beforeAll(() => {
   mkdirSync(PROJECT_DIR, { recursive: true });
-  createProject({ id: projectId, displayName: "Runner Project", workingDirectory: PROJECT_DIR });
+  // L1: plans go to a person (the runner tests below expect waiting_plan_review), code to an AI review.
+  createProject({ id: projectId, displayName: "Runner Project", workingDirectory: PROJECT_DIR, autonomy: 1 });
 });
 
 afterEach(async () => {
@@ -405,7 +406,7 @@ describe("RunnerEngine: blocked tasks", () => {
     updateTask(task.id, { status: TaskStatus.Approved });
     const runner = makeRunner(
       agentArgv("report_blocker", { reason: "git push: 403", question: "Grant push access?", context: "tried twice" }),
-      { role: "implementer" },
+      { role: "builder" },
     );
     const engine = makeEngine({ revertBackoffMs: 50 });
     engine.start(runner.id);
@@ -512,6 +513,31 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
     expect(engine.recoverOrphans()).toContain(task.id);
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
   });
+});
+
+describe("RunnerEngine: plan critique (autonomy L2)", () => {
+  it("a plan_reviewer runner critiques a plan with the agentq-plan-review skill, and its verdict routes the task", async () => {
+    const l2 = randomUUID();
+    createProject({ id: l2, displayName: "Critique", workingDirectory: PROJECT_DIR, autonomy: 2 });
+    const task = createTask({ title: "critique me", description: "d", projectId: l2, requiresPlan: true });
+    updateTask(task.id, {
+      status: TaskStatus.PlanReviewRequested,
+      conversation: [{ authorName: "planner", timestamp: new Date().toISOString(), message: "## Plan", messageType: "plan" }],
+    });
+    const runner = makeRunner(
+      agentArgv("submit_plan_review", { verdict: "approve", message: "Sound plan", context: "no concerns" }),
+      { role: "plan_reviewer", projectId: l2 },
+    );
+    const engine = makeEngine();
+    engine.start(runner.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.WaitingPlanReview, 20_000, "critique");
+    const job = lastJob(engine, runner.id)!;
+    expect(job.phase).toBe("plan_review");
+    const prompt = readFileSync(join(HOME, "runs", task.id, `${job.id}.prompt.md`), "utf8");
+    expect(prompt).toContain("## Phase skill: agentq-plan-review");
+    expect(prompt).toContain("`submit_plan_review` tool");
+    expect(getTaskById(task.id)!.planRound).toBe(1);
+  }, 30_000);
 });
 
 describe("revertClaim", () => {
@@ -795,6 +821,8 @@ describe("buildPrompt", () => {
   it("names the submit tool and its arguments for every phase", () => {
     const agent = { id: "claude@1|opus", toolName: "claude", version: "1", model: "opus", role: "senior", sessionId: "s", host: null, startedAt: "", lastSeen: "", deletedAt: null } as any;
     const cases: [TaskStatus, string, string[]][] = [
+      [TaskStatus.Refining, "submit_refinement", ["message", "acceptanceCriteria"]],
+      [TaskStatus.PlanReviewing, "submit_plan_review", ["verdict", "message"]],
       [TaskStatus.Planning, "submit_plan", ["message"]],
       [TaskStatus.Coding, "submit_code", ["message", "worktree"]],
       [TaskStatus.Reviewing, "submit_review", ["message"]],
@@ -855,12 +883,21 @@ describe("buildPrompt", () => {
   });
 
   it("inlines phase skills that speak MCP, not a command line", () => {
-    for (const phase of ["plan", "code", "review", "merge"] as const) {
-      const task = { ...planTask(`skill ${phase}`), status: { plan: TaskStatus.Planning, code: TaskStatus.Coding, review: TaskStatus.Reviewing, merge: TaskStatus.Merging }[phase] };
+    const statusOf = {
+      refine: TaskStatus.Refining,
+      plan: TaskStatus.Planning,
+      plan_review: TaskStatus.PlanReviewing,
+      code: TaskStatus.Coding,
+      verify: TaskStatus.Verifying,
+      review: TaskStatus.Reviewing,
+      merge: TaskStatus.Merging,
+    } as const;
+    for (const phase of Object.keys(statusOf) as (keyof typeof statusOf)[]) {
+      const task = { ...planTask(`skill ${phase}`), status: statusOf[phase] };
       const agent = { id: "a", toolName: "claude", model: "m" } as any;
       const prompt = buildPrompt({ task, project: null, agent, effectiveRole: "senior" });
-      expect(prompt).toContain(`## Phase skill: agentq-${phase}`);
-      expect(prompt).toContain(`submit_${phase}`);
+      expect(prompt).toContain(`## Phase skill: agentq-${phase.replace("_", "-")}`);
+      expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review" }[phase as string] ?? phase}`);
       expect(prompt).not.toContain("skill file not found");
       expect(prompt).not.toMatch(/agentq (claim|submit|list|get|create|projects|archive)\b/);
     }

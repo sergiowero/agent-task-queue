@@ -1,6 +1,6 @@
 import { MCP_SERVER_NAME } from "@agentq/mcp";
 import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
-import { STATUS_INFO, buildTaskBrief, readSkill, stripFrontmatter } from "@agentq/shared";
+import { STATUS_INFO, buildTaskBrief, readSkill, skillForPhase, stripFrontmatter } from "@agentq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -20,6 +20,8 @@ const HANDOFF_ARGS = {
 
 /** What the `context` handoff notes should tell the agent of the next phase. */
 const CONTEXT_HINT: Record<Phase, string> = {
+  refine: "what you assumed, what you left for the planner, and anything a person should confirm",
+  plan_review: "the verdict, the finding ids the planner must address first, and what you checked",
   plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
   code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
   verify: "which commands failed and why, and whether the failure is in the code or the environment",
@@ -29,6 +31,32 @@ const CONTEXT_HINT: Record<Phase, string> = {
 
 /** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
 export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, unknown> }> = {
+  refine: (taskId) => ({
+    tool: "submit_refinement",
+    args: {
+      taskId,
+      message: "<markdown: what you changed and why>",
+      acceptanceCriteria: ["<testable criterion $ command that proves it>"],
+      type: "<feature | bug | refactor | docs | chore>",
+      risk: "<low | medium | high>",
+      nonGoals: ["<out of scope>"],
+      requiresPlan: "<true | false>",
+      openQuestions: [{ text: "<question for a person>", blocking: false }],
+      context: CONTEXT_ARG,
+    },
+  }),
+  plan_review: (taskId) => ({
+    tool: "submit_plan_review",
+    args: {
+      taskId,
+      verdict: "<approve | request_changes | needs_human>",
+      findings: [{ severity: "<blocker | major | minor | nit>", text: "<what is wrong with the plan and what to do>" }],
+      verifiedFindings: [{ id: "<P1-1>", status: "<verified | open>" }],
+      message: "<markdown critique summary>",
+      context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
+    },
+  }),
   plan: (taskId) => ({
     tool: "submit_plan",
     args: {
@@ -38,6 +66,9 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
         items: [{ criterionId: "<AC1>", how: "<how it is verified>", command: "<command, if any>", newTests: ["<test file>"] }],
         regressionCommands: ["<commands that must keep passing>"],
       },
+      openQuestions: [{ text: "<question for a person>", blocking: false }],
+      suggestedRisk: "<low | medium | high>",
+      touchedPaths: ["<paths the plan changes>"],
       context: CONTEXT_ARG,
       ...HANDOFF_ARGS,
     },
@@ -94,7 +125,8 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
 };
 
 export function readPhaseSkill(phase: Phase): string {
-  return readSkill(`agentq-${phase}`)?.body ?? `(skill file not found: skills/agentq-${phase}/SKILL.md)`;
+  const name = skillForPhase(phase);
+  return readSkill(name)?.body ?? `(skill file not found: skills/${name}/SKILL.md)`;
 }
 
 export interface BuildPromptInput {
@@ -152,7 +184,7 @@ export function buildPrompt(input: BuildPromptInput): string {
     JSON.stringify(brief, null, 2),
     "```",
     "",
-    `## Phase skill: agentq-${phase}`,
+    `## Phase skill: ${skillForPhase(phase)}`,
     "",
     skill.trim(),
     "",

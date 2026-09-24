@@ -46,6 +46,8 @@ import {
   submitPlan,
   submitReview,
   unblockTask,
+  promoteDraft,
+  getSubtasks,
   createTaskSchema,
   updateTaskSchema,
   createProjectSchema,
@@ -828,6 +830,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     complete: () => completeTask(taskId),
     cancel: () => cancelTask(taskId, { message: data.message }),
     unblock: () => unblockTask(taskId),
+    promote_draft: () => promoteDraft(taskId, { message: data.message }),
     resolve_blocker: () => {
       if (!data.targetStatus) return errorResponse("targetStatus is required");
       return resolveBlocker(taskId, { answer: data.answer ?? data.message ?? "", targetStatus: data.targetStatus });
@@ -877,6 +880,7 @@ const handleTaskDetails = wrapHandler(async (req, url) => {
     findings: getFindings(task.id),
     evidence: getEvidence(task.id),
     handoffs: getHandoffs(task.id),
+    subtasks: getSubtasks(task.id).map((t) => ({ id: t.id, title: t.title, status: t.status, held: t.held, blockedBy: t.blockedBy })),
   });
 });
 

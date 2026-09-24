@@ -150,7 +150,13 @@ Both go through the same MCP server, the same SQLite database and the same workf
 
 ```mermaid
 stateDiagram-v2
+    [*] --> draft: rough idea
+    draft --> plan_requested: refined
     [*] --> plan_requested: needs a plan
+    planning --> plan_review_requested: submit_plan (L2+)
+    plan_review_requested --> ready_for_code: critic approves (low risk)
+    plan_review_requested --> waiting_plan_review: critic approves (medium/high risk)
+    planning --> split: plan with subtasks approved
     [*] --> ready_for_code: no plan
     plan_requested --> planning: planner claims
     planning --> waiting_plan_review: submit_plan
@@ -195,13 +201,19 @@ Agents also have to show their work. Plans say how each acceptance criterion wil
 
 | Role | Claims tasks in | Does |
 |---|---|---|
-| `planner` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the implementation plan |
-| `implementer` | `ready_for_code`, `changes_requested`, `approved` | Codes in the task worktree, commits, and later pushes and opens the PR |
-| `reviewer` | `code_review_requested` | Reviews the commits against the acceptance criteria and guardrails |
-| `senior` | all of the above | Planner + implementer + reviewer |
-| `architect` | planner + reviewer statuses | Plans and reviews, never writes code |
+| `refiner` | `draft` | Turns a rough draft into a ready task: testable criteria, type, risk, scope |
+| `planner` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the plan with its validation plan; splits big work into subtasks |
+| `plan_reviewer` | `plan_review_requested` | Critiques plans (L2+); a low-risk plan it approves goes straight to coding |
+| `implementer` | `ready_for_code`, `changes_requested` | Codes in the task worktree with tests and evidence, and commits |
+| `verifier` | `verify_requested` | Runs the verification commands (the server has a built-in one) |
+| `reviewer` | `code_review_requested` | Reviews the commits; the verdict routes the task |
+| `integrator` | `approved` | Pushes the branch and opens the PR |
+| `senior` | everything but verification | One agent for the whole flow (it never reviews its own work) |
+| `architect` | planner + plan_reviewer + reviewer | Plans and reviews, never writes code |
+| `qa` | verifier + reviewer | Checks the work |
+| `builder` | implementer + integrator | Writes the code and opens the PR |
 
-Run a cheap, fast model as implementer and a stronger one as reviewer, or one `senior` agent for everything. Agents are identified as `<tool>@<version>|<model>`, so every plan, commit and review is traceable to the exact tool and model that produced it.
+Run a cheap, fast model as implementer and a stronger one as plan reviewer and reviewer, or one `senior` agent plus a second reviewing agent. Nobody reviews their own plan or code. Agents are identified as `<tool>@<version>|<model>`, so every plan, commit and review is traceable to the exact tool and model that produced it.
 
 ### The board
 

@@ -635,7 +635,7 @@ export function RunnersPage() {
         <VerifierStatus />
         {runners.length > 0 && (
           <div className="space-y-5">
-            {runners.filter((r) => ["reviewer", "senior", "architect"].includes(r.role)).length === 1 && (
+            {runners.filter((r) => ["reviewer", "senior", "architect", "qa"].includes(r.role)).length === 1 && (
               <Alert tone="info" title="Reviews need a second agent">
                 With autonomy L1 or higher, code goes to an AI review without a click, but a runner never
                 reviews code it wrote. Add a second runner that can review (reviewer, architect or senior),
