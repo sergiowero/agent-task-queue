@@ -23,6 +23,7 @@ import {
   DescriptionIcon,
   EditIcon,
   ErrorIcon,
+  ExternalLinkIcon,
   GuardrailIcon,
   HistoryIcon,
   MergeIcon,
@@ -38,7 +39,7 @@ import {
 import { TONE_SOFT, TOOL_TONE, priorityTone, taskStatusMeta } from "../lib/status";
 import { formatDateTime, formatRelative } from "../lib/format";
 import { cn } from "../lib/cn";
-import { Button } from "../components/Button";
+import { Button, buttonBase, buttonVariants } from "../components/Button";
 import { IconButton } from "../components/IconButton";
 import { Badge, StatusBadge } from "../components/Badge";
 import { Input } from "../components/Input";
@@ -55,6 +56,7 @@ import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
 import { BlockerPanel } from "../components/BlockerPanel";
+import { DecisionPanel } from "../components/DecisionPanel";
 import {
   AUTONOMY_LEVELS,
   RISKS,
@@ -99,7 +101,7 @@ const ACTION_DONE: Record<TaskAction, string> = {
   approveCode: "Code approved",
   requestCodeChanges: "Code changes requested",
   requestAiReview: "AI review requested",
-  confirmCompletion: "Task completed",
+  confirmCompletion: "Marked merged",
   unblock: "Task unblocked",
   resolveBlocker: "Answer sent",
   promoteDraft: "Draft promoted",
@@ -115,6 +117,8 @@ export function TaskDetailPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<"conversation" | "handoffs" | "history">("conversation");
   const [feedback, setFeedback] = useState("");
+  /** Answered findings the person wants reopened with a change request. */
+  const [reopen, setReopen] = useState<string[]>([]);
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -158,6 +162,7 @@ export function TaskDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["task-details", id] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setFeedback("");
+      setReopen([]);
       toast.success(ACTION_DONE[action]);
     },
     onError: (e: Error) => {
@@ -312,6 +317,17 @@ export function TaskDetailPage() {
                     }
                   />
                 )}
+                {reviewingCode && (
+                  <DecisionPanel
+                    task={task}
+                    findings={findings}
+                    evidence={evidence}
+                    selected={reopen}
+                    onToggle={(fid) =>
+                      setReopen((ids) => (ids.includes(fid) ? ids.filter((x) => x !== fid) : [...ids, fid]))
+                    }
+                  />
+                )}
                 {(reviewingPlan || reviewingCode) && (
                   <Field
                     label="Feedback"
@@ -366,7 +382,8 @@ export function TaskDetailPage() {
                         {...busy("requestCodeChanges")}
                         onClick={() =>
                           doAction("requestCodeChanges", {
-                            message: feedback || "Code changes requested.",
+                            message: feedback || (reopen.length ? "" : "Code changes requested."),
+                            findingIds: reopen,
                           })
                         }
                       >
@@ -382,14 +399,28 @@ export function TaskDetailPage() {
                       </Button>
                     </>
                   )}
-                  {task.status === "merged" && (
-                    <Button
-                      icon={CompleteIcon}
-                      {...busy("confirmCompletion")}
-                      onClick={() => doAction("confirmCompletion")}
-                    >
-                      Confirm complete
-                    </Button>
+                  {task.status === "pr_open" && (
+                    <>
+                      {task.pullRequest?.url && (
+                        <a
+                          href={task.pullRequest.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={cn(buttonBase, buttonVariants.primary, "h-9 gap-2 rounded-lg px-3.5 text-sm")}
+                        >
+                          <ExternalLinkIcon aria-hidden className="h-4 w-4" />
+                          Open the pull request
+                        </a>
+                      )}
+                      <Button
+                        variant="secondary"
+                        icon={CompleteIcon}
+                        {...busy("confirmCompletion")}
+                        onClick={() => doAction("confirmCompletion")}
+                      >
+                        Mark merged
+                      </Button>
+                    </>
                   )}
                   {task.status === "draft" && (
                     <Button icon={ApproveIcon} {...busy("promoteDraft")} onClick={() => doAction("promoteDraft")}>
@@ -674,6 +705,30 @@ export function TaskDetailPage() {
                     await updateMutation.mutateAsync({ mergeBranch: v.trim() })
                   }
                 />
+                {task.pullRequest && (
+                  <PropertyRow icon={MergeIcon} label="Pull request">
+                    {task.pullRequest.url ? (
+                      <a className="truncate text-primary underline" href={task.pullRequest.url} target="_blank" rel="noreferrer">
+                        {task.pullRequest.number ? `#${task.pullRequest.number}` : task.pullRequest.url}
+                      </a>
+                    ) : (
+                      <EmptyValue>no link</EmptyValue>
+                    )}
+                    <Badge tone={task.pullRequest.state === "merged" ? "success" : task.pullRequest.state === "closed" ? "danger" : "primary"}>
+                      {task.pullRequest.state}
+                    </Badge>
+                    {task.pullRequest.checks && (
+                      <Badge tone={task.pullRequest.checks === "success" ? "success" : task.pullRequest.checks === "failure" ? "danger" : "warning"}>
+                        checks {task.pullRequest.checks}
+                      </Badge>
+                    )}
+                    {task.pullRequest.changesRequestedBy.length > 0 && (
+                      <Badge tone="warning" title={task.pullRequest.changesRequestedBy.join(", ")}>
+                        changes requested
+                      </Badge>
+                    )}
+                  </PropertyRow>
+                )}
                 <PropertyRow icon={DescriptionIcon} label="Type">
                   <Select
                     selectSize="sm"

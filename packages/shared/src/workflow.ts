@@ -39,6 +39,9 @@ import {
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
 import { checkDefinitionOfReady } from "./dor.js";
+
+/** A pull request URL on GitHub, GitLab or Bitbucket. */
+const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/;
 import {
   ALL_STATUSES,
   BLOCKING_SEVERITIES,
@@ -65,6 +68,7 @@ import type {
   Agent,
   ApprovedPlan,
   PlanSubmission,
+  PullRequest,
   Blocker,
   ConversationEntry,
   DiffStats,
@@ -672,18 +676,114 @@ export function approveCode(taskId: string, input: HumanActionInput = {}): Task 
   return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.Approved, "code_approved", input.message?.trim() || "Code approved.", input);
 }
 
-export function requestCodeChanges(taskId: string, input: HumanActionInput = {}): Task {
+export interface RequestCodeChangesInput extends HumanActionInput {
+  /** Earlier findings the person wants fixed (reopened if they were answered). */
+  findingIds?: string[];
+  /** Record the message as a finding (id H<round>-<n>) the coder must answer. Default true. */
+  asFinding?: boolean;
+}
+
+/**
+ * A person asks for changes. The message becomes a finding the coder answers by
+ * id (like a reviewer's), and chosen earlier findings are reopened.
+ */
+export function requestCodeChanges(taskId: string, input: RequestCodeChangesInput = {}): Task {
   const message = input.message?.trim();
-  humanHandoff(taskId, message, input.actor);
-  return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.ChangesRequested, "code_changes_requested", message || "Code changes requested.", input, message);
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.WaitingCodeReview) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingCodeReview)} status`);
+    }
+    const actor = input.actor ?? "user";
+    for (const id of input.findingIds ?? []) {
+      const finding = getFinding(taskId, id);
+      if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
+      if (finding.status !== "open") updateFinding(taskId, id, { status: "open", reopened: true });
+    }
+    if (message && input.asFinding !== false) {
+      addFindings(taskId, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
+    }
+    humanHandoff(taskId, message, actor);
+    const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
+    return transitionTask(task, TaskStatus.ChangesRequested, {
+      actor,
+      message: (message || "Code changes requested.") + reopened,
+      messageType: "user",
+      event: "code_changes_requested",
+      details: message,
+      patch: { revertStreak: 0 },
+    });
+  });
 }
 
 export function requestAiReview(taskId: string, input: HumanActionInput = {}): Task {
   return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.CodeReviewRequested, "ai_review_requested", "AI code review requested.", input);
 }
 
+/** A person marks the PR merged (the PR sync does this on its own when `gh` can see it). */
 export function completeTask(taskId: string, input: HumanActionInput = {}): Task {
-  return humanTransition(taskId, TaskStatus.Merged, TaskStatus.Complete, "task_completed", "Task completed.", input);
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.PrOpen) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.PrOpen)} status`);
+    }
+    return transitionTask(task, TaskStatus.Complete, {
+      actor: input.actor ?? "user",
+      message: input.message?.trim() || "Task completed.",
+      messageType: "user",
+      event: "task_completed",
+      patch: task.pullRequest
+        ? { pullRequest: { ...task.pullRequest, state: "merged", mergedAt: task.pullRequest.mergedAt ?? new Date().toISOString() } }
+        : {},
+    });
+  });
+}
+
+/** The PR sync saw the PR merged on GitHub. */
+export function completeFromPullRequest(taskId: string, pr: PullRequest): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.PrOpen) throw new WorkflowError("The task has no open pull request.");
+    const by = pr.mergedBy ? `github:${pr.mergedBy}` : "github";
+    return transitionTask(task, TaskStatus.Complete, {
+      actor: by,
+      author: by,
+      message: `Pull request merged${pr.mergedBy ? ` by ${pr.mergedBy}` : ""}: ${pr.url ?? `#${pr.number}`}.`,
+      messageType: "system",
+      event: "pr_merged",
+      details: pr.url ?? undefined,
+      patch: { pullRequest: pr },
+    });
+  });
+}
+
+/** The PR was closed without merging: a person decides what happens to the task. */
+export function pullRequestClosed(taskId: string, pr: PullRequest): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.PrOpen) throw new WorkflowError("The task has no open pull request.");
+    const blocker: Blocker = {
+      reason: `The pull request ${pr.url ?? `#${pr.number}`} was closed without merging.`,
+      question: "Reopen it and send the task back to PR open, send it back to Approved for a new PR, or cancel it.",
+      phase: "merge",
+      fromStatus: task.status,
+      raisedBy: "github",
+      at: new Date().toISOString(),
+    };
+    return transitionTask(task, TaskStatus.NeedsHuman, {
+      actor: "github",
+      author: "system",
+      message: blocker.reason,
+      messageType: "system",
+      event: "pr_closed",
+      patch: { pullRequest: pr, blocker },
+    });
+  });
+}
+
+/** Records what the sync saw on GitHub without changing the status. */
+export function recordPullRequest(taskId: string, pr: PullRequest): Task | null {
+  return patchTask(taskId, { pullRequest: pr });
 }
 
 export function cancelTask(taskId: string, input: HumanActionInput = {}): Task {
@@ -1560,9 +1660,29 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
   );
 }
 
-export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResult {
+export interface SubmitPrInput extends SubmitInput {
+  prUrl?: string;
+  prNumber?: number;
+  /** PR base (task.mergeBranch). */
+  branch: string;
+  /** Feature-branch head pushed to origin. */
+  commit: string;
+  authors: string;
+  worktree?: string;
+  /** Head branch; defaults to task.recommendedBranch. */
+  headBranch?: string;
+}
+
+function prNumberOf(url: string | undefined): number | null {
+  const m = url?.match(/\/(?:pull|pulls|merge_requests|pull-requests)\/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/** The integrator opened the PR: the task waits in pr_open until it is merged on GitHub. */
+export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
+  const url = input.prUrl?.trim() || input.message?.match(PR_URL_RE)?.[0];
   // archive.ts parses this format (Branch/Commit/Authors/Worktree/Message).
-  const mergeDetails = [
+  const details = [
     `Branch: ${input.branch}`,
     `Commit: ${input.commit}`,
     `Authors: ${input.authors}`,
@@ -1573,10 +1693,34 @@ export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResu
     .join(", ");
   return submit(
     taskId,
-    { from: TaskStatus.Merging, phase: "merge", messageType: "merge", event: "merge_submitted", done: "Merge submitted" },
+    { from: TaskStatus.Merging, phase: "merge", messageType: "merge", event: "pr_opened", done: "Pull request recorded" },
     input,
-    () => ({ to: TaskStatus.Merged, message: `Merge submitted. ${mergeDetails}`, details: mergeDetails }),
+    (task) => ({
+      to: TaskStatus.PrOpen,
+      message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
+      details: url ?? details,
+      patch: {
+        headSha: input.commit || task.headSha,
+        realBranch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+        pullRequest: {
+          url: url ?? null,
+          number: input.prNumber ?? prNumberOf(url),
+          state: "open",
+          branch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+          mergedAt: null,
+          mergedBy: null,
+          changesRequestedBy: [],
+          checks: null,
+          checkedAt: null,
+        },
+      },
+    }),
   );
+}
+
+/** Older clients: submit_merge records the PR the same way (URL taken from the message). */
+export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResult {
+  return submitPr(taskId, { ...input });
 }
 
 export function postComment(taskId: string, input: { message: string; author?: string }): Task {

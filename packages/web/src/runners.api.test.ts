@@ -379,7 +379,7 @@ describe("user actions include their note", () => {
     body = (await res.json()) as Task;
     expect(body.conversation.at(-1)?.message).toBe("Code approved.");
 
-    updateTask(task.id, { status: TaskStatus.Merged });
+    updateTask(task.id, { status: TaskStatus.PrOpen });
     res = await json(`/api/tasks/${task.id}/confirm-completion`, "POST");
     body = (await res.json()) as Task;
     expect(body.status).toBe(TaskStatus.Complete);

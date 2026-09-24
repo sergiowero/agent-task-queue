@@ -1,5 +1,5 @@
 import type { Task } from "../lib/api";
-import { AgentsIcon, ArchiveIcon, BranchIcon, DeleteIcon, PriorityIcon } from "../lib/icons";
+import { AgentsIcon, ArchiveIcon, BranchIcon, DeleteIcon, MergeIcon, PriorityIcon } from "../lib/icons";
 import { priorityTone } from "../lib/status";
 import { cn } from "../lib/cn";
 import { Badge, StatusBadge } from "./Badge";
@@ -91,6 +91,17 @@ export function TaskCard({
           </Badge>
         )}
         {task.risk === "high" && <Badge tone="danger">high risk</Badge>}
+        {task.pullRequest && (
+          <Badge
+            tone={task.pullRequest.state === "closed" || task.pullRequest.checks === "failure" ? "danger" : task.pullRequest.state === "merged" ? "success" : "primary"}
+            icon={MergeIcon}
+            title={task.pullRequest.url ?? undefined}
+          >
+            PR{task.pullRequest.number ? ` #${task.pullRequest.number}` : ""}
+            {task.pullRequest.state === "open" && task.pullRequest.checks === "failure" ? " ✗" : ""}
+            {task.pullRequest.changesRequestedBy.length > 0 ? " changes" : ""}
+          </Badge>
+        )}
         {task.assignedAgent && (
           <span className="flex min-w-0 items-center gap-1 text-xs text-text-muted">
             <AgentsIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />

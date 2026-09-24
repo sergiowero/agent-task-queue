@@ -3,7 +3,7 @@ name: agentq-archive
 description: Archives finished AgentQ tasks into their project's repository, the same as the board's "Archive" button. Use when the user asks to archive a task, archive the complete/completed/done tasks, clean up the Done column, or save a task's history (description, conversation, PR, branch, agents) as Markdown. For each task, the `archive_task` MCP tool writes `archive/<name>.summary.md` and `archive/<name>.detailed.md` in the project and takes the task off the board. The skill also finds the pull request with `gh` when the conversation does not mention it, and writes an overview of what was done.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__list_tasks, mcp__agentq__get_task, mcp__agentq__archive_task, Bash(gh:*), Bash(git:*)
 metadata:
-  version: "4.3.0"
+  version: "5.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -59,7 +59,7 @@ On failure: `{ "success": false, "error": "..." }`, with the tool call marked as
 | The same, for one project | Match the project in `list_projects` (by name, or by the repo the user is in), then `list_tasks` with `{ "status": "complete", "projectId": "<id>" }` |
 
 - If there is nothing to archive, tell the user "No complete tasks to archive." and stop.
-- A task in `merged` status is not complete yet: the user confirms completion first (the **Confirm complete** button on the task page). Report it and skip it. Do not change its status.
+- A task in `pr_open` is not complete yet: it completes by itself when its pull request is merged on GitHub (or when a person clicks **Mark merged** on the task page). Report it and skip it. Do not change its status.
 
 ### 2. Read each task
 
@@ -67,7 +67,7 @@ Call `get_task` with `{ "taskId": "<taskId>" }`. Read `description`, `acceptance
 
 ### 3. Find the pull request
 
-- If a conversation message (usually the `merge` one) already has a PR URL (`…/pull/<n>`), do nothing. The archive picks it up.
+- If the task has `pullRequest.url`, or a conversation message (usually the `merge` one) has a PR URL (`…/pull/<n>`), do nothing. The archive picks it up.
 - Otherwise, ask GitHub from the project directory:
 
 ```bash
@@ -107,7 +107,7 @@ Tell the user, for each task: the title, the summary path, the detailed path and
 
 | Error | What to do |
 |-------|------------|
-| `Only complete tasks can be archived; this one is …` | Skip it. For `merged`, tell the user to confirm completion first. |
+| `Only complete tasks can be archived; this one is …` | Skip it. For `pr_open`, tell the user the PR is not merged yet. |
 | `Task is already archived (…)` | Skip it. Re-run with `force: true` only if the user asked to regenerate it. |
 | `Project working directory not found: …` | Report it. Pass `directory` only if the user gives a folder. |
 | `Task has no project, …` | Report it. Pass `directory` only if the user gives a folder. |

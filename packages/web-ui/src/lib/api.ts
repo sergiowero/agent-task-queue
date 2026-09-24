@@ -81,6 +81,35 @@ export interface Task {
   archivedAt: string | null;
   /** Absolute path of the archive summary file; the detailed record sits next to it. */
   archivePath: string | null;
+  /** The task's pull request, once the integrator opened it (kept in step with GitHub). */
+  pullRequest: PullRequest | null;
+}
+
+export interface PullRequest {
+  url: string | null;
+  number: number | null;
+  state: "open" | "merged" | "closed";
+  branch: string | null;
+  mergedAt: string | null;
+  mergedBy: string | null;
+  /** GitHub users whose latest review asks for changes. */
+  changesRequestedBy: string[];
+  checks: "pending" | "success" | "failure" | null;
+  checkedAt: string | null;
+}
+
+/** Response of `GET /metrics`: how much of the flow runs without a person. */
+export interface FlowMetrics {
+  tasks: number;
+  humanClicksPerTask: number;
+  reachedPrWithoutHuman: number;
+  reviewRoundsAtPr: number;
+  escalationRate: number;
+  humanRejectionAfterAiApproval: number;
+  revertsPerTask: number;
+  leadTimeHours: number | null;
+  completed: number;
+  reachedPr: number;
 }
 
 export interface Blocker {
@@ -164,6 +193,8 @@ export interface Meta {
   installedSkills: Record<string, string | null>;
   outdatedSkills: string[];
   verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
+  /** GitHub sync of open PRs: unavailable without the `gh` CLI. */
+  prSync?: { available: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
 }
 
 /** What the portal sends when it edits a project: partial profile and policy. */
@@ -345,6 +376,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   getTasks: (projectId?: string) =>
     request<PaginatedResponse<Task>>(projectId ? `/tasks?projectId=${projectId}` : "/tasks"),
+  /** Every task, page by page (the list endpoint returns at most 100 at a time). */
+  getAllTasks: async (projectId?: string) => {
+    const all: Task[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const params = new URLSearchParams({ limit: "100", offset: String(offset) });
+      if (projectId) params.set("projectId", projectId);
+      const page = await request<PaginatedResponse<Task>>(`/tasks?${params}`);
+      all.push(...page.data);
+      if (!page.hasMore || page.data.length === 0) return all;
+    }
+  },
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   createTask: (data: TaskWrite) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
   updateTask: (id: string, data: TaskWrite) =>
@@ -357,8 +399,8 @@ export const api = {
     request<Task>(`/tasks/${id}/submit-code`, { method: "POST", body: JSON.stringify(data) }),
   submitReview: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/submit-review`, { method: "POST", body: JSON.stringify(data) }),
-  submitMerge: (id: string, data: any) =>
-    request<Task>(`/tasks/${id}/submit-merge`, { method: "POST", body: JSON.stringify(data) }),
+  submitPr: (id: string, data: any) =>
+    request<Task>(`/tasks/${id}/submit-pr`, { method: "POST", body: JSON.stringify(data) }),
   approvePlan: (id: string) => request<Task>(`/tasks/${id}/approve-plan`, { method: "POST" }),
   requestPlanChanges: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/request-plan-changes`, {
@@ -410,6 +452,7 @@ export const api = {
     from?: string;
     to?: string;
     limit?: number;
+    offset?: number;
   }) => {
     const params = new URLSearchParams();
     if (filters?.taskId) params.set("taskId", filters.taskId);
@@ -417,8 +460,17 @@ export const api = {
     if (filters?.from) params.set("from", filters.from);
     if (filters?.to) params.set("to", filters.to);
     if (filters?.limit) params.set("limit", String(filters.limit));
+    if (filters?.offset) params.set("offset", String(filters.offset));
     const qs = params.toString();
     return request<PaginatedResponse<ActivityEvent>>(`/activity${qs ? `?${qs}` : ""}`);
+  },
+  getMetrics: (filters?: { projectId?: string; from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.projectId) params.set("projectId", filters.projectId);
+    if (filters?.from) params.set("from", filters.from);
+    if (filters?.to) params.set("to", filters.to);
+    const qs = params.toString();
+    return request<FlowMetrics>(`/metrics${qs ? `?${qs}` : ""}`);
   },
 
   getRunners: () => request<Runner[]>("/runners"),

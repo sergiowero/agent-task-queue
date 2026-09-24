@@ -133,6 +133,7 @@ export const transitionTaskSchema = z.object({
     "submit_code",
     "submit_review",
     "submit_merge",
+    "submit_pr",
     "report_blocker",
     "approve_plan",
     "request_plan_changes",

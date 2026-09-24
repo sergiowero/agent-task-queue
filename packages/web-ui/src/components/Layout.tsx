@@ -10,6 +10,7 @@ import {
   BoardIcon,
   CollapseIcon,
   ExpandIcon,
+  InboxIcon,
   ProjectsIcon,
   RunnersIcon,
   ToolsIcon,
@@ -31,6 +32,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: "Work",
     items: [
+      { to: "/inbox", label: "Needs you", icon: InboxIcon },
       { to: "/board", label: "Board", icon: BoardIcon, match: ["/tasks"] },
       { to: "/projects", label: "Projects", icon: ProjectsIcon },
     ],

@@ -178,9 +178,10 @@ stateDiagram-v2
     waiting_code_review --> changes_requested: you request changes
     changes_requested --> coding: implementer claims
     waiting_code_review --> approved: you approve
-    approved --> merging: implementer claims
-    merging --> merged: submit_merge (PR opened)
-    merged --> complete: you confirm
+    approved --> merging: integrator claims
+    merging --> pr_open: submit_pr (PR opened)
+    pr_open --> complete: PR merged on GitHub
+    pr_open --> needs_human: PR closed
     complete --> [*]
     planning --> needs_human: report_blocker
     coding --> needs_human: report_blocker
@@ -189,11 +190,13 @@ stateDiagram-v2
     needs_human --> approved: you answer
 ```
 
-Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever.
+Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first: answers to blockers, plans to approve, code to review and PRs to merge. Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever.
 
 ### Autonomy
 
 Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
+
+The task ends on GitHub. The integrator opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
 Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one.
 
@@ -219,10 +222,10 @@ Run a cheap, fast model as implementer and a stronger one as plan reviewer and r
 
 | Column | Statuses |
 |---|---|
-| **Pending** | `plan_requested`, `plan_changes_requested`, `ready_for_code`, `changes_requested`, `code_review_requested`, `approved` |
-| **In progress** | `planning`, `coding`, `reviewing`, `merging` |
-| **Needs you** | `waiting_plan_review`, `waiting_code_review`, `needs_human` |
-| **Done** | `merged`, `complete` |
+| **Pending** | `draft`, `plan_requested`, `plan_changes_requested`, `plan_review_requested`, `ready_for_code`, `changes_requested`, `verify_requested`, `code_review_requested`, `approved` |
+| **In progress** | `refining`, `planning`, `plan_reviewing`, `coding`, `verifying`, `reviewing`, `merging`, `split` |
+| **Needs you** | `waiting_plan_review`, `waiting_code_review`, `needs_human`, `pr_open` |
+| **Done** | `complete` |
 
 ### Writing a good task
 
@@ -259,7 +262,7 @@ The `agentq` MCP server exposes the whole agent protocol as typed tools. In Clau
 | `submit_plan` | Submit a plan and move the task to plan review |
 | `submit_code` | Submit the worktree and move the task to code review |
 | `submit_review` | Submit review findings with an approve or request-changes verdict |
-| `submit_merge` | Record the pushed branch, commit, authors and PR |
+| `submit_pr` | Record the pull request the integrator opened (`submit_merge` is its deprecated alias) |
 | `get_task` | Read a task with its project, conversation and handoff notes |
 | `post_comment` | Add a note to a task without changing its status |
 | `list_projects`, `create_task` | Create well-formed tasks |
@@ -274,10 +277,13 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | Skill | What it does |
 |---|---|
 | `agentq-claim` | Entry point. Claims a task and routes to the phase skill that matches its status, then loops until the queue is empty |
+| `agentq-refine` | Turns a draft into a ready task: testable criteria, type, risk, scope |
 | `agentq-plan` | Reads the repo read-only and writes or revises the plan |
+| `agentq-plan-review` | Critiques a plan with a verdict and findings |
 | `agentq-code` | Implements in `{project}/.agentq/worktrees/{taskId}` and commits after every round. Never pushes |
+| `agentq-verify` | Runs the verification commands and reports evidence (the server also has a built-in verifier) |
 | `agentq-review` | Reviews the commits read-only against acceptance criteria and guardrails |
-| `agentq-merge` | Pushes the feature branch and opens a PR with `gh`. Never merges locally, never force-pushes |
+| `agentq-pr` | Pushes the feature branch and opens a PR with `gh` and AgentQ's PR body. Never merges, never force-pushes |
 | `agentq-create-task` | Turns a loose request into a well-structured task |
 | `agentq-archive` | Archives complete tasks, finds the PR with `gh`, and writes an overview of what was done |
 
@@ -289,6 +295,7 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database used by the server, the MCP server and every runner job |
 | `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
+| `AGENTQ_PR_SYNC_SEC` | `180` | How often the server asks `gh` about open PRs (`AGENTQ_PR_SYNC=0` turns it off) |
 
 Point the MCP server at another database with `bun run install:mcp --db <path>`.
 

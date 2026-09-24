@@ -45,7 +45,7 @@ const STATUS_LOOK: Record<TaskStatus, Omit<StatusMeta, "label">> = {
   [TaskStatus.ChangesRequested]: { tone: "danger", icon: RequestChangesIcon },
   [TaskStatus.Approved]: { tone: "success", icon: ApproveIcon },
   [TaskStatus.Merging]: { tone: "warning", icon: MergeIcon, live: true },
-  [TaskStatus.Merged]: { tone: "success", icon: MergeIcon },
+  [TaskStatus.PrOpen]: { tone: "primary", icon: MergeIcon },
   [TaskStatus.Complete]: { tone: "success", icon: CompleteIcon },
   [TaskStatus.Canceled]: { tone: "danger", icon: CancelTaskIcon },
   [TaskStatus.NeedsHuman]: { tone: "danger", icon: NeedsHumanIcon },

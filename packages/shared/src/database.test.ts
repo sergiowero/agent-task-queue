@@ -245,6 +245,10 @@ describe("Workflow Refactor (8.3)", () => {
     expect(result).toBe(TaskStatus.ReadyForCode);
   });
 
+  it("normalizeStatus reads the old merged status as pr_open (it only ever meant the PR was open)", () => {
+    expect(normalizeStatus("merged")).toBe(TaskStatus.PrOpen);
+  });
+
   it("normalizeStatusInput returns null for invalid status", () => {
     const result = normalizeStatusInput("invalid_status");
     expect(result).toBeNull();
@@ -493,6 +497,7 @@ describe("Migration Status", () => {
       "020_drop_legacy_tables",
       "021_subtasks_plan_submission",
       "022_runner_roles_builder",
+      "023_pull_requests",
     ]) {
       expect(names).toContain(n);
     }

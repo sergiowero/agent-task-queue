@@ -3,7 +3,7 @@ name: agentq-code
 description: Coding phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_code, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.3.0"
+  version: "5.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -48,7 +48,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 - `submit_code` is queue bookkeeping — it does NOT run git. Commit your work in the worktree BEFORE calling it.
 - NEVER commit in the main working directory (`task.project.workingDirectory`) — commits live in the task worktree.
 - NEVER force-push (`git push --force` / `-f`). NEVER amend or rewrite commits made in earlier rounds — each round of changes is a new commit.
-- `git push` happens only in the merging phase (`agentq-merge`), never here.
+- `git push` happens only in the merging phase (`agentq-pr`), never here.
 
 ## Commit Before Submit
 

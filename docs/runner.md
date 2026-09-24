@@ -115,7 +115,7 @@ that understand it; `gemini` and `custom` ignore it.
   call the AgentQ tools a claimed job needs. For Claude Code: `--permission-mode
   acceptEdits --allowedTools mcp__agentq__get_task mcp__agentq__post_comment
   mcp__agentq__submit_plan mcp__agentq__submit_code mcp__agentq__submit_review
-  mcp__agentq__submit_merge "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)"
+  mcp__agentq__submit_pr mcp__agentq__submit_merge "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)"
   "Bash(npx:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(grep:*)" "Bash(find:*)" Edit Write Read
   Glob Grep`. `claim_task`, `create_task`, `list_tasks` and `archive_task` are not
   allowed: the runner already claimed the task. Codex runs with `--full-auto` (sandboxed
@@ -276,7 +276,8 @@ curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
 
 # 4. create a task on the board (requires plan) and watch:
 #    plan_requested → planning (runner) → waiting_plan_review → approve in the UI →
-#    ready_for_code → coding (runner) → waiting_code_review → approve → merging → merged
+#    ready_for_code → coding (runner) → waiting_code_review → approve → merging → pr_open
+#    → complete once the PR is merged on GitHub (or "Mark merged" on the task page)
 ```
 
 For tests, use `tool: "custom"` with `extraArgs` such as

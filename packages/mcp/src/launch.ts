@@ -18,6 +18,7 @@ export const RUNNER_MCP_TOOLS = [
   "submit_plan",
   "submit_code",
   "submit_review",
+  "submit_pr",
   "submit_merge",
   "report_blocker",
   "submit_verification",

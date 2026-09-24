@@ -17,7 +17,8 @@ export enum TaskStatus {
   ChangesRequested = "changes_requested",
   Approved = "approved",
   Merging = "merging",
-  Merged = "merged",
+  /** A pull request is open; the task completes when it is merged (replaces the old "merged"). */
+  PrOpen = "pr_open",
   Complete = "complete",
   Canceled = "canceled",
   NeedsHuman = "needs_human",
@@ -32,6 +33,8 @@ export enum TaskStatus {
 
 export function normalizeStatus(status: string): TaskStatus {
   if (status === "ready for code") return TaskStatus.ReadyForCode;
+  // "merged" only ever meant "the PR is open".
+  if (status === "merged") return TaskStatus.PrOpen;
   return status as TaskStatus;
 }
 
@@ -171,14 +174,14 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     editable: false,
     hint: "An agent is pushing the branch and opening the pull request.",
   },
-  [TaskStatus.Merged]: {
-    label: "Merged",
+  [TaskStatus.PrOpen]: {
+    label: "PR open",
     kind: "human",
     phase: "merge",
-    boardColumn: "done",
-    cancelable: false,
+    boardColumn: "need-review",
+    cancelable: true,
     editable: false,
-    hint: "The pull request is open. Confirm completion once it is merged.",
+    hint: "The pull request is open: review and merge it on GitHub. AgentQ completes the task when it sees the merge.",
   },
   [TaskStatus.Complete]: {
     label: "Complete",
@@ -276,6 +279,7 @@ export const ALL_STATUSES = Object.values(TaskStatus) as TaskStatus[];
 
 /** The skill that covers a phase: skills/agentq-<phase with dashes>/SKILL.md. */
 export function skillForPhase(phase: Phase): string {
+  if (phase === "merge") return "agentq-pr";
   return `agentq-${phase.replace(/_/g, "-")}`;
 }
 
@@ -437,7 +441,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.Approved,
     TaskStatus.Canceled,
   ],
-  merge: [TaskStatus.Approved, TaskStatus.Merged, TaskStatus.Complete, TaskStatus.Canceled],
+  merge: [TaskStatus.Approved, TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.Canceled],
 };
 
 export function resolveTargets(phase: Phase | null | undefined): TaskStatus[] {
@@ -490,7 +494,7 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.Approved,
     TaskStatus.ChangesRequested,
   );
-  add(TaskStatus.Merging, TaskStatus.Merged);
+  add(TaskStatus.Merging, TaskStatus.PrOpen);
   // Nobody eligible picked the review up in time: a person reviews instead.
   add(TaskStatus.CodeReviewRequested, TaskStatus.WaitingCodeReview);
   // Human decisions.
@@ -501,7 +505,8 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.ChangesRequested,
     TaskStatus.CodeReviewRequested,
   );
-  add(TaskStatus.Merged, TaskStatus.Complete);
+  // The PR was merged (sync or a person), or closed without merging (a person decides).
+  add(TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.NeedsHuman);
   add(TaskStatus.NeedsHuman, ...resolveTargets(null));
   // Escalation and cancellation.
   for (const s of ALL_STATUSES) {
@@ -651,6 +656,10 @@ export const EVENT_TYPES: Record<string, string> = {
   task_split: "Split into subtasks",
   draft_refined: "Draft refined",
   draft_promoted: "Draft promoted",
+  pr_opened: "PR opened",
+  pr_merged: "PR merged",
+  pr_auto_merged: "PR auto-merged",
+  pr_closed: "PR closed without merging",
   task_reverted: "Reverted",
   task_archived: "Archived",
   comment_added: "Comment",
@@ -658,3 +667,38 @@ export const EVENT_TYPES: Record<string, string> = {
 
 /** Actors whose events count as human decisions. */
 export const HUMAN_ACTOR = "user";
+
+// ─── Inbox ────────────────────────────────────────────────────────────
+
+export interface InboxReason {
+  /** What a person is asked to do, in a few words. */
+  action: string;
+  /** Sort key: most urgent first (lower first), then oldest. */
+  priority: number;
+}
+
+/**
+ * Why a task is waiting for a person, or null when it is not. The portal's
+ * "Needs you" inbox lists these, oldest first within each kind.
+ */
+export function inboxReason(task: {
+  status: string;
+  blocker?: { question: string } | null;
+  risk?: string;
+  dorIssues?: string[];
+}): InboxReason | null {
+  switch (task.status) {
+    case TaskStatus.NeedsHuman:
+      return { action: task.blocker?.question ? `Answer: ${task.blocker.question}` : "Decide how to continue", priority: 0 };
+    case TaskStatus.WaitingPlanReview:
+      return { action: `Approve the plan${task.risk === "high" ? " (high risk)" : ""}`, priority: 1 };
+    case TaskStatus.WaitingCodeReview:
+      return { action: `Review the code${task.risk === "high" ? " (high risk)" : ""}`, priority: 2 };
+    case TaskStatus.PrOpen:
+      return { action: "Review and merge the pull request", priority: 3 };
+    case TaskStatus.Draft:
+      return task.dorIssues?.length ? { action: "Refine or promote the draft", priority: 4 } : null;
+    default:
+      return null;
+  }
+}

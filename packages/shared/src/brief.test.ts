@@ -126,6 +126,47 @@ describe("task brief", () => {
   });
 });
 
+describe("pull request body", () => {
+  it("is in the brief once the code is approved: criteria with evidence, verification, review and risk", () => {
+    const projectId = project();
+    const task = createTaskForProject({
+      title: "pr body",
+      description: "Users can export their data as CSV from the settings page.\n\nMore detail.",
+      projectId,
+      acceptanceCriteria: ["export works $ bun test export"],
+      nonGoals: ["PDF export"],
+    });
+    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    submitCode(task.id, {
+      message: "done",
+      worktree: "/w",
+      evidence: [{ kind: "command", criterionId: "AC1", command: "bun test export", exitCode: 0, summary: "1 pass" }],
+      criteria: [{ id: "AC1", status: "met" }],
+      claimToken: c.claimToken,
+    });
+    expect(buildTaskBrief(task.id)!.pr).toBeNull();
+    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "approve",
+      message: "ok",
+      findings: [{ severity: "nit", text: "rename x" }],
+      claimToken: r.claimToken,
+    });
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.Approved);
+
+    const pr = buildTaskBrief(task.id)!.pr!;
+    expect(pr.url).toBeNull();
+    expect(pr.body).toStartWith("## Summary\n\nUsers can export their data as CSV from the settings page.\n");
+    expect(pr.body).toContain("- ✅ **AC1** export works — `bun test export` passed");
+    expect(pr.body).toContain("## Verification");
+    expect(pr.body).toContain("AI review: **approve** in round 1");
+    expect(pr.body).toContain("Still open (non-blocking):\n- R1-1 (nit) rename x");
+    expect(pr.body).toContain("## Risk\n\n**medium**");
+    expect(pr.body).toContain("Out of scope: PDF export");
+    expect(pr.body).toContain(`AgentQ task \`${task.id}\``);
+  });
+});
+
 describe("Definition of Ready", () => {
   it("flags short descriptions, missing or unverifiable criteria, unplanned high risk and bugs without steps", () => {
     expect(checkDefinitionOfReady({ description: "fix", type: "bug", risk: "high" })).toEqual([

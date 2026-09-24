@@ -10,6 +10,7 @@ import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@agentq/mcp";
 import type { Runner, RunnerTool } from "@agentq/shared";
 import {
   TaskStatus,
+  skillForPhase,
   claimNextTask,
   getFindings,
   submitCode,
@@ -826,7 +827,7 @@ describe("buildPrompt", () => {
       [TaskStatus.Planning, "submit_plan", ["message"]],
       [TaskStatus.Coding, "submit_code", ["message", "worktree"]],
       [TaskStatus.Reviewing, "submit_review", ["message"]],
-      [TaskStatus.Merging, "submit_merge", ["mergeBranch", "commit", "authors", "message"]],
+      [TaskStatus.Merging, "submit_pr", ["prUrl", "mergeBranch", "commit", "authors", "message"]],
     ];
     for (const [status, tool, args] of cases) {
       const task = { ...planTask(`prompt ${status}`), status };
@@ -896,8 +897,8 @@ describe("buildPrompt", () => {
       const task = { ...planTask(`skill ${phase}`), status: statusOf[phase] };
       const agent = { id: "a", toolName: "claude", model: "m" } as any;
       const prompt = buildPrompt({ task, project: null, agent, effectiveRole: "senior" });
-      expect(prompt).toContain(`## Phase skill: agentq-${phase.replace("_", "-")}`);
-      expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review" }[phase as string] ?? phase}`);
+      expect(prompt).toContain(`## Phase skill: ${skillForPhase(phase)}`);
+      expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review", merge: "pr" }[phase as string] ?? phase}`);
       expect(prompt).not.toContain("skill file not found");
       expect(prompt).not.toMatch(/agentq (claim|submit|list|get|create|projects|archive)\b/);
     }

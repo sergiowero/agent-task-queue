@@ -26,7 +26,7 @@ const CONTEXT_HINT: Record<Phase, string> = {
   code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
   verify: "which commands failed and why, and whether the failure is in the code or the environment",
   review: "the verdict, the finding ids the coder must fix first and why (or why it is safe to merge)",
-  merge: "the PR URL/number, the base and head branches, and anything left for the user after the merge",
+  merge: "the PR URL/number, the base and head branches, and what the person merging should check",
 };
 
 /** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
@@ -110,14 +110,16 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
     },
   }),
   merge: (taskId) => ({
-    tool: "submit_merge",
+    tool: "submit_pr",
     args: {
       taskId,
+      prUrl: "<URL printed by gh pr create>",
       mergeBranch: "<task.mergeBranch>",
+      headBranch: "<feature branch you pushed>",
       commit: "<feature-branch head SHA>",
       authors: "<comma-separated authors>",
       worktree: "<task.worktreePath>",
-      message: "<markdown with the PR URL>",
+      message: "<markdown notes for the person who merges>",
       context: CONTEXT_ARG,
       ...HANDOFF_ARGS,
     },

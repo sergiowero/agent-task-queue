@@ -41,7 +41,7 @@ import {
   submitPlan,
   submitCode,
   submitReview,
-  submitMerge,
+  submitPr,
   postComment,
   archiveTask,
   WorkflowError,
@@ -62,7 +62,7 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (ski
    - planning: write an implementation plan, then call submit_plan.
    - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
    - reviewing: review the submitted code (task.worktreePath), verify the previous round's findings by id, then call submit_review with a verdict (approve, request_changes, needs_human) and structured findings. The verdict routes the task: approve moves it on, request_changes sends it back to the coder with your findings.
-   - merging: push the feature branch and open a pull request into task.mergeBranch, then call submit_merge with mergeBranch, the pushed commit, authors and the PR in the message.
+   - merging: push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
 7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
@@ -667,46 +667,66 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
       }),
   );
 
+  const prInputSchema = {
+    taskId: taskIdSchema,
+    prUrl: z.string().url().optional().describe("URL of the pull request you opened"),
+    prNumber: z.number().int().positive().optional().describe("Number of the pull request"),
+    mergeBranch: z.string().min(1).describe("Base branch of the pull request (task.mergeBranch)"),
+    headBranch: z.string().optional().describe("Feature branch you pushed (defaults to the task's branch)"),
+    commit: z.string().min(1).describe("Head commit SHA you pushed"),
+    authors: z.string().min(1).describe("Comma-separated list of authors"),
+    message: z.string().optional().describe("Notes for the person who merges (markdown)"),
+    worktree: z.string().optional().describe("Worktree path the branch was pushed from"),
+    author: authorSchema,
+    context: submitContextSchema,
+    decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
+    risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
+    next: handoffListSchema.describe("What the person merging should check first"),
+    claimToken: claimTokenSchema,
+    agentId: agentIdSchema,
+  };
+  const recordPr = (input: z.infer<z.ZodObject<typeof prInputSchema>>) =>
+    run(() =>
+      submitResponse(
+        submitPr(input.taskId, {
+          prUrl: input.prUrl,
+          prNumber: input.prNumber,
+          branch: input.mergeBranch,
+          headBranch: input.headBranch,
+          commit: input.commit,
+          authors: input.authors,
+          message: input.message,
+          worktree: input.worktree,
+          author: input.author,
+          context: input.context,
+          decisions: input.decisions,
+          risks: input.risks,
+          next: input.next,
+          ...auth(input),
+        }),
+      ),
+    );
+
+  server.registerTool(
+    "submit_pr",
+    {
+      title: "Submit pull request",
+      description:
+        "Record the pull request you opened for a task you claimed in `merging` status (use get_task_brief's `pr.body` as its body). Moves it to `pr_open` and releases it: the task completes when the PR is merged on GitHub. Never merge it yourself.",
+      inputSchema: prInputSchema,
+    },
+    recordPr,
+  );
+
   server.registerTool(
     "submit_merge",
     {
-      title: "Submit merge",
+      title: "Submit merge (deprecated)",
       description:
-        "Record a completed merge for a task you claimed in `merging` status. Moves it to `merged` and releases it.",
-      inputSchema: {
-        taskId: taskIdSchema,
-        mergeBranch: z.string().min(1).describe("Branch the task was merged into"),
-        commit: z.string().min(1).describe("Merge commit hash"),
-        authors: z.string().min(1).describe("Comma-separated list of authors"),
-        message: z.string().optional().describe("Additional merge notes"),
-        worktree: z.string().optional().describe("Worktree path used for the merge"),
-        author: authorSchema,
-        context: submitContextSchema,
-        decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
-        risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
-        next: handoffListSchema.describe("What the next phase should do or check first"),
-        claimToken: claimTokenSchema,
-        agentId: agentIdSchema,
-      },
+        "Deprecated alias of submit_pr for older skills: records the pull request (its URL taken from prUrl or the message) and moves the task to `pr_open`.",
+      inputSchema: prInputSchema,
     },
-    (input) =>
-      run(() =>
-        submitResponse(
-          submitMerge(input.taskId, {
-            branch: input.mergeBranch,
-            commit: input.commit,
-            authors: input.authors,
-            message: input.message,
-            worktree: input.worktree,
-            author: input.author,
-            context: input.context,
-            decisions: input.decisions,
-            risks: input.risks,
-            next: input.next,
-            ...auth(input),
-          }),
-        ),
-      ),
+    recordPr,
   );
 
   server.registerTool(
