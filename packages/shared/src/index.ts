@@ -8,6 +8,7 @@ export {
   type Handoff,
   type TaskReference,
   type PlanSubmission,
+  type PullRequest,
   type ValidationPlan,
   type ApprovedPlan,
   type DiffStats,
@@ -67,6 +68,7 @@ export {
   softDeleteProject,
   addActivityEvent,
   getActivityEvents,
+  countActivityEvents,
   getMigrationStatus,
   rollbackMigration,
   beginTransaction,
@@ -109,6 +111,10 @@ export {
   createSubtask,
   submitRefinement,
   promoteDraft,
+  submitPr,
+  completeFromPullRequest,
+  pullRequestClosed,
+  recordPullRequest,
   editTask,
   verifierOnline,
   hasVerificationCommands,
@@ -143,6 +149,8 @@ export {
   type SubmitRefinementInput,
   type SubmitVerificationInput,
   type TaskEdit,
+  type SubmitPrInput,
+  type RequestCodeChangesInput,
   type ReviewFindingInput,
   type SubmitResult,
   type TransitionOptions,
@@ -191,7 +199,8 @@ export {
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
 
-export { buildTaskBrief, previousPhase, type TaskBrief } from "./brief.js";
+export { buildTaskBrief, previousPhase, renderPrBody, type TaskBrief } from "./brief.js";
+export { computeMetrics, HUMAN_DECISIONS, type FlowMetrics, type MetricsFilter } from "./metrics.js";
 export { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 
 export {

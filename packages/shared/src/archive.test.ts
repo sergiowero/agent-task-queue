@@ -209,7 +209,12 @@ describe("archiveTask", () => {
     submitReview(t.id, { verdict: "approve", message: "Looks good. **Verdict:** approve", claimToken: claimed.claimToken });
     requestCodeChanges(t.id, { message: "Please fix contrast." });
     claimed = claim(codex);
-    submitCode(t.id, { message: "## Changes\n- Fixed contrast", worktree: "/w/t", claimToken: claimed.claimToken });
+    submitCode(t.id, {
+      message: "## Changes\n- Fixed contrast",
+      worktree: "/w/t",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "contrast fixed" }],
+      claimToken: claimed.claimToken,
+    });
     approveCode(t.id);
     claimed = claim();
     submitMerge(t.id, {
@@ -265,8 +270,9 @@ describe("archiveTask", () => {
     expect(summary).toContain("- Fixed contrast");
     expect(summary).toContain("_`agent` · ");
     expect(summary).toContain("latest of 2");
-    expect(summary).toContain("Merge recorded");
-    expect(summary).not.toContain("Merge submitted. Branch:");
+    expect(summary).toContain("| PR opened |");
+    expect(summary).not.toContain("PR opened: https://github.com/org/repo/pull/42. Branch:");
+    expect(summary).toContain("- **Base branch:** `develop`");
 
     const detailed = readFileSync(result.detailedPath, "utf8");
     expect(detailed).toStartWith("# Add dark mode toggle — full record\n");
@@ -278,9 +284,9 @@ describe("archiveTask", () => {
       "Please fix contrast.",
       "Looks good. **Verdict:** approve",
       "- Toggle in header",
-      "Merge submitted. Branch: develop, Commit: abc1234",
+      "PR opened: https://github.com/org/repo/pull/42. Branch: develop, Commit: abc1234",
       "`plan_submitted`",
-      "`merge_submitted`",
+      "`pr_opened`",
       "| claude | 2.1.0 | opus |",
       "Changes requested",
       '"id": "' + task.id + '"',

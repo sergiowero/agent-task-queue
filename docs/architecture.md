@@ -84,7 +84,7 @@ Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-t
 - **submit_plan** — transitions task from Planning to Waiting Plan Review
 - **submit_code** — transitions from Coding to Waiting Code Review, stores worktree path
 - **submit_review** — transitions from Reviewing back to Waiting Code Review
-- **submit_merge** — transitions from Merging to Merged with branch, commit, and author info
+- **submit_pr** — records the pull request (URL, branches, commit, authors) and moves the task from Merging to PR open (`submit_merge` is its deprecated alias)
 - **get_task** / **post_comment** — read a task, or add a note without changing its status
 - **list_tasks** — tasks with project info, filtered by status and project (archived tasks left out)
 - **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement)
@@ -197,11 +197,11 @@ The task lifecycle moves through these states:
 
 **changes_requested** → A person or the AI reviewer (L1+) asked for changes; the findings are tracked by id. Feedback loop back to coding.
 
-**approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for merge.
+**approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for the pull request.
 
-**merging** → Agent is merging code into target branch.
+**merging** → The integrator is pushing the branch and opening the pull request.
 
-**merged** → Code merged. Awaits final confirmation.
+**pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. Under L3 with `autoMerge`, a green low-risk PR merges itself. A person can also mark it merged.
 
 **complete** → All work finished. Terminal state.
 
@@ -227,12 +227,12 @@ The task lifecycle moves through these states:
 - Request AI review
 - Cancel task, unblock stuck task (planning, coding, reviewing or merging; the runner job still working on it is stopped)
 - Answer a blocked task (`resolve_blocker`): the answer goes to the conversation and the task moves to a status allowed for the phase it was blocked in
-- Confirm completion
+- Mark the PR merged (when the PR sync cannot see GitHub)
 - Archive a complete task
 
 ### Agent Actions
 - Claim task (based on role eligibility); the claim returns a `claimToken` every submit must present
-- Submit plan, submit code, submit review, submit merge
+- Submit plan, submit code, submit review, submit the PR
 - Report a blocker (`report_blocker`) instead of submitting partial work
 
 ---
@@ -241,9 +241,11 @@ The task lifecycle moves through these states:
 
 | Board Column | Task States Shown |
 |---|---|
-| **Pending** | plan_requested, ready_for_code, plan_changes_requested, code_review_requested, changes_requested, approved |
-| **In Progress** | planning, coding, reviewing, merging |
-| **Needs you** | waiting_plan_review, waiting_code_review, needs_human |
-| **Done** | complete, merged |
+| **Pending** | draft, plan_requested, plan_changes_requested, plan_review_requested, ready_for_code, changes_requested, verify_requested, code_review_requested, approved |
+| **In Progress** | refining, planning, plan_reviewing, coding, verifying, reviewing, merging, split |
+| **Needs you** | waiting_plan_review, waiting_code_review, needs_human, pr_open |
+| **Done** | complete |
+
+The **Needs you** page lists the same tasks with what each one needs (answer, approve the plan, review the code, merge the PR), oldest first.
 
 Archived tasks are not shown on the board.

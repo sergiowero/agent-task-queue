@@ -88,10 +88,60 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
 | Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
+| The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
 answer in the conversation and resets the round limits, so the agents get a
 fresh set of rounds.
+
+## Pull requests
+
+The task ends on GitHub. After the review the integrator pushes the branch and opens
+the PR with the body AgentQ writes (`brief.pr.body`: summary, each acceptance criterion
+with its evidence, the verification, the AI review and the findings it addressed, the
+risk), then calls `submit_pr`: the task waits in `pr_open`. The human review happens on
+the PR, where the diff and CI are.
+
+With the `gh` CLI installed and logged in, the web server checks every open PR each
+`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off):
+
+| On GitHub | Task |
+|---|---|
+| Merged | `complete`, credited to the person who merged it (archived too when the project's `autoArchive` is on) |
+| Closed without merging | `needs_human` |
+| Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
+
+Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
+merged** on the task page.
+
+**L3 auto-merge.** With `autonomy: 3` and `autoMerge: true`, the sync merges a PR
+itself (`gh pr merge --squash`) when the task is **low risk**, every check is green and
+no one asked for changes on GitHub. Anything else waits for a person.
+
+## What needs you
+
+The **Needs you** page lists every task waiting for a person, grouped by what they must
+do and oldest first: answer a blocker, approve a plan (medium or high risk), review code
+(high risk, a spot check, or no reviewer available), merge a PR, or refine a draft that
+is not ready. On a code review the task page shows the AI verdict, the verification, the
+diff size, the risk and the criteria in one panel; answered findings can be ticked to
+reopen them with the change request, which becomes a finding (`H<round>-<n>`) the coder
+must answer by id.
+
+## Metrics
+
+**Activity** shows how the flow is doing (`GET /api/metrics`, filterable by `projectId`,
+`from`, `to`):
+
+| Metric | Target |
+|---|---|
+| Human decisions per task (approvals, change requests, answers, completions) | ≤ 2 at L2 |
+| Tasks that reached the PR with no human decision on the way | > 70% |
+| AI review rounds per task that reached a PR | ≤ 1.5 |
+| Tasks that went through `needs_human` | 10–20% |
+| AI-approved tasks a person still sent back (in AgentQ or on GitHub) | < 10% |
+| Runner reverts per task | falling |
+| Lead time from creation to completion | — |
 
 ## Separation of duties
 

@@ -6,7 +6,7 @@
  * Its size stays flat as rounds pile up; get_task still has everything.
  */
 import { getProjectById, getTaskById } from "./database.js";
-import { TASK_TYPES, type Phase } from "./catalog.js";
+import { TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
 import { getEvidence, getFindings, latestHandoffs } from "./records.js";
 import { resolveProfile, type ProjectCommands } from "./profile.js";
 import { resolvePolicy, reviewRoundsUsed } from "./policy.js";
@@ -66,6 +66,8 @@ export interface TaskBrief {
   verification: (Verification & { failing: Pick<Evidence, "command" | "exitCode" | "summary">[] }) | null;
   /** What a person answered to the last blocker, if the task was blocked. */
   lastAnswer: string | null;
+  /** For the integrator: the pull request body to use (criteria, evidence, review, risk). */
+  pr: { body: string; url: string | null } | null;
   /** Where the full history is. */
   more: string;
 }
@@ -136,6 +138,10 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
     },
     verification: task.verification ? { ...task.verification, failing } : null,
     lastAnswer: answer ? answer.message.replace(/^\*\*Blocker resolved\*\*[^\n]*\n*/, "").trim() || null : null,
+    pr:
+      [TaskStatus.Approved, TaskStatus.Merging, TaskStatus.PrOpen].includes(task.status)
+        ? { body: renderPrBody(task), url: task.pullRequest?.url ?? null }
+        : null,
     more: "The full conversation, history and every piece of evidence: call get_task.",
   };
 }
@@ -152,4 +158,60 @@ export function previousPhase(phase: Phase): Phase | null {
     merge: "review",
   };
   return previous[phase];
+}
+
+const MARK = { met: "✅", failed: "❌", waived: "➖", pending: "⬜" } as const;
+
+/**
+ * The pull request body: what the task asked, how each criterion was verified,
+ * what the AI review decided and what is risky — so the human review on GitHub
+ * is the only one needed.
+ */
+export function renderPrBody(task: Task): string {
+  const evidence = new Map(getEvidence(task.id).map((e) => [e.id, e]));
+  const findings = getFindings(task.id);
+  const resolved = findings.filter((f) => f.status !== "open");
+  const lines: string[] = [];
+  const summary = (task.description ?? "").split("\n\n")[0]?.trim();
+  lines.push("## Summary", "", summary || task.title, "");
+  if (task.acceptanceCriteria.length) {
+    lines.push("## Acceptance criteria", "");
+    for (const c of task.acceptanceCriteria) {
+      const proof = c.evidenceIds
+        .map((id) => evidence.get(id))
+        .filter((e): e is Evidence => !!e && !e.skipped)
+        .map((e) => (e.command ? `\`${e.command}\` ${e.exitCode === 0 ? "passed" : `exit ${e.exitCode}`}` : e.summary))
+        .slice(-2);
+      lines.push(`- ${MARK[c.status]} **${c.id}** ${c.text}${proof.length ? ` — ${proof.join("; ")}` : ""}`);
+    }
+    lines.push("");
+  }
+  const v = task.verification;
+  lines.push("## Verification", "");
+  if (!v) lines.push("Not verified by AgentQ.");
+  else if (v.skipped) lines.push(v.note ?? "Not verified.");
+  else {
+    lines.push(`${v.passed ? "✅ Passed" : "❌ Failed"} (round ${v.round})${v.verifiedSha ? ` on \`${v.verifiedSha.slice(0, 12)}\`` : ""}.`);
+    if (task.diffStats) lines.push(`Diff: ${task.diffStats.files} files, +${task.diffStats.insertions} −${task.diffStats.deletions}.`);
+  }
+  lines.push("");
+  lines.push("## Review", "");
+  if (task.lastReview) {
+    lines.push(`AI review: **${task.lastReview.verdict}** in round ${task.lastReview.round} by \`${task.lastReview.by}\`.`);
+  } else {
+    lines.push("Reviewed by a person in AgentQ.");
+  }
+  if (resolved.length) {
+    lines.push("", "Findings addressed:");
+    for (const f of resolved) lines.push(`- ${f.id} (${f.severity}) ${f.status}${f.resolution ? ` — ${f.resolution}` : ""}`);
+  }
+  const open = findings.filter((f) => f.status === "open");
+  if (open.length) {
+    lines.push("", "Still open (non-blocking):");
+    for (const f of open) lines.push(`- ${f.id} (${f.severity}) ${f.text}`);
+  }
+  lines.push("", "## Risk", "", `**${task.risk}**${task.riskReasons.length ? `: ${task.riskReasons.join("; ")}` : ""}`);
+  if (task.nonGoals.length) lines.push("", "Out of scope: " + task.nonGoals.join("; "));
+  lines.push("", `AgentQ task \`${task.id}\``);
+  return lines.join("\n");
 }

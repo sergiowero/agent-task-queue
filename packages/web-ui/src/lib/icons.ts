@@ -10,6 +10,8 @@ export {
   Bot as AgentsIcon,
   Cpu as RunnersIcon,
   Activity as ActivityIcon,
+  Inbox as InboxIcon,
+  ChartColumn as MetricsIcon,
   Wrench as ToolsIcon,
 
   // Generic actions

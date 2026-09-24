@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
+import { EVENT_TYPES } from "@agentq/shared/catalog";
 import type { ActivityEvent } from "../lib/api";
 import { api } from "../lib/api";
 import type { LucideIcon } from "../lib/icons";
@@ -35,6 +36,7 @@ import { CountPill, PageBody, PageHeader } from "../components/PageHeader";
 import type { SegmentOption } from "../components/SegmentedControl";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { Skeleton } from "../components/Skeleton";
+import { MetricsPanel } from "../components/MetricsPanel";
 
 interface EventMeta {
   label: string;
@@ -67,6 +69,10 @@ const EVENT_META: Record<string, EventMeta> = {
   },
   review_submitted: { label: "Review submitted", icon: ReviewIcon, tone: "warning" },
   merge_submitted: { label: "Merge submitted", icon: MergeIcon, tone: "success" },
+  pr_opened: { label: "PR opened", icon: MergeIcon, tone: "primary" },
+  pr_merged: { label: "PR merged", icon: MergeIcon, tone: "success" },
+  pr_auto_merged: { label: "PR auto-merged", icon: MergeIcon, tone: "success" },
+  pr_closed: { label: "PR closed without merging", icon: CancelTaskIcon, tone: "danger" },
   ai_review_requested: { label: "AI review requested", icon: AiReviewIcon, tone: "accent" },
   comment_added: { label: "Comment added", icon: ConversationIcon, tone: "neutral" },
   // Older event names, kept for existing rows.
@@ -77,7 +83,7 @@ const EVENT_META: Record<string, EventMeta> = {
 
 function eventMeta(eventType: string): EventMeta {
   if (EVENT_META[eventType]) return EVENT_META[eventType];
-  const text = eventType.replace(/_/g, " ").trim();
+  const text = EVENT_TYPES[eventType] ?? eventType.replace(/_/g, " ").trim();
   return {
     label: text.charAt(0).toUpperCase() + text.slice(1),
     icon: ActivityIcon,
@@ -224,6 +230,7 @@ export function ActivityPage() {
 
       <PageBody>
         <div className="mx-auto max-w-3xl">
+          <MetricsPanel />
           {isLoading && <TimelineSkeleton />}
           {!isLoading && events.length === 0 && (
             <EmptyState

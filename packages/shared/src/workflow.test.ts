@@ -460,12 +460,23 @@ describe("workflow actions", () => {
     const reviewer = claimNextTask({ role: "reviewer", agent: { ...planner, sessionId: "s-reviewer" }, projectId })!;
     submitReview(task.id, { verdict: "approve", message: "ok", claimToken: reviewer.claimToken });
     expect(requestCodeChanges(task.id, { message: "fix" }).status).toBe(TaskStatus.ChangesRequested);
+    // The person's request is a finding the coder must answer by id.
+    expect(getFindings(task.id).find((f) => f.id === "H1-1")).toMatchObject({ severity: "major", text: "fix", status: "open" });
     const again = claimNextTask({ role: "implementer", agent: planner, projectId })!;
-    submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken });
+    expect(() => submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken })).toThrow("H1-1");
+    submitCode(task.id, {
+      message: "c2",
+      worktree: "/w",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "done" }],
+      claimToken: again.claimToken,
+    });
     expect(approveCode(task.id).status).toBe(TaskStatus.Approved);
     const merger = claimNextTask({ role: "builder", agent: planner, projectId })!;
     submitMerge(task.id, { branch: "main", commit: "abc", authors: "a", claimToken: merger.claimToken });
-    expect(completeTask(task.id).status).toBe(TaskStatus.Complete);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PrOpen);
+    const done = completeTask(task.id);
+    expect(done.status).toBe(TaskStatus.Complete);
+    expect(done.history.at(-1)).toMatchObject({ pre_status: TaskStatus.PrOpen, new_status: TaskStatus.Complete, actor: "user" });
     expect(() => cancelTask(task.id)).toThrow("cannot be canceled");
   });
 

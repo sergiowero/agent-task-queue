@@ -1,9 +1,9 @@
 ---
 name: agentq-claim
-description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
+description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "4.3.0"
+  version: "5.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -29,7 +29,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "4.3.0",
+  "skillsVersion": "5.0.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -48,7 +48,7 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "4.3.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "5.0.0" }
 ```
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
@@ -86,7 +86,7 @@ The claim moves the task to its in-progress status; route on the status it was c
 | `changes_requested` | `coding` | Coding | `agentq-code` |
 | `verify_requested` | `verifying` | Verifying | `agentq-verify` |
 | `code_review_requested` | `reviewing` | Reviewing | `agentq-review` |
-| `approved` | `merging` | Merging (integrator) | `agentq-merge` |
+| `approved` | `merging` | Pull request (integrator) | `agentq-pr` |
 
 `claim_task` also returns `phaseSkill` with the name to follow.
 
@@ -108,7 +108,7 @@ Agents MUST respect guardrails — they define hard constraints that must not be
 
 ## Context Handoff
 
-Handoffs are how agents pass knowledge to the agent of the next phase (planner → coder → verifier → reviewer → coder → merger). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase.
+Handoffs are how agents pass knowledge to the agent of the next phase (planner → coder → verifier → reviewer → coder → integrator). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase.
 
 - Write what the next agent needs and cannot get cheaply from the diff or the `message`: decisions and why, gotchas, where to look first, what is left or risky. Do not repeat the `message`.
 - Keep it short (1–5 sentences) and concrete: file paths, function names, commands.

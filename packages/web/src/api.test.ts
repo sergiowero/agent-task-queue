@@ -509,27 +509,29 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(tooEarly.status).toBe(400);
 
     await setStatus(taskId, TaskStatus.Coding);
+    // The change request is a finding (H1-1) the coder answers by id.
     await expectTransition(taskId, "submit-code", TaskStatus.WaitingCodeReview, {
       message: "Fixed",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "tests fixed" }],
     });
     await expectTransition(taskId, "approve-code", TaskStatus.Approved);
     const persisted = await getTask(taskId);
     expect(lastMessage(persisted).message).toBe("Code approved.");
   });
 
-  it("confirm-completion requires Merged", async () => {
+  it("confirm-completion requires PR open", async () => {
     const res = await subAction(taskId, "confirm-completion");
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain("Merged");
+    expect((await res.json()).error).toContain("PR open");
   });
 
-  it("submit-merge validates required fields and -> merged; confirm-completion -> complete", async () => {
+  it("submit-merge validates required fields and -> pr_open; confirm-completion -> complete", async () => {
     await setStatus(taskId, TaskStatus.Merging);
     const missing = await subAction(taskId, "submit-merge", { branch: "feat/x" });
     expect(missing.status).toBe(400);
     expect((await missing.json()).error).toContain("branch, commit, and authors are required");
 
-    const merged = await expectTransition(taskId, "submit-merge", TaskStatus.Merged, {
+    const merged = await expectTransition(taskId, "submit-merge", TaskStatus.PrOpen, {
       branch: "feat/x",
       commit: "abc123",
       authors: "dev1,dev2",
@@ -578,7 +580,7 @@ describe("POST /api/tasks/:id/archive", () => {
   it("writes both files, hides the task from the board list and refuses a second archive", async () => {
     const task = await createTaskViaApi({ title: "Archive me", projectId: archiveProjectId });
     await setStatus(task.id, TaskStatus.Merging);
-    await expectTransition(task.id, "submit-merge", TaskStatus.Merged, {
+    await expectTransition(task.id, "submit-merge", TaskStatus.PrOpen, {
       branch: "develop",
       commit: "abc123",
       authors: "dev1",
@@ -828,6 +830,57 @@ describe("GET /api/meta", () => {
     expect(meta.skillsVersion).toBe(skillsBundleVersion());
     expect(typeof meta.installedSkills).toBe("object");
     expect(Array.isArray(meta.outdatedSkills)).toBe(true);
+    expect(typeof meta.prSync.available).toBe("boolean");
+  });
+});
+
+describe("GET /api/activity", () => {
+  it("pages with offset and reports the full total", async () => {
+    const task = await createTaskViaApi({ title: "Activity paging" });
+    for (const message of ["one", "two", "three"]) {
+      expect((await subAction(task.id, "add-comment", { message })).status).toBe(200);
+    }
+    const page = async (offset: number, limit = 2) =>
+      (await (await api(`/api/activity?taskId=${task.id}&limit=${limit}&offset=${offset}`)).json()) as {
+        data: { id: number; eventType: string }[];
+        total: number;
+        offset: number;
+        hasMore: boolean;
+      };
+    const all = await page(0, 100);
+    expect(all.total).toBe(all.data.length);
+    expect(all.total).toBeGreaterThanOrEqual(4);
+    const seen: number[] = [];
+    for (let offset = 0; offset < all.total; offset += 2) {
+      const p = await page(offset);
+      expect(p.total).toBe(all.total);
+      expect(p.offset).toBe(offset);
+      expect(p.hasMore).toBe(offset + 2 < all.total);
+      seen.push(...p.data.map((e) => e.id));
+    }
+    // Every event exactly once, newest first, as the unpaged list.
+    expect(seen).toEqual(all.data.map((e) => e.id));
+    expect(all.data.at(-1)!.eventType).toBe("task_created");
+  });
+});
+
+describe("GET /api/metrics", () => {
+  it("returns the flow metrics, filtered by project", async () => {
+    const res = await api(`/api/metrics?projectId=${testProjectId}`);
+    expect(res.status).toBe(200);
+    const m = await res.json();
+    expect(m.tasks).toBeGreaterThan(0);
+    for (const key of [
+      "humanClicksPerTask",
+      "reachedPrWithoutHuman",
+      "reviewRoundsAtPr",
+      "escalationRate",
+      "humanRejectionAfterAiApproval",
+      "revertsPerTask",
+    ]) {
+      expect(typeof m[key]).toBe("number");
+    }
+    expect((await (await api(`/api/metrics?projectId=${randomUUID()}`)).json()).tasks).toBe(0);
   });
 });
 

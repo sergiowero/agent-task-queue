@@ -6,6 +6,7 @@ import { LoadingSkeleton } from "./components/LoadingSkeleton";
 
 // Pages are code-split so the initial bundle only carries the shell.
 const BoardPage = lazy(() => import("./pages/BoardPage").then((m) => ({ default: m.BoardPage })));
+const InboxPage = lazy(() => import("./pages/InboxPage").then((m) => ({ default: m.InboxPage })));
 const TaskDetailPage = lazy(() =>
   import("./pages/TaskDetailPage").then((m) => ({ default: m.TaskDetailPage })),
 );
@@ -44,6 +45,14 @@ export default function App() {
           element={
             <Page>
               <BoardPage />
+            </Page>
+          }
+        />
+        <Route
+          path="/inbox"
+          element={
+            <Page>
+              <InboxPage />
             </Page>
           }
         />

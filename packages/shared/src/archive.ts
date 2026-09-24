@@ -136,6 +136,14 @@ const STATUS_LABELS: Record<string, string> = {
   complete: "Complete",
   canceled: "Canceled",
   needs_human: "Needs human",
+  pr_open: "PR open",
+  verify_requested: "Verify requested",
+  verifying: "Verifying",
+  plan_review_requested: "Plan critique requested",
+  plan_reviewing: "Plan critique",
+  draft: "Draft",
+  refining: "Refining",
+  split: "Split into subtasks",
 };
 
 export function archiveStatusLabel(status: string): string {
@@ -162,7 +170,7 @@ const SUBMITTED_TO: Record<string, { status: string; label: string }> = {
   planning: { status: TaskStatus.WaitingPlanReview, label: "Plan submitted" },
   coding: { status: TaskStatus.WaitingCodeReview, label: "Code submitted" },
   reviewing: { status: TaskStatus.WaitingCodeReview, label: "Review submitted" },
-  merging: { status: TaskStatus.Merged, label: "Merge recorded" },
+  merging: { status: TaskStatus.PrOpen, label: "PR opened" },
 };
 
 const MESSAGE_TYPE_LABELS: Record<string, string> = {
@@ -288,7 +296,7 @@ function codeOrNone(value: string | null | undefined): string {
 
 // ─── Facts extracted from the task ─────────────────────────────────────
 
-const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/g;
+export const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/g;
 const PR_REF_RE = /\b(?:PR|pull request)\b[^\n#\d]{0,12}#(\d+)/gi;
 
 /**
@@ -490,10 +498,12 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     wroteAny = true;
     const rounds = entries.length > 1 ? ` · latest of ${entries.length}` : "";
     out.push("", `### ${title}`, "", `_${authorAndTime(latest)}${rounds}_`, "");
-    // "Merge submitted. Branch: …, Commit: …, Authors: …, Message: <markdown>" reads
-    // better as a list of facts followed by the agent's own message.
+    // "PR opened: <url>. Branch: …, Commit: …, Authors: …, Message: <markdown>" (older
+    // tasks: "Merge submitted. …") reads better as facts followed by the agent's message.
     const mergeBody = type === "merge" ? latest.message.match(/, Message: ([\s\S]*)$/) : null;
-    if (type === "merge" && merge && latest.message.startsWith("Merge submitted.")) {
+    if (type === "merge" && merge && /^(PR opened|Merge submitted)\b/.test(latest.message)) {
+      const prUrl = task.pullRequest?.url ?? latest.message.match(PR_URL_RE)?.[0];
+      if (prUrl) out.push(`- **Pull request:** <${prUrl}>`);
       out.push(
         `- **Base branch:** ${codeOrNone(merge.branch)}`,
         `- **Commit:** ${codeOrNone(merge.commit)}`,
@@ -827,7 +837,10 @@ export function archiveTask(taskId: string, options: ArchiveTaskOptions = {}): A
   const agents = uniqueAgentIds(sessions)
     .map((id) => getAgentById(id))
     .filter((a): a is Agent => a !== null);
-  const pullRequests = findPullRequests(task.conversation, options.pullRequests);
+  // The recorded PR first (structured since phase 5), then any given or mentioned ones.
+  const recorded = task.pullRequest?.url ? [task.pullRequest.url] : [];
+  // The caller's PRs first, then the one submit_pr recorded, then any found in messages.
+  const pullRequests = findPullRequests(task.conversation, [...(options.pullRequests ?? []), ...recorded]);
   const documents = buildArchiveDocuments({
     task,
     project,

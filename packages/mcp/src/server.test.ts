@@ -35,6 +35,7 @@ const TOOL_NAMES = [
   "submit_code",
   "submit_review",
   "submit_merge",
+  "submit_pr",
   "get_task",
   "list_tasks",
   "list_projects",
@@ -322,12 +323,63 @@ describe("AgentQ MCP server", () => {
       success: true,
       taskId: merging.id,
       previousStatus: TaskStatus.Merging,
-      newStatus: TaskStatus.Merged,
-      message: "Merge submitted. Task moved to Merged.",
+      newStatus: TaskStatus.PrOpen,
+      message: "Pull request recorded. Task moved to PR open.",
     });
     expect(getTaskById(merging.id)!.conversation.at(-1)?.message).toBe(
-      "Merge submitted. Branch: develop, Commit: abc123, Authors: dev1,dev2, Worktree: /tmp/wt-merge, Message: squashed",
+      "PR opened. Branch: develop, Commit: abc123, Authors: dev1,dev2, Worktree: /tmp/wt-merge, Message: squashed",
     );
+  });
+
+  it("submit_pr records the pull request and moves the task to pr_open", async () => {
+    const task = createTask({ title: "pr", description: "d", projectId });
+    updateTask(task.id, { status: TaskStatus.Merging });
+    const out = parse(
+      (await client.callTool({
+        name: "submit_pr",
+        arguments: {
+          taskId: task.id,
+          prUrl: "https://github.com/org/repo/pull/42",
+          mergeBranch: "main",
+          headBranch: "feat/pr",
+          commit: "abc123",
+          authors: "dev1",
+          context: "PR #42 open against main",
+        },
+      })) as CallToolResult,
+    );
+    expect(out.newStatus).toBe(TaskStatus.PrOpen);
+    const saved = getTaskById(task.id)!;
+    expect(saved.pullRequest).toMatchObject({
+      url: "https://github.com/org/repo/pull/42",
+      number: 42,
+      state: "open",
+      branch: "feat/pr",
+    });
+    expect(saved.realBranch).toBe("feat/pr");
+    expect(saved.conversation.at(-1)?.message).toStartWith("PR opened: https://github.com/org/repo/pull/42.");
+  });
+
+  it("submit_merge (deprecated) takes the PR URL from the message", async () => {
+    const task = createTask({ title: "legacy pr", description: "d", projectId });
+    updateTask(task.id, { status: TaskStatus.Merging });
+    parse(
+      (await client.callTool({
+        name: "submit_merge",
+        arguments: {
+          taskId: task.id,
+          mergeBranch: "main",
+          commit: "abc",
+          authors: "dev",
+          message: "## PR Created\n- **PR**: https://github.com/org/repo/pull/9",
+          context: "PR #9",
+        },
+      })) as CallToolResult,
+    );
+    const saved = getTaskById(task.id)!;
+    expect(saved.status).toBe(TaskStatus.PrOpen);
+    expect(saved.pullRequest?.url).toBe("https://github.com/org/repo/pull/9");
+    expect(saved.pullRequest?.number).toBe(9);
   });
 
   it("get_task returns the task with its project", async () => {
@@ -645,7 +697,7 @@ describe("AgentQ MCP agent workflow", () => {
     expect(out.agent.role).toBe("integrator");
   });
 
-  it("submit_merge requires mergeBranch, commit and authors, then moves the task to merged", async () => {
+  it("submit_merge requires mergeBranch, commit and authors, then moves the task to pr_open", async () => {
     const missing = validationError(
       await call("submit_merge", { taskId: codeTaskId, mergeBranch: "feat/x", context: "c" }),
     );
@@ -664,7 +716,7 @@ describe("AgentQ MCP agent workflow", () => {
     expect(out.taskId).toBe(codeTaskId);
 
     const got = await ok("get_task", { taskId: codeTaskId });
-    expect(got.task.status).toBe(TaskStatus.Merged);
+    expect(got.task.status).toBe(TaskStatus.PrOpen);
     expect(got.task.assignedAgent).toBeNull();
     const last = got.task.conversation[got.task.conversation.length - 1];
     expect(last.message).toContain("Branch: feat/x");

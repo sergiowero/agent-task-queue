@@ -20,6 +20,9 @@ import {
   deleteProject,
   softDeleteProject,
   getActivityEvents,
+  countActivityEvents,
+  computeMetrics,
+  submitPr,
   addUserComment,
   approveCode,
   approvePlan,
@@ -42,7 +45,6 @@ import {
   resolveBlocker,
   skillsBundleVersion,
   submitCode,
-  submitMerge,
   submitPlan,
   submitReview,
   unblockTask,
@@ -67,6 +69,7 @@ import {
 } from "@agentq/shared";
 import { getRunnerEngine, listTools } from "./runner/runner.js";
 import { VerifyWorker } from "./runner/verify.js";
+import { PrSync } from "./pr-sync.js";
 import { discoverModels } from "./runner/models.js";
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
@@ -264,6 +267,7 @@ function stopDbWatcher() {
 
 const runnerEngine = getRunnerEngine({ broadcast: broadcastSSE });
 const verifyWorker = new VerifyWorker({ broadcast: broadcastSSE });
+const prSync = new PrSync(broadcastSSE);
 
 function corsHeaders(): HeadersInit {
   if (isDev) {
@@ -369,6 +373,7 @@ export function startServer(opts: StartServerOptions = {}) {
         handleRunners,
         handleRunnerById,
         handleMeta,
+        handleMetrics,
         handleTasksList,
         handleCreateTask,
         handleTaskSubActions,
@@ -404,6 +409,7 @@ async function main() {
     stopVite();
     stopKeepAlive();
     verifyWorker.stop();
+    prSync.stop();
     await runnerEngine.shutdown();
     process.exit(0);
   };
@@ -416,6 +422,8 @@ async function main() {
   runnerEngine.startEnabledRunners();
   // The deterministic verifier runs the projects' commands on submitted code.
   if (process.env.AGENTQ_VERIFY_WORKER !== "0") verifyWorker.start();
+  // Completes tasks whose PR was merged on GitHub (needs the gh CLI, logged in).
+  if (process.env.AGENTQ_PR_SYNC !== "0") prSync.start();
   // Expired claims of silent sessions and reviews nobody eligible picked up.
   const sweep = () => {
     try {
@@ -550,9 +558,21 @@ const handleActivity = wrapHandler(async (req, url) => {
   const from = url.searchParams.get("from") ?? undefined;
   const to = url.searchParams.get("to") ?? undefined;
 
-  const allEvents = getActivityEvents({ taskId, agentId, from, to, limit: offset + limit });
-  const sliced = allEvents.slice(0, limit);
-  return jsonResponse(paginate(sliced, allEvents.length, { limit, offset }));
+  const events = getActivityEvents({ taskId, agentId, from, to, limit, offset });
+  const total = countActivityEvents({ taskId, agentId, from, to });
+  return jsonResponse(paginate(events, total, { limit, offset }));
+});
+
+/** Flow metrics (human clicks per task, escalations, rounds, lead time...). */
+const handleMetrics = wrapHandler(async (req, url) => {
+  if (url.pathname !== "/api/metrics" || req.method !== "GET") throw null;
+  return jsonResponse(
+    computeMetrics({
+      projectId: url.searchParams.get("projectId") ?? undefined,
+      from: url.searchParams.get("from") ?? undefined,
+      to: url.searchParams.get("to") ?? undefined,
+    }),
+  );
 });
 
 // ─── Runners ────────────────────────────────────────────────────────
@@ -697,6 +717,7 @@ const handleMeta = wrapHandler(async (req, url) => {
     installedSkills: installed,
     outdatedSkills: outdated,
     verifier: { online: verifierOnline(), ...verifyWorker.state() },
+    prSync: prSync.state(),
   });
 });
 
@@ -797,11 +818,13 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         ...auth,
       }).task;
     },
-    submit_merge: () => {
+    submit_pr: () => {
       if (!body?.branch || !body?.commit || !body?.authors) {
         return errorResponse("branch, commit, and authors are required");
       }
-      return submitMerge(taskId, {
+      return submitPr(taskId, {
+        prUrl: body.prUrl,
+        prNumber: body.prNumber,
         branch: String(body.branch),
         commit: String(body.commit),
         authors: String(body.authors),
@@ -812,6 +835,8 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         ...auth,
       }).task;
     },
+    // Older clients: the same call under its former name.
+    submit_merge: () => actions.submit_pr(),
     report_blocker: () => {
       if (!body?.reason || !body?.question) return errorResponse("reason and question are required");
       return reportBlocker(taskId, {
@@ -825,7 +850,11 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     approve_plan: () => approvePlan(taskId, { message: data.message }),
     request_plan_changes: () => requestPlanChanges(taskId, { message: data.message }),
     approve_code: () => approveCode(taskId, { message: data.message }),
-    request_code_changes: () => requestCodeChanges(taskId, { message: data.message }),
+    request_code_changes: () =>
+      requestCodeChanges(taskId, {
+        message: data.message,
+        findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
+      }),
     request_ai_review: () => requestAiReview(taskId),
     complete: () => completeTask(taskId),
     cancel: () => cancelTask(taskId, { message: data.message }),

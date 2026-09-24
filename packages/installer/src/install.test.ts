@@ -160,11 +160,16 @@ describe(`install:all on ${process.platform}`, () => {
     const skills = join(home, ".claude", "skills");
     mkdirSync(join(skills, "agentq-retired"), { recursive: true });
     writeFileSync(join(skills, "agentq-retired", "SKILL.md"), "old");
+    // Renamed to agentq-pr in 5.0.0.
+    mkdirSync(join(skills, "agentq-merge"), { recursive: true });
+    writeFileSync(join(skills, "agentq-merge", "SKILL.md"), "old");
     mkdirSync(join(skills, "someone-elses-skill"), { recursive: true });
     writeFileSync(join(skills, "someone-elses-skill", "SKILL.md"), "keep me");
 
     expect(runInstallAll().exitCode).toBe(0);
     expect(existsSync(join(skills, "agentq-retired"))).toBe(false);
+    expect(existsSync(join(skills, "agentq-merge"))).toBe(false);
+    expect(existsSync(join(skills, "agentq-pr", "SKILL.md"))).toBe(true);
     expect(existsSync(join(skills, "someone-elses-skill", "SKILL.md"))).toBe(true);
     expect(existsSync(join(skills, "agentq-claim", "SKILL.md"))).toBe(true);
     rmSync(join(skills, "someone-elses-skill"), { recursive: true, force: true });

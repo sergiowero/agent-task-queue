@@ -557,6 +557,18 @@ const MIGRATIONS: Migration[] = [
     up: (d) => d.exec("UPDATE runners SET role = 'builder' WHERE role = 'implementer'"),
     down: (d) => d.exec("UPDATE runners SET role = 'implementer' WHERE role = 'builder'"),
   },
+  {
+    // "merged" meant "a PR is open": it becomes pr_open, with the PR kept as data.
+    name: "023_pull_requests",
+    up: (d) => {
+      addColumn(d, "tasks", "pull_request TEXT");
+      d.exec("UPDATE tasks SET status = 'pr_open' WHERE status = 'merged'");
+    },
+    down: (d) => {
+      d.exec("UPDATE tasks SET status = 'merged' WHERE status = 'pr_open'");
+      try { d.exec("UPDATE tasks SET pull_request = NULL"); } catch {}
+    },
+  },
 ];
 
 function runMigrations(): void {
@@ -682,6 +694,7 @@ function rowToTask(row: any): Task {
     blockedBy: parseJson(row.blocked_by, []),
     planSubmission: parseJson(row.plan_submission, null),
     held: row.held === 1,
+    pullRequest: parseJson(row.pull_request, null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -841,6 +854,7 @@ export function createTask(data: {
     blockedBy: data.blockedBy ?? [],
     planSubmission: null,
     held: data.held ?? false,
+    pullRequest: null,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -1020,6 +1034,7 @@ const TASK_COLUMNS = {
   blockedBy: { column: "blocked_by", json: true },
   planSubmission: { column: "plan_submission", json: true },
   held: { column: "held", json: false },
+  pullRequest: { column: "pull_request", json: true },
 } as const;
 
 export type TaskPatch = {
@@ -1370,12 +1385,41 @@ export function addActivityEvent(data: {
   };
 }
 
+export function countActivityEvents(filters?: { taskId?: string; agentId?: string; from?: string; to?: string }): number {
+  const { where, params } = activityWhere(filters);
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM activity${where}`).get(...params) as { n: number };
+  return row.n;
+}
+
+function activityWhere(filters?: { taskId?: string; agentId?: string; from?: string; to?: string }) {
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (filters?.taskId) {
+    conditions.push("task_id = ?");
+    params.push(filters.taskId);
+  }
+  if (filters?.agentId) {
+    conditions.push("actor = ?");
+    params.push(filters.agentId);
+  }
+  if (filters?.from) {
+    conditions.push("created_at >= ?");
+    params.push(filters.from);
+  }
+  if (filters?.to) {
+    conditions.push("created_at <= ?");
+    params.push(filters.to);
+  }
+  return { where: conditions.length ? " WHERE " + conditions.join(" AND ") : "", params };
+}
+
 export function getActivityEvents(filters?: {
   taskId?: string;
   agentId?: string;
   from?: string;
   to?: string;
   limit?: number;
+  offset?: number;
 }): ActivityEvent[] {
   let sql = "SELECT * FROM activity";
   const conditions: string[] = [];
@@ -1402,11 +1446,11 @@ export function getActivityEvents(filters?: {
     sql += " WHERE " + conditions.join(" AND ");
   }
 
-  sql += " ORDER BY created_at DESC";
+  sql += " ORDER BY created_at DESC, id DESC";
 
   if (filters?.limit) {
-    sql += " LIMIT ?";
-    params.push(filters.limit);
+    sql += " LIMIT ? OFFSET ?";
+    params.push(filters.limit, filters.offset ?? 0);
   }
 
   return getDb()

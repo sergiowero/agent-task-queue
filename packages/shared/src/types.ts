@@ -146,6 +146,21 @@ export interface PlanSubmission {
   touchedPaths: string[];
 }
 
+/** The pull request the integrator opened, kept in sync with GitHub. */
+export interface PullRequest {
+  url: string | null;
+  number: number | null;
+  state: "open" | "merged" | "closed";
+  /** Head branch, used to find the PR when the URL is unknown. */
+  branch: string | null;
+  mergedAt: string | null;
+  mergedBy: string | null;
+  /** People who asked for changes on GitHub (for the "human rejection after AI approval" metric). */
+  changesRequestedBy: string[];
+  checks: "pending" | "success" | "failure" | null;
+  checkedAt: string | null;
+}
+
 /** Notes one phase leaves for the next (what was decided, what is risky, what to do next). */
 export interface Handoff {
   id: number;
@@ -247,6 +262,7 @@ export interface Task {
   planSubmission: PlanSubmission | null;
   /** A subtask waiting for its parent's plan to be approved. */
   held: boolean;
+  pullRequest: PullRequest | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
