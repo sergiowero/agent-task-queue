@@ -9,6 +9,11 @@ import type {
   Verdict,
 } from "./catalog.js";
 import type { PolicySettings } from "./policy.js";
+import type { AcceptanceCriterion } from "./criteria.js";
+import type { ProjectProfile } from "./profile.js";
+
+export type { AcceptanceCriterion } from "./criteria.js";
+export type { ProjectProfile, ProjectCommands } from "./profile.js";
 
 export { TaskStatus, normalizeStatus } from "./catalog.js";
 
@@ -16,7 +21,7 @@ export interface ConversationEntry {
   authorName: string;
   timestamp: string;
   message: string;
-  messageType?: "user" | "agent" | "plan" | "code" | "review" | "merge" | "system";
+  messageType?: "user" | "agent" | "plan" | "code" | "verify" | "review" | "merge" | "system";
 }
 
 export interface StatusHistoryEntry {
@@ -77,6 +82,60 @@ export interface Finding {
   updatedAt: string;
 }
 
+/** How the plan says each acceptance criterion will be verified. */
+export interface ValidationPlan {
+  items: { criterionId: string; how: string; command?: string; newTests?: string[] }[];
+  /** Commands that must keep passing (e.g. "bun test", "bun run typecheck"). */
+  regressionCommands: string[];
+}
+
+export interface ApprovedPlan {
+  markdown: string;
+  validation: ValidationPlan | null;
+  /** "user" when a person approved it, else the critic's agent id. */
+  approvedBy: string;
+  at: string;
+}
+
+/** One piece of evidence: a command run (by the coder or the verifier) or a manual check. */
+export interface Evidence {
+  id: string;
+  taskId: string;
+  round: number;
+  kind: "command" | "manual";
+  criterionId: string | null;
+  command: string | null;
+  exitCode: number | null;
+  /** The relevant lines of output, not the whole log. */
+  summary: string;
+  logPath: string | null;
+  /** Agent id, or "runner:verify" for the built-in verifier. */
+  producedBy: string;
+  flaky: boolean;
+  skipped: boolean;
+  createdAt: string;
+}
+
+export interface DiffStats {
+  files: number;
+  insertions: number;
+  deletions: number;
+}
+
+/** Outcome of the latest verification of the submitted code. */
+export interface Verification {
+  round: number;
+  passed: boolean;
+  skipped: boolean;
+  /** Why it was skipped, or the infrastructure problem that stopped it. */
+  note: string | null;
+  tampering: string[];
+  /** Verifications (so far) that found test tampering. */
+  tamperStrikes: number;
+  verifiedSha: string | null;
+  at: string;
+}
+
 /** Why an agent (or the runner) stopped and what it needs from a person. */
 export interface Blocker {
   reason: string;
@@ -95,7 +154,7 @@ export interface Task {
   description: string | null;
   steerDetails: string | null;
   guardrails: string[];
-  acceptanceCriteria: string[];
+  acceptanceCriteria: AcceptanceCriterion[];
   priority: number;
   recommendedBranch: string;
   realBranch: string | null;
@@ -134,6 +193,16 @@ export interface Task {
   /** Hand-opened agent sessions must show activity before this time or lose the claim. */
   leaseExpiresAt: string | null;
   lastReview: LastReview | null;
+  /** The latest plan's validation plan (proposed; approvedPlan holds the approved one). */
+  validationPlan: ValidationPlan | null;
+  /** Frozen when the plan is approved; the coder may not change it. */
+  approvedPlan: ApprovedPlan | null;
+  /** Commit the coder says it submitted. */
+  headSha: string | null;
+  diffStats: DiffStats | null;
+  verification: Verification | null;
+  /** Why the risk was raised (touched protected paths, a large diff, the plan). */
+  riskReasons: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -165,6 +234,8 @@ export interface Project {
   autonomy: AutonomyLevel;
   /** Overrides of the default policy settings. */
   policy: Partial<PolicySettings>;
+  /** Commands, conventions, protected paths and shared guardrails. */
+  profile: ProjectProfile;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

@@ -256,7 +256,7 @@ describe("archiveTask", () => {
     expect(summary).toStartWith("# Add dark mode toggle\n");
     expect(summary).toContain("## Overview\n\n- Added the toggle.");
     expect(summary).toContain("## Description\n\n### Goal\nUsers can switch theme.");
-    expect(summary).toContain("- Toggle persists");
+    expect(summary).toContain("**AC1** Toggle persists");
     expect(summary).toContain("<https://github.com/org/repo/pull/42>");
     expect(summary).toContain(`**Branch:** \`${task.recommendedBranch}\``);
     expect(summary).toContain("**Commit:** `abc1234`");

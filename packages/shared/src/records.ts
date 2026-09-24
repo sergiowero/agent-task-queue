@@ -5,7 +5,7 @@
  */
 import { getDbHandle, touchTask } from "./database.js";
 import type { FindingStatus, Severity } from "./catalog.js";
-import type { Finding } from "./types.js";
+import type { Evidence, Finding } from "./types.js";
 
 function rowToFinding(row: any): Finding {
   return {
@@ -114,4 +114,68 @@ export function updateFinding(
     );
   touchTask(taskId);
   return getFinding(taskId, id);
+}
+
+// ─── Evidence ─────────────────────────────────────────────────────────
+
+function rowToEvidence(row: any): Evidence {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    round: row.round,
+    kind: row.kind,
+    criterionId: row.criterion_id ?? null,
+    command: row.command ?? null,
+    exitCode: row.exit_code ?? null,
+    summary: row.summary,
+    logPath: row.log_path ?? null,
+    producedBy: row.produced_by,
+    flaky: row.flaky === 1,
+    skipped: row.skipped === 1,
+    createdAt: row.created_at,
+  };
+}
+
+export interface NewEvidence {
+  kind: "command" | "manual";
+  criterionId?: string | null;
+  command?: string | null;
+  exitCode?: number | null;
+  summary: string;
+  logPath?: string | null;
+  flaky?: boolean;
+  skipped?: boolean;
+}
+
+/** Adds evidence for a round; ids are E1, E2, ... per task. */
+export function addEvidence(taskId: string, round: number, items: NewEvidence[], producedBy: string): Evidence[] {
+  if (items.length === 0) return [];
+  const d = getDbHandle();
+  const last = d.prepare("SELECT MAX(seq) AS seq FROM task_evidence WHERE task_id = ?").get(taskId) as { seq: number | null };
+  let seq = last?.seq ?? 0;
+  const now = new Date().toISOString();
+  const insert = d.prepare(
+    `INSERT INTO task_evidence (task_id, id, seq, round, kind, criterion_id, command, exit_code, summary, log_path, produced_by, flaky, skipped, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const ids: string[] = [];
+  for (const e of items) {
+    seq += 1;
+    const id = `E${seq}`;
+    insert.run(
+      taskId, id, seq, round, e.kind, e.criterionId ?? null, e.command ?? null, e.exitCode ?? null,
+      e.summary.trim().slice(0, 8000), e.logPath ?? null, producedBy, e.flaky ? 1 : 0, e.skipped ? 1 : 0, now,
+    );
+    ids.push(id);
+  }
+  touchTask(taskId);
+  const all = getEvidence(taskId);
+  return all.filter((e) => ids.includes(e.id));
+}
+
+export function getEvidence(taskId: string): Evidence[] {
+  return getDbHandle()
+    .prepare("SELECT * FROM task_evidence WHERE task_id = ? ORDER BY seq ASC")
+    .all(taskId)
+    .map(rowToEvidence);
 }

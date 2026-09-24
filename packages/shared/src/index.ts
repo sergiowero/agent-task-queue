@@ -4,6 +4,14 @@ export {
   type Task,
   type Blocker,
   type Finding,
+  type Evidence,
+  type ValidationPlan,
+  type ApprovedPlan,
+  type DiffStats,
+  type Verification,
+  type AcceptanceCriterion,
+  type ProjectProfile,
+  type ProjectCommands,
   type LastReview,
   type Producer,
   type ConversationEntry,
@@ -34,6 +42,8 @@ export {
   appendJson,
   touchTask,
   getDbHandle,
+  setAppState,
+  getAppState,
   type ClaimFilter,
   type TaskPatch,
   deleteTask,
@@ -90,6 +100,10 @@ export {
   postComment,
   policyFor,
   touchLease,
+  submitVerification,
+  editTask,
+  verifierOnline,
+  hasVerificationCommands,
   reportBlocker,
   resolveBlocker,
   approvePlan,
@@ -115,6 +129,9 @@ export {
   type SubmitCodeInput,
   type SubmitMergeInput,
   type SubmitReviewInput,
+  type SubmitPlanInput,
+  type SubmitVerificationInput,
+  type TaskEdit,
   type ReviewFindingInput,
   type SubmitResult,
   type TransitionOptions,
@@ -132,6 +149,8 @@ export {
   reviewRoundsUsed,
   afterPlan,
   afterCode,
+  afterVerify,
+  reviewGate,
   afterReview,
   type Gate,
   type GatePolicy,
@@ -146,11 +165,31 @@ export {
   getFindings,
   getOpenFindings,
   updateFinding,
+  addEvidence,
+  getEvidence,
+  type NewEvidence,
   type NewFinding,
   type FindingSource,
 } from "./records.js";
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
+
+export {
+  normalizeCriteria,
+  criteriaFromStored,
+  parseCriterionLine,
+  formatCriterionLine,
+  type CriterionInput,
+} from "./criteria.js";
+
+export {
+  DEFAULT_PROFILE,
+  DEFAULT_VERIFY_ALLOWLIST,
+  resolveProfile,
+  profileCommands,
+  globToRegExp,
+  matchesAny,
+} from "./profile.js";
 
 export {
   SKILLS_DIR,
@@ -168,7 +207,7 @@ export {
   type SkillDocument,
 } from "./skills.js";
 
-export { git, isGitRepo, detectDefaultBranch } from "./git.js";
+export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./git.js";
 
 export {
   archiveTask,
@@ -208,6 +247,9 @@ export {
   verdictSchema,
   severitySchema,
   policySettingsSchema,
+  criterionInputSchema,
+  criteriaInputSchema,
+  projectProfileSchema,
   type CreateRunnerInput,
   type UpdateRunnerInput,
   type CreateTaskInput,

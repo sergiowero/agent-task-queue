@@ -160,6 +160,10 @@ stateDiagram-v2
     ready_for_code --> coding: implementer claims
     coding --> waiting_code_review: submit_code (L0)
     coding --> code_review_requested: submit_code (L1+)
+    coding --> verify_requested: submit_code (with commands)
+    verify_requested --> verifying: verifier claims
+    verifying --> code_review_requested: green
+    verifying --> changes_requested: red
     reviewing --> approved: approve (L1+)
     reviewing --> changes_requested: request_changes (L1+)
     waiting_code_review --> code_review_requested: you request an AI review
@@ -184,6 +188,8 @@ Any active task can also be **canceled**, and a stuck task can be **unblocked** 
 ### Autonomy
 
 Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
+
+Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them.
 
 ### Roles
 

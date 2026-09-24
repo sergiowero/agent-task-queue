@@ -41,6 +41,14 @@ reviewer's `submit_review` verdict routes it:
 The server refuses `approve` while a `blocker` or `major` finding is open, and
 `request_changes` without at least one open finding.
 
+## Verification
+
+Before any review, the built-in verifier runs the project's commands and the approved
+plan's checks in the task's worktree (see [runner.md](runner.md#verification)). Red goes
+back to the coder with the evidence; red `maxVerifyFailures` times in a row, or tests
+weakened twice, goes to a person. Touching protected paths or a large diff raises the
+risk to high. Green continues to the review gate of the level.
+
 ## Findings
 
 Reviewers submit structured findings: `severity` (`blocker`, `major`, `minor`,
@@ -56,6 +64,8 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | Review rounds reach `maxReviewRounds` (3) | `needs_human` with the open findings |
 | The reviewer returns `needs_human` | `needs_human` with its question |
 | An agent calls `report_blocker` | `needs_human` with its reason and question |
+| Verification red `maxVerifyFailures` (2) times, or tests weakened twice | `needs_human` |
+| The reviewer reopens a finding the coder answered, twice | `needs_human` to arbitrate |
 | A runner job ends `AGENTQ_MAX_REVERTS` (3) times without submitting | `needs_human` with the last output |
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 

@@ -3,7 +3,7 @@ name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
 allowed-tools: mcp__agentq__submit_plan, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -37,9 +37,12 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 
 1. `cd {task.project.workingDirectory}`
 2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` and `task.contexts[]` (see Context Reading in `agentq-claim`)
-3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code
-4. Write the plan with the Plan Template below — concrete steps, files to create/modify, and the decisions taken
-5. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
+3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
+4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
+5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). Add the regression commands that must keep passing (usually the project's test, typecheck and lint commands)
+6. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
+
+Once a person approves the plan, the validation plan is **frozen**: the coder cannot change it, and the AgentQ verifier runs its commands on every code submission. Commands from a plan a person approved always run; otherwise only those on the project's allowlist do. Prefer the project's own test runner.
 
 ### Revising a plan (`plan_changes_requested`)
 
@@ -50,8 +53,18 @@ The feedback is in the task conversation (`task.conversation[]`). Read it, revis
 Call the `submit_plan` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown plan>", "context": "<handoff notes>" }
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown plan>",
+  "validationPlan": {
+    "items": [
+      { "criterionId": "AC1", "how": "Unit test: toggling persists across reloads", "command": "bun test theme", "newTests": ["src/theme.test.ts"] },
+      { "criterionId": "AC2", "how": "Manual check on a 375px viewport (no command)" }
+    ],
+    "regressionCommands": ["bun test", "bun run typecheck"]
+  },
+  "context": "<handoff notes>" }
 ```
+
+Every `criterionId` must be one of the task's criteria; the tool rejects unknown ids.
 
 `context` is required (see Context Handoff in `agentq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 
@@ -73,7 +86,22 @@ The `message` MUST be Markdown.
 
 ### Decisions
 - [decision 1]
+
+### Validation
+| Criterion | How it is verified | Command | New tests |
+|-----------|--------------------|---------|-----------|
+| AC1 | [how] | `[command]` | `[test file]` |
+
+Regression: `[commands that must keep passing]`
+
+### Risks
+- [what could go wrong; protected areas touched (migrations, auth, CI)]
+
+### Out of scope
+- [what this task deliberately does not do]
 ```
+
+Keep the Validation table and `validationPlan` in sync: the table is for people, `validationPlan` is what the verifier runs.
 
 ## Guardrails
 

@@ -1,6 +1,6 @@
 import { MCP_SERVER_NAME } from "@agentq/mcp";
 import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
-import { STATUS_INFO, readSkill, stripFrontmatter } from "@agentq/shared";
+import { STATUS_INFO, getFindings, readSkill, stripFrontmatter } from "@agentq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -17,6 +17,7 @@ const CONTEXT_ARG = "<handoff notes for the agent of the next phase>";
 const CONTEXT_HINT: Record<Phase, string> = {
   plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
   code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
+  verify: "which commands failed and why, and whether the failure is in the code or the environment",
   review: "the verdict, the finding ids the coder must fix first and why (or why it is safe to merge)",
   merge: "the PR URL/number, the base and head branches, and anything left for the user after the merge",
 };
@@ -25,11 +26,38 @@ const CONTEXT_HINT: Record<Phase, string> = {
 export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, unknown> }> = {
   plan: (taskId) => ({
     tool: "submit_plan",
-    args: { taskId, message: "<markdown plan>", context: CONTEXT_ARG },
+    args: {
+      taskId,
+      message: "<markdown plan>",
+      validationPlan: {
+        items: [{ criterionId: "<AC1>", how: "<how it is verified>", command: "<command, if any>", newTests: ["<test file>"] }],
+        regressionCommands: ["<commands that must keep passing>"],
+      },
+      context: CONTEXT_ARG,
+    },
   }),
   code: (taskId) => ({
     tool: "submit_code",
-    args: { taskId, message: "<markdown summary>", worktree: "<absolute worktree path>", context: CONTEXT_ARG },
+    args: {
+      taskId,
+      message: "<markdown summary>",
+      worktree: "<absolute worktree path>",
+      branch: "<feature branch>",
+      headSha: "<git rev-parse HEAD>",
+      evidence: [{ kind: "command", criterionId: "<AC1>", command: "<command you ran>", exitCode: 0, summary: "<key output lines>" }],
+      criteria: [{ id: "<AC1>", status: "<met | failed | pending>" }],
+      findingResolutions: [{ id: "<R1-1>", status: "<fixed | wontfix>", resolution: "<how, or why not>" }],
+      context: CONTEXT_ARG,
+    },
+  }),
+  verify: (taskId) => ({
+    tool: "submit_verification",
+    args: {
+      taskId,
+      passed: "<true | false>",
+      evidence: [{ kind: "command", criterionId: "<AC1>", command: "<command>", exitCode: 0, summary: "<key output lines>" }],
+      tampering: ["<tests deleted, skipped or weakened, if any>"],
+    },
   }),
   review: (taskId) => ({
     tool: "submit_review",
@@ -100,6 +128,10 @@ export function buildPrompt(input: BuildPromptInput): string {
     realBranch: task.realBranch,
     mergeBranch: task.mergeBranch,
     worktreePath: task.worktreePath,
+    risk: task.risk,
+    approvedPlan: task.approvedPlan,
+    verification: task.verification,
+    findings: getFindings(task.id).filter((f) => f.status !== "verified"),
     contexts: task.contexts,
     conversation: task.conversation,
     project: project

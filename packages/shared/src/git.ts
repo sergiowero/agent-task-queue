@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -42,4 +42,44 @@ export function detectDefaultBranch(dir: string): string {
     }
   }
   return "main";
+}
+
+/**
+ * Best-effort commands for a checkout: package.json scripts with the package
+ * manager its lockfile implies, else Makefile targets, Cargo, Go or pytest.
+ */
+export function detectProjectCommands(dir: string): {
+  install?: string;
+  build?: string;
+  test?: string;
+  lint?: string;
+  typecheck?: string;
+} {
+  const root = expandHome(dir);
+  const has = (file: string) => existsSync(join(root, file));
+  const pkgFile = join(root, "package.json");
+  if (existsSync(pkgFile)) {
+    let scripts: Record<string, string> = {};
+    try {
+      scripts = JSON.parse(readFileSync(pkgFile, "utf8")).scripts ?? {};
+    } catch {}
+    const pm = has("bun.lock") || has("bun.lockb") ? "bun" : has("pnpm-lock.yaml") ? "pnpm" : has("yarn.lock") ? "yarn" : "npm";
+    const run = (script: string) => (scripts[script] ? `${pm} run ${script}` : undefined);
+    return {
+      install: `${pm} install`,
+      build: run("build"),
+      test: scripts.test ? `${pm} ${pm === "npm" ? "test" : "run test"}` : pm === "bun" ? "bun test" : undefined,
+      lint: run("lint"),
+      typecheck: run("typecheck") ?? run("type-check") ?? run("tsc"),
+    };
+  }
+  if (has("Cargo.toml")) return { build: "cargo build", test: "cargo test", lint: "cargo clippy" };
+  if (has("go.mod")) return { build: "go build ./...", test: "go test ./...", lint: "go vet ./..." };
+  if (has("pyproject.toml") || has("setup.py") || has("pytest.ini")) return { test: "pytest" };
+  if (has("Makefile")) {
+    const targets = readFileSync(join(root, "Makefile"), "utf8");
+    const target = (name: string) => (new RegExp(`^${name}:`, "m").test(targets) ? `make ${name}` : undefined);
+    return { build: target("build"), test: target("test"), lint: target("lint") };
+  }
+  return {};
 }

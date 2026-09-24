@@ -482,6 +482,9 @@ describe("Migration Status", () => {
     expect(names).toContain("011_task_claim_and_blocker");
     expect(names).toContain("012_autonomy_and_policy");
     expect(names).toContain("013_task_findings");
+    for (const n of ["014_project_profile", "015_structured_criteria", "016_validation_and_evidence", "017_app_state"]) {
+      expect(names).toContain(n);
+    }
     expect(status.every((m) => m.applied)).toBe(true);
   });
 });

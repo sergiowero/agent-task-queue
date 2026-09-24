@@ -6,6 +6,7 @@ import {
   PlanIcon,
   ReviewIcon,
   TerminalIcon,
+  VerifyIcon,
   UserIcon,
 } from "../lib/icons";
 import type { Tone } from "../lib/status";
@@ -25,6 +26,7 @@ interface ConversationEntry {
 const TYPE_META: Record<string, { label: string; tone: Tone; icon: LucideIcon }> = {
   plan: { label: "Plan", tone: "accent", icon: PlanIcon },
   code: { label: "Code", tone: "info", icon: TerminalIcon },
+  verify: { label: "Verification", tone: "info", icon: VerifyIcon },
   review: { label: "Review", tone: "warning", icon: ReviewIcon },
   merge: { label: "Merge", tone: "success", icon: MergeIcon },
   user: { label: "User", tone: "primary", icon: UserIcon },

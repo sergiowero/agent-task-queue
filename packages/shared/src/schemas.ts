@@ -1,11 +1,63 @@
 import { z } from "zod";
 import { ROLES, TaskStatus } from "./catalog.js";
+import { parseCriterionLine } from "./criteria.js";
 
 export const riskSchema = z.enum(["low", "medium", "high"]);
 export const taskTypeSchema = z.enum(["feature", "bug", "refactor", "docs", "chore"]);
 export const autonomySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 export const verdictSchema = z.enum(["approve", "request_changes", "needs_human"]);
 export const severitySchema = z.enum(["blocker", "major", "minor", "nit"]);
+
+/** A criterion as text, or as an object with how it is verified. */
+export const criterionInputSchema = z.preprocess(
+  (v) => {
+    if (typeof v !== "string") return v;
+    // "text $ command" means: verified by running command.
+    const { text, command } = parseCriterionLine(v);
+    return command ? { text, verify: { kind: "command", command } } : { text };
+  },
+  z.object({
+    id: z.string().optional(),
+    text: z.string().trim().min(1),
+    verify: z
+      .object({
+        kind: z.enum(["command", "test", "manual", "review"]),
+        command: z.string().optional(),
+        notes: z.string().optional(),
+      })
+      .optional(),
+    status: z.enum(["pending", "met", "failed", "waived"]).optional(),
+  }),
+);
+
+/** A list of criteria; blank string entries are dropped (older clients send them). */
+export const criteriaInputSchema = z.preprocess(
+  (v) => (Array.isArray(v) ? v.filter((x) => !(typeof x === "string" && !x.trim())) : v),
+  z.array(criterionInputSchema),
+);
+
+export const projectProfileSchema = z
+  .object({
+    commands: z
+      .object({
+        install: z.string().max(500),
+        build: z.string().max(500),
+        test: z.string().max(500),
+        lint: z.string().max(500),
+        typecheck: z.string().max(500),
+      })
+      .partial(),
+    conventionFiles: z.array(z.string().max(300)).max(50),
+    protectedPaths: z.array(z.string().max(300)).max(100),
+    guardrails: z.array(z.string().max(1000)).max(50),
+    maxDiffLines: z.number().int().min(10).max(100_000),
+    verifyTimeoutSec: z.number().int().min(10).max(7200),
+    verifyAllowlist: z.array(z.string().max(300)).max(100),
+    autoArchive: z.boolean(),
+    dorMode: z.enum(["warn", "enforce", "off"]),
+  })
+  .partial()
+  .strict();
 
 /** Project overrides of the default policy (every key optional). */
 export const policySettingsSchema = z
@@ -27,7 +79,7 @@ export const createTaskSchema = z.object({
   description: z.string().max(5000).default(""),
   steerDetails: z.string().max(5000).optional(),
   guardrails: z.array(z.string()).optional(),
-  acceptanceCriteria: z.array(z.string()).optional(),
+  acceptanceCriteria: criteriaInputSchema.optional(),
   priority: z.number().int().min(0).optional(),
 
   recommendedBranch: z.string().max(200).optional(),
@@ -49,7 +101,7 @@ export const updateTaskSchema = z
     description: z.string().max(5000).nullable().optional(),
     steerDetails: z.string().max(5000).nullable().optional(),
     guardrails: z.array(z.string()).optional(),
-    acceptanceCriteria: z.array(z.string()).optional(),
+    acceptanceCriteria: criteriaInputSchema.optional(),
     priority: z.number().int().min(0).optional(),
     recommendedBranch: z.string().max(200).optional(),
     realBranch: z.string().max(200).nullable().optional(),
@@ -107,6 +159,7 @@ export const createProjectSchema = z.object({
   defaultMergeBranch: branchNameSchema.nullable().optional(),
   autonomy: autonomySchema.optional(),
   policy: policySettingsSchema.optional(),
+  profile: projectProfileSchema.optional(),
 });
 
 export const updateProjectSchema = z.object({
@@ -115,6 +168,7 @@ export const updateProjectSchema = z.object({
   defaultMergeBranch: branchNameSchema.nullable().optional(),
   autonomy: autonomySchema.optional(),
   policy: policySettingsSchema.optional(),
+  profile: projectProfileSchema.optional(),
 });
 
 export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "custom"]);

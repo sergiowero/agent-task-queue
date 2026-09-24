@@ -18,6 +18,7 @@ export const RUNNER_MCP_TOOLS = [
   "submit_review",
   "submit_merge",
   "report_blocker",
+  "submit_verification",
 ] as const;
 
 /** How to start the server over stdio: `command args...` with `env` set. */

@@ -3,7 +3,7 @@ name: agentq-create-task
 description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -34,7 +34,7 @@ Call `create_task`:
   "description": "<detailed description>",
   "steerDetails": "<implementation guidance>",
   "guardrails": ["<constraint1>", "<constraint2>"],
-  "acceptanceCriteria": ["<criterion1>", "<criterion2>"],
+  "acceptanceCriteria": ["<criterion1>", { "text": "<criterion2>", "verify": { "kind": "command", "command": "<command that proves it>" } }],
   "branch": "<branch-name>",
   "priority": 0,
   "requiresPlan": true,
@@ -64,7 +64,7 @@ Take what the user described and produce a complete, well-structured task.
 - **Description**: Functional requirements only — user story, task definition, and what needs to be accomplished. Do NOT list files, implementation details, or technical approaches here — those go in steerDetails.
 - **steerDetails**: Technical recommendations, implementation hints, preferred approaches, files likely involved, architecture considerations. This is where agents look for HOW to implement, not WHAT to implement.
 - **guardrails**: Do's and don'ts for agents — behavioral constraints, things to avoid, security rules, project conventions. Each guardrail should be a single, clear constraint.
-- **Acceptance Criteria**: Generate 3-5 specific, testable conditions that define when the task is complete.
+- **Acceptance Criteria**: Generate 3-5 specific, testable conditions that define when the task is complete. When a command can prove one (a test run), pass it as `{ "text", "verify": { "kind": "command", "command" } }`: the verifier runs it on every code submission.
 
 **Respect user overrides (do not override what the user specified):**
 - **Priority**: If the user gives a priority, use it. Otherwise default to 0.

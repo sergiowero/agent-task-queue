@@ -85,6 +85,11 @@ export function TaskCard({
             {task.lastReview ? ` ${task.lastReview.verdict === "approve" ? "✓" : task.lastReview.verdict === "request_changes" ? "✗" : "?"}` : ""}
           </Badge>
         )}
+        {task.verification && !task.verification.skipped && (
+          <Badge tone={task.verification.passed ? "success" : "danger"}>
+            {task.verification.passed ? "verified" : "verify failed"}
+          </Badge>
+        )}
         {task.risk === "high" && <Badge tone="danger">high risk</Badge>}
         {task.assignedAgent && (
           <span className="flex min-w-0 items-center gap-1 text-xs text-text-muted">

@@ -9,6 +9,7 @@ import {
   MergeIcon,
   NeedsHumanIcon,
   PendingIcon,
+  VerifyIcon,
   PlanIcon,
   RequestChangesIcon,
   ReviewIcon,
@@ -48,6 +49,8 @@ const STATUS_LOOK: Record<TaskStatus, Omit<StatusMeta, "label">> = {
   [TaskStatus.Complete]: { tone: "success", icon: CompleteIcon },
   [TaskStatus.Canceled]: { tone: "danger", icon: CancelTaskIcon },
   [TaskStatus.NeedsHuman]: { tone: "danger", icon: NeedsHumanIcon },
+  [TaskStatus.VerifyRequested]: { tone: "info", icon: VerifyIcon },
+  [TaskStatus.Verifying]: { tone: "info", icon: VerifyIcon, live: true },
 };
 
 export const TASK_STATUS: Record<string, StatusMeta> = Object.fromEntries(
