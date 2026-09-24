@@ -15,6 +15,7 @@ import {
   getActivityEvents,
   updateTask,
   TaskStatus,
+  skillsBundleVersion,
 } from "@agentq/shared";
 import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
 import {
@@ -40,6 +41,7 @@ const TOOL_NAMES = [
   "create_task",
   "post_comment",
   "archive_task",
+  "report_blocker",
 ];
 
 const senior = {
@@ -168,11 +170,18 @@ describe("AgentQ MCP server", () => {
     expect(claimed.task.status).toBe(TaskStatus.Planning);
     expect(claimed.task.project.id).toBe(projectId);
     expect(claimed.agent).toEqual({ id: "testagent@1.0|test-model", role: "planner" });
-    expect(claimed.task.assignedAgent).toEqual({
+    expect(claimed.task.assignedAgent).toMatchObject({
       name: "TestAgent",
       tool: "TestAgent",
       model: "test-model",
+      agentId: "testagent@1.0|test-model",
+      sessionKey: "session:session-mcp",
     });
+    // The token comes back once, to the claimer; the task itself never shows it.
+    expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
+    expect(claimed.task.claimToken).toBeUndefined();
+    expect(claimed.skillsVersion).toBe(skillsBundleVersion()!);
+    expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
     expect(claimed.task.contexts).toEqual(["initial context", "claim context"]);
 
     const planResult = (await client.callTool({
@@ -718,15 +727,18 @@ describe("AgentQ MCP create, list and archive", () => {
     expect(out.task.project.id).toBe(projectId);
   });
 
-  it("create_task defaults to ready_for_code, priority 0 and the develop merge branch", async () => {
+  it("create_task defaults to ready_for_code, priority 0 and the project's default branch", async () => {
     const out = await ok("create_task", { title: "Just code", projectId, description: "d" });
     expect(out.task).toMatchObject({
       status: TaskStatus.ReadyForCode,
       requiresPlan: false,
       priority: 0,
-      mergeBranch: "develop",
+      // /tmp/create is not a git repository: the project default falls back to main.
+      mergeBranch: "main",
       contexts: [],
     });
+    const created = getActivityEvents({ taskId: out.task.id });
+    expect(created.map((e) => [e.eventType, e.actor])).toEqual([["task_created", "agent"]]);
   });
 
   it("create_task fails without the required projectId and description", async () => {
@@ -803,6 +815,99 @@ describe("AgentQ MCP create, list and archive", () => {
     expect(out.directory).toBe(directory);
     expect(existsSync(out.summaryPath)).toBe(true);
     expect(out.summaryPath.startsWith(directory)).toBe(true);
+  });
+});
+
+describe("AgentQ MCP claims and blockers", () => {
+  const projectId = "mcp-claims-" + Date.now();
+  const agent = { toolName: "Claimer", version: "1.0", model: "m" };
+  const clients: Client[] = [];
+
+  async function connect(opts?: Parameters<typeof createAgentQMcpServer>[0]): Promise<Client> {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer(opts).connect(serverTransport);
+    const client = new Client({ name: "claims-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+    clients.push(client);
+    return client;
+  }
+
+  async function call(client: Client, name: string, args: Record<string, unknown>) {
+    return (await client.callTool({ name, arguments: args })) as CallToolResult;
+  }
+
+  beforeAll(() => {
+    createProject({ id: projectId, displayName: "Claims", workingDirectory: "/tmp/claims" });
+  });
+
+  afterAll(async () => {
+    for (const client of clients) await client.close();
+    removeProjectTasks(projectId);
+  });
+
+  it("only the session that claimed a task (or one holding its token) can submit it", async () => {
+    const task = createTask({ title: "claimed elsewhere", description: "d", projectId, requiresPlan: true });
+    const owner = await connect();
+    const stranger = await connect();
+    const claimed = parse(await call(owner, "claim_task", { ...agent, role: "planner", sessionId: "s1", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+
+    const denied = await call(stranger, "submit_plan", { taskId: task.id, message: "mine", context: "c" });
+    expect(denied.isError).toBe(true);
+    expect(parse(denied).error).toContain("claimToken");
+
+    const wrong = await call(stranger, "submit_plan", { taskId: task.id, message: "mine", context: "c", claimToken: "x" });
+    expect(parse(wrong).error).toContain("claimed by another agent session");
+
+    const withToken = await call(stranger, "submit_plan", {
+      taskId: task.id,
+      message: "plan",
+      context: "c",
+      claimToken: claimed.claimToken,
+    });
+    expect(withToken.isError).toBeFalsy();
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingPlanReview);
+  });
+
+  it("a server started with a claim (runner job) submits it without passing the token", async () => {
+    const task = createTask({ title: "runner claim", description: "d", projectId, requiresPlan: true });
+    const claimer = await connect();
+    const claimed = parse(await call(claimer, "claim_task", { ...agent, role: "planner", sessionId: "s2", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const job = await connect({ claims: { [task.id]: claimed.claimToken } });
+    const out = await call(job, "submit_plan", { taskId: task.id, message: "plan", context: "c" });
+    expect(out.isError).toBeFalsy();
+  });
+
+  it("report_blocker moves the task to needs_human and releases it", async () => {
+    const task = createTask({ title: "cannot push", description: "d", projectId });
+    const client = await connect();
+    parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "s3", projectId }));
+    const out = parse(
+      await call(client, "report_blocker", {
+        taskId: task.id,
+        reason: "tests need a database I cannot start",
+        question: "Should I mock it?",
+      }),
+    );
+    expect(out).toMatchObject({ success: true, previousStatus: TaskStatus.Coding, newStatus: TaskStatus.NeedsHuman });
+    const stored = getTaskById(task.id)!;
+    expect(stored.assignedAgent).toBeNull();
+    expect(stored.blocker).toMatchObject({ question: "Should I mock it?", phase: "code", fromStatus: TaskStatus.Coding });
+    expect(getActivityEvents({ taskId: task.id }).some((e) => e.eventType === "task_blocked")).toBe(true);
+
+    // Nothing claims a task that waits for a person.
+    const none = parse(await call(client, "claim_task", { ...agent, role: "senior", sessionId: "s3", projectId }));
+    expect(none.reason).toBe("no_tasks_available");
+  });
+
+  it("refuses agents whose skills are older than the server supports", async () => {
+    const client = await connect();
+    const out = parse(
+      await call(client, "claim_task", { ...agent, role: "planner", sessionId: "s4", projectId, skillsVersion: "2.0.0" }),
+    );
+    expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
+    expect(out.message).toContain("bun run install:skills");
   });
 });
 

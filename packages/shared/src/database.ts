@@ -127,7 +127,7 @@ function initSchema(): void {
       recommended_branch TEXT DEFAULT '',
       real_branch TEXT,
       requires_plan INTEGER DEFAULT 0,
-      merge_branch TEXT DEFAULT 'develop',
+      merge_branch TEXT DEFAULT 'main',
       status TEXT NOT NULL DEFAULT 'plan_requested',
       assigned_agent_id TEXT,
       conversation TEXT DEFAULT '[]',
@@ -195,108 +195,171 @@ function markMigrationApplied(name: string): void {
   getDb().prepare("INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)").run(name, now);
 }
 
+/** Adds a column, ignoring "duplicate column" (fresh databases already have some). */
+function addColumn(d: Database, table: string, column: string): void {
+  try { d.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`); } catch {}
+}
+
+interface Migration {
+  name: string;
+  up: (d: Database) => void;
+  /** Best-effort undo: SQLite cannot drop columns portably, so columns are reset, not dropped. */
+  down: (d: Database) => void;
+}
+
+const MIGRATIONS: Migration[] = [
+  {
+    name: "001_add_deleted_at",
+    up: (d) => {
+      addColumn(d, "tasks", "deleted_at TEXT");
+      addColumn(d, "projects", "deleted_at TEXT");
+      addColumn(d, "agents", "deleted_at TEXT");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET deleted_at = NULL"); } catch {}
+      try { d.exec("UPDATE projects SET deleted_at = NULL"); } catch {}
+      try { d.exec("UPDATE agents SET deleted_at = NULL"); } catch {}
+    },
+  },
+  {
+    name: "002_add_indexes",
+    up: (d) => {
+      d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_projects_deleted_at ON projects(deleted_at)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_agents_deleted_at ON agents(deleted_at)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_activity_task_id ON activity(task_id)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity(created_at)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_conv_task_id ON conversation_entries(task_id)");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_history_task_id ON status_history(task_id)");
+    },
+    down: (d) => {
+      for (const idx of ["idx_tasks_project_id", "idx_tasks_status", "idx_tasks_deleted_at", "idx_projects_deleted_at", "idx_agents_deleted_at", "idx_activity_task_id", "idx_activity_created_at", "idx_conv_task_id", "idx_history_task_id"]) {
+        try { d.exec(`DROP INDEX IF EXISTS ${idx}`); } catch {}
+      }
+    },
+  },
+  {
+    name: "003_normalize_ready_for_code",
+    up: (d) => d.exec("UPDATE tasks SET status = 'ready_for_code' WHERE status = 'ready for code'"),
+    down: (d) => d.exec("UPDATE tasks SET status = 'ready for code' WHERE status = 'ready_for_code'"),
+  },
+  {
+    // Historical: copied conversations into conversation_entries (a table nothing reads any more).
+    name: "004_extract_conversation",
+    up: (d) => {
+      const rows = d.prepare("SELECT id, conversation FROM tasks WHERE conversation IS NOT NULL AND conversation != '[]'").all() as { id: string; conversation: string }[];
+      const insertStmt = d.prepare("INSERT INTO conversation_entries (task_id, author_name, timestamp, message, message_type) VALUES (?, ?, ?, ?, ?)");
+      for (const row of rows) {
+        try {
+          const entries = JSON.parse(row.conversation) as ConversationEntry[];
+          for (const entry of entries) {
+            insertStmt.run(row.id, entry.authorName, entry.timestamp, entry.message, entry.messageType ?? "user");
+          }
+        } catch {}
+      }
+    },
+    down: (d) => { try { d.exec("DELETE FROM conversation_entries"); } catch {} },
+  },
+  {
+    // Historical: copied history into status_history (a table nothing reads any more).
+    name: "005_extract_history",
+    up: (d) => {
+      const rows = d.prepare("SELECT id, history FROM tasks WHERE history IS NOT NULL AND history != '[]'").all() as { id: string; history: string }[];
+      const insertStmt = d.prepare("INSERT INTO status_history (task_id, pre_status, new_status, timestamp) VALUES (?, ?, ?, ?)");
+      for (const row of rows) {
+        try {
+          const entries = JSON.parse(row.history) as StatusHistoryEntry[];
+          for (const entry of entries) {
+            insertStmt.run(row.id, entry.pre_status, entry.new_status, entry.timestamp);
+          }
+        } catch {}
+      }
+    },
+    down: (d) => { try { d.exec("DELETE FROM status_history"); } catch {} },
+  },
+  {
+    name: "006_add_steer_details_guardrails",
+    up: (d) => {
+      addColumn(d, "tasks", "steer_details TEXT");
+      addColumn(d, "tasks", "guardrails TEXT DEFAULT '[]'");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET steer_details = NULL"); } catch {}
+      try { d.exec("UPDATE tasks SET guardrails = '[]'"); } catch {}
+    },
+  },
+  {
+    // Runners (headless agent launchers managed by the web server)
+    name: "007_add_runners",
+    up: (d) => {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS runners (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          role TEXT NOT NULL,
+          project_id TEXT,
+          model TEXT,
+          concurrency INTEGER NOT NULL DEFAULT 1,
+          poll_interval_sec INTEGER NOT NULL DEFAULT 5,
+          permission_mode TEXT NOT NULL DEFAULT 'safe',
+          extra_args TEXT,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+    },
+    down: (d) => d.exec("DROP TABLE IF EXISTS runners"),
+  },
+  {
+    // Reasoning effort per runner (claude --effort, codex model_reasoning_effort, opencode --variant)
+    name: "008_add_runner_effort",
+    up: (d) => addColumn(d, "runners", "effort TEXT"),
+    down: (d) => { try { d.exec("UPDATE runners SET effort = NULL"); } catch {} },
+  },
+  {
+    // Task archive (record written to {project}/archive, task hidden from the board)
+    name: "009_add_task_archive",
+    up: (d) => {
+      addColumn(d, "tasks", "archived_at TEXT");
+      addColumn(d, "tasks", "archive_path TEXT");
+      d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at)");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET archived_at = NULL, archive_path = NULL"); } catch {}
+      try { d.exec("DROP INDEX IF EXISTS idx_tasks_archived_at"); } catch {}
+    },
+  },
+  {
+    // Branch new tasks merge into, per project (filled lazily from origin/HEAD).
+    name: "010_project_default_merge_branch",
+    up: (d) => addColumn(d, "projects", "default_merge_branch TEXT"),
+    down: (d) => { try { d.exec("UPDATE projects SET default_merge_branch = NULL"); } catch {} },
+  },
+  {
+    // Claim tokens (submits must come from the claim holder), blockers (needs_human)
+    // and the count of consecutive runs that ended without a submit.
+    name: "011_task_claim_and_blocker",
+    up: (d) => {
+      addColumn(d, "tasks", "claim_token TEXT");
+      addColumn(d, "tasks", "blocker TEXT");
+      addColumn(d, "tasks", "revert_streak INTEGER NOT NULL DEFAULT 0");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET claim_token = NULL, blocker = NULL, revert_streak = 0"); } catch {}
+    },
+  },
+];
+
 function runMigrations(): void {
   const d = getDb();
-
-  // Migration 1: Add deleted_at columns
-  if (!isMigrationApplied("001_add_deleted_at")) {
-    try { d.exec("ALTER TABLE tasks ADD COLUMN deleted_at TEXT"); } catch {}
-    try { d.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT"); } catch {}
-    try { d.exec("ALTER TABLE agents ADD COLUMN deleted_at TEXT"); } catch {}
-    markMigrationApplied("001_add_deleted_at");
-  }
-
-  // Migration 2: Add indexes
-  if (!isMigrationApplied("002_add_indexes")) {
-    d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_projects_deleted_at ON projects(deleted_at)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_agents_deleted_at ON agents(deleted_at)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_activity_task_id ON activity(task_id)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_activity_created_at ON activity(created_at)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_conv_task_id ON conversation_entries(task_id)");
-    d.exec("CREATE INDEX IF NOT EXISTS idx_history_task_id ON status_history(task_id)");
-    markMigrationApplied("002_add_indexes");
-  }
-
-  // Migration 3: Normalize TaskStatus.ReadyForCode
-  if (!isMigrationApplied("003_normalize_ready_for_code")) {
-    d.exec("UPDATE tasks SET status = 'ready_for_code' WHERE status = 'ready for code'");
-    markMigrationApplied("003_normalize_ready_for_code");
-  }
-
-  // Migration 4: Extract conversation JSON into conversation_entries
-  if (!isMigrationApplied("004_extract_conversation")) {
-    const rows = d.prepare("SELECT id, conversation FROM tasks WHERE conversation IS NOT NULL AND conversation != '[]'").all() as { id: string; conversation: string }[];
-    const insertStmt = d.prepare("INSERT INTO conversation_entries (task_id, author_name, timestamp, message, message_type) VALUES (?, ?, ?, ?, ?)");
-    for (const row of rows) {
-      try {
-        const entries = JSON.parse(row.conversation) as ConversationEntry[];
-        for (const entry of entries) {
-          insertStmt.run(row.id, entry.authorName, entry.timestamp, entry.message, entry.messageType ?? "user");
-        }
-      } catch {}
-    }
-    markMigrationApplied("004_extract_conversation");
-  }
-
-  // Migration 5: Extract history JSON into status_history
-  if (!isMigrationApplied("005_extract_history")) {
-    const rows = d.prepare("SELECT id, history FROM tasks WHERE history IS NOT NULL AND history != '[]'").all() as { id: string; history: string }[];
-    const insertStmt = d.prepare("INSERT INTO status_history (task_id, pre_status, new_status, timestamp) VALUES (?, ?, ?, ?)");
-    for (const row of rows) {
-      try {
-        const entries = JSON.parse(row.history) as StatusHistoryEntry[];
-        for (const entry of entries) {
-          insertStmt.run(row.id, entry.pre_status, entry.new_status, entry.timestamp);
-        }
-      } catch {}
-    }
-    markMigrationApplied("005_extract_history");
-  }
-
-  // Migration 6: Add steer_details and guardrails columns
-  if (!isMigrationApplied("006_add_steer_details_guardrails")) {
-    try { d.exec("ALTER TABLE tasks ADD COLUMN steer_details TEXT"); } catch {}
-    try { d.exec("ALTER TABLE tasks ADD COLUMN guardrails TEXT DEFAULT '[]'"); } catch {}
-    markMigrationApplied("006_add_steer_details_guardrails");
-  }
-
-  // Migration 7: Runners (headless agent launchers managed by the web server)
-  if (!isMigrationApplied("007_add_runners")) {
-    d.exec(`
-      CREATE TABLE IF NOT EXISTS runners (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        tool TEXT NOT NULL,
-        role TEXT NOT NULL,
-        project_id TEXT,
-        model TEXT,
-        concurrency INTEGER NOT NULL DEFAULT 1,
-        poll_interval_sec INTEGER NOT NULL DEFAULT 5,
-        permission_mode TEXT NOT NULL DEFAULT 'safe',
-        extra_args TEXT,
-        enabled INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
-    markMigrationApplied("007_add_runners");
-  }
-
-  // Migration 8: Reasoning effort per runner (claude --effort, codex model_reasoning_effort, opencode --variant)
-  if (!isMigrationApplied("008_add_runner_effort")) {
-    try { d.exec("ALTER TABLE runners ADD COLUMN effort TEXT"); } catch {}
-    markMigrationApplied("008_add_runner_effort");
-  }
-
-  // Migration 9: Task archive (record written to {project}/archive, task hidden from the board)
-  if (!isMigrationApplied("009_add_task_archive")) {
-    try { d.exec("ALTER TABLE tasks ADD COLUMN archived_at TEXT"); } catch {}
-    try { d.exec("ALTER TABLE tasks ADD COLUMN archive_path TEXT"); } catch {}
-    d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at)");
-    markMigrationApplied("009_add_task_archive");
+  for (const migration of MIGRATIONS) {
+    if (isMigrationApplied(migration.name)) continue;
+    migration.up(d);
+    markMigrationApplied(migration.name);
   }
 }
 
@@ -312,8 +375,28 @@ export function rollbackTransaction(): void {
   getDb().exec("ROLLBACK");
 }
 
+let savepointSeq = 0;
+
+/**
+ * Runs `fn` atomically. Nests: inside an open transaction (another
+ * withTransaction, or a test's beginTransaction) it uses a SAVEPOINT, so an
+ * inner failure rolls back only the inner work.
+ */
 export function withTransaction<T>(fn: () => T): T {
   const d = getDb();
+  if (d.inTransaction) {
+    const sp = `sp_${++savepointSeq}`;
+    d.exec(`SAVEPOINT ${sp}`);
+    try {
+      const result = fn();
+      d.exec(`RELEASE ${sp}`);
+      return result;
+    } catch (e) {
+      d.exec(`ROLLBACK TO ${sp}`);
+      d.exec(`RELEASE ${sp}`);
+      throw e;
+    }
+  }
   d.exec("BEGIN IMMEDIATE");
   try {
     const result = fn();
@@ -326,87 +409,25 @@ export function withTransaction<T>(fn: () => T): T {
 }
 
 export function getMigrationStatus(): { name: string; applied: boolean }[] {
-  const migrationNames = [
-    "001_add_deleted_at",
-    "002_add_indexes",
-    "003_normalize_ready_for_code",
-    "004_extract_conversation",
-    "005_extract_history",
-    "006_add_steer_details_guardrails",
-    "007_add_runners",
-    "008_add_runner_effort",
-    "009_add_task_archive",
-  ];
-  return migrationNames.map((name) => ({
-    name,
-    applied: isMigrationApplied(name),
-  }));
+  return MIGRATIONS.map(({ name }) => ({ name, applied: isMigrationApplied(name) }));
 }
 
+/** Undoes one migration by name, or every migration (newest first) when no name is given. */
 export function rollbackMigration(name?: string): void {
   const d = getDb();
-
-  if (!name || name === "009_add_task_archive") {
-    // SQLite cannot drop the columns portably; nullify them instead.
-    try { d.exec("UPDATE tasks SET archived_at = NULL, archive_path = NULL"); } catch {}
-    try { d.exec("DROP INDEX IF EXISTS idx_tasks_archived_at"); } catch {}
-    d.exec("DELETE FROM _migrations WHERE name = '009_add_task_archive'");
-    if (name === "009_add_task_archive") return;
+  const targets = name ? MIGRATIONS.filter((m) => m.name === name) : [...MIGRATIONS].reverse();
+  for (const migration of targets) {
+    migration.down(d);
+    d.prepare("DELETE FROM _migrations WHERE name = ?").run(migration.name);
   }
+}
 
-  if (!name || name === "008_add_runner_effort") {
-    // SQLite cannot drop the column portably; nullify it instead.
-    try { d.exec("UPDATE runners SET effort = NULL"); } catch {}
-    d.exec("DELETE FROM _migrations WHERE name = '008_add_runner_effort'");
-    if (name === "008_add_runner_effort") return;
-  }
-
-  if (!name || name === "007_add_runners") {
-    d.exec("DROP TABLE IF EXISTS runners");
-    d.exec("DELETE FROM _migrations WHERE name = '007_add_runners'");
-    if (name === "007_add_runners") return;
-  }
-
-  if (!name || name === "005_extract_history") {
-    d.exec("DELETE FROM status_history");
-    d.exec("DELETE FROM _migrations WHERE name = '005_extract_history'");
-    if (name === "005_extract_history") return;
-  }
-
-  if (!name || name === "004_extract_conversation") {
-    d.exec("DELETE FROM conversation_entries");
-    d.exec("DELETE FROM _migrations WHERE name = '004_extract_conversation'");
-    if (name === "004_extract_conversation") return;
-  }
-
-  if (!name || name === "003_normalize_ready_for_code") {
-    d.exec("UPDATE tasks SET status = 'ready for code' WHERE status = 'ready_for_code'");
-    d.exec("DELETE FROM _migrations WHERE name = '003_normalize_ready_for_code'");
-    if (name === "003_normalize_ready_for_code") return;
-  }
-
-  if (!name || name === "002_add_indexes") {
-    for (const idx of ["idx_tasks_project_id", "idx_tasks_status", "idx_tasks_deleted_at", "idx_projects_deleted_at", "idx_agents_deleted_at", "idx_activity_task_id", "idx_activity_created_at", "idx_conv_task_id", "idx_history_task_id"]) {
-      try { d.exec(`DROP INDEX IF EXISTS ${idx}`); } catch {}
-    }
-    d.exec("DELETE FROM _migrations WHERE name = '002_add_indexes'");
-    if (name === "002_add_indexes") return;
-  }
-
-  if (!name || name === "006_add_steer_details_guardrails") {
-    try { d.exec("UPDATE tasks SET steer_details = NULL"); } catch {}
-    try { d.exec("UPDATE tasks SET guardrails = '[]'"); } catch {}
-    d.exec("DELETE FROM _migrations WHERE name = '006_add_steer_details_guardrails'");
-    if (name === "006_add_steer_details_guardrails") return;
-  }
-
-  if (!name || name === "001_add_deleted_at") {
-    // SQLite doesn't support DROP COLUMN before 3.35.0; recreate is complex.
-    // Best effort: nullify the columns.
-    try { d.exec("UPDATE tasks SET deleted_at = NULL"); } catch {}
-    try { d.exec("UPDATE projects SET deleted_at = NULL"); } catch {}
-    try { d.exec("UPDATE agents SET deleted_at = NULL"); } catch {}
-    d.exec("DELETE FROM _migrations WHERE name = '001_add_deleted_at'");
+function parseJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== "string" || raw === "") return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
   }
 }
 
@@ -430,6 +451,9 @@ function rowToTask(row: any): Task {
     contexts: JSON.parse(row.contexts || "[]"),
     projectId: row.project_id,
     worktreePath: row.worktree_path,
+    claimToken: row.claim_token ?? null,
+    blocker: parseJson(row.blocker, null),
+    revertStreak: row.revert_streak ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -458,6 +482,7 @@ function rowToProject(row: any): Project {
     id: row.id,
     displayName: row.display_name,
     workingDirectory: row.working_directory,
+    defaultMergeBranch: row.default_merge_branch ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -540,7 +565,7 @@ export function createTask(data: {
     recommendedBranch: data.recommendedBranch?.trim() || defaultBranchName(id, data.title),
     realBranch: null,
     requiresPlan: data.requiresPlan ?? false,
-    mergeBranch: data.mergeBranch ?? "develop",
+    mergeBranch: data.mergeBranch?.trim() || "main",
     status: data.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode,
     assignedAgent: null,
     conversation: [],
@@ -548,6 +573,9 @@ export function createTask(data: {
     contexts: data.contexts ?? [],
     projectId: data.projectId,
     worktreePath: null,
+    claimToken: null,
+    blocker: null,
+    revertStreak: 0,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -625,90 +653,96 @@ export function tryAssignTask(data: {
   fromStatus: TaskStatus;
   toStatus: TaskStatus;
   assignedAgent: AgentReference;
+  claimToken?: string | null;
 }): boolean {
   const now = new Date().toISOString();
   const result = getDb()
     .prepare(
-      `UPDATE tasks SET status = ?, assigned_agent_id = ?, updated_at = ?
+      `UPDATE tasks SET status = ?, assigned_agent_id = ?, claim_token = ?, updated_at = ?
        WHERE id = ? AND assigned_agent_id IS NULL AND status = ? AND deleted_at IS NULL`,
     )
-    .run(data.toStatus, JSON.stringify(data.assignedAgent), now, data.id, data.fromStatus);
+    .run(
+      data.toStatus,
+      JSON.stringify(data.assignedAgent),
+      data.claimToken ?? null,
+      now,
+      data.id,
+      data.fromStatus,
+    );
   return result.changes === 1;
 }
 
-export function updateTask(
-  id: string,
-  data: {
-    title?: string;
-    description?: string | null;
-    steerDetails?: string | null;
-    guardrails?: string[];
-    status?: TaskStatus;
-    acceptanceCriteria?: string[];
-    priority?: number;
-    recommendedBranch?: string;
-    realBranch?: string | null;
-    mergeBranch?: string;
-    assignedAgent?: Task["assignedAgent"];
-    conversation?: ConversationEntry[];
-    history?: StatusHistoryEntry[];
-    contexts?: string[];
-    projectId?: string | null;
-    worktreePath?: string | null;
-  },
-): Task | null {
-  const existing = getTaskById(id);
-  if (!existing) return null;
+/** Columns a task patch may set, with how each value is stored. */
+const TASK_COLUMNS = {
+  title: { column: "title", json: false },
+  description: { column: "description", json: false },
+  steerDetails: { column: "steer_details", json: false },
+  guardrails: { column: "guardrails", json: true },
+  acceptanceCriteria: { column: "acceptance_criteria", json: true },
+  priority: { column: "priority", json: false },
+  recommendedBranch: { column: "recommended_branch", json: false },
+  realBranch: { column: "real_branch", json: false },
+  mergeBranch: { column: "merge_branch", json: false },
+  status: { column: "status", json: false },
+  assignedAgent: { column: "assigned_agent_id", json: true },
+  conversation: { column: "conversation", json: true },
+  history: { column: "history", json: true },
+  contexts: { column: "contexts", json: true },
+  projectId: { column: "project_id", json: false },
+  worktreePath: { column: "worktree_path", json: false },
+  claimToken: { column: "claim_token", json: false },
+  blocker: { column: "blocker", json: true },
+  revertStreak: { column: "revert_streak", json: false },
+} as const;
 
-  const now = new Date().toISOString();
-  const updated = {
-    title: data.title ?? existing.title,
-    description: data.description !== undefined ? data.description : existing.description,
-    steerDetails: data.steerDetails !== undefined ? data.steerDetails : existing.steerDetails,
-    guardrails: data.guardrails ?? existing.guardrails,
-    acceptanceCriteria: data.acceptanceCriteria ?? existing.acceptanceCriteria,
-    priority: data.priority ?? existing.priority,
-    recommendedBranch: data.recommendedBranch ?? existing.recommendedBranch,
-    realBranch: data.realBranch !== undefined ? data.realBranch : existing.realBranch,
-    mergeBranch: data.mergeBranch ?? existing.mergeBranch,
-    status: data.status ?? existing.status,
-    assignedAgent: data.assignedAgent !== undefined ? data.assignedAgent : existing.assignedAgent,
-    conversation: data.conversation ?? existing.conversation,
-    history: data.history ?? existing.history,
-    contexts: data.contexts ?? existing.contexts,
-    projectId: data.projectId !== undefined ? data.projectId : existing.projectId,
-    worktreePath: data.worktreePath !== undefined ? data.worktreePath : existing.worktreePath,
-    updatedAt: now,
-  };
+export type TaskPatch = {
+  -readonly [K in keyof typeof TASK_COLUMNS]?: K extends keyof Task ? Task[K] : never;
+};
 
-  const stmt = getDb().prepare(
-    `UPDATE tasks SET title = ?, description = ?, steer_details = ?, guardrails = ?, acceptance_criteria = ?, priority = ?,
-      recommended_branch = ?, real_branch = ?, merge_branch = ?, status = ?,
-      assigned_agent_id = ?, conversation = ?, history = ?, contexts = ?,
-      project_id = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
-  );
-  stmt.run(
-    updated.title,
-    updated.description,
-    updated.steerDetails,
-    JSON.stringify(updated.guardrails),
-    JSON.stringify(updated.acceptanceCriteria),
-    updated.priority,
-    updated.recommendedBranch,
-    updated.realBranch,
-    updated.mergeBranch,
-    updated.status,
-    updated.assignedAgent ? JSON.stringify(updated.assignedAgent) : null,
-    JSON.stringify(updated.conversation),
-    JSON.stringify(updated.history),
-    JSON.stringify(updated.contexts),
-    updated.projectId,
-    updated.worktreePath,
-    updated.updatedAt,
-    id,
-  );
+/** JSON array columns that `appendJson` may append to. */
+export type TaskListColumn = "conversation" | "history" | "contexts";
 
-  return { ...existing, ...updated };
+/**
+ * Sets only the given columns (plus updated_at). Unlike a read-merge-write,
+ * a concurrent append by another process (e.g. an MCP server) is never lost.
+ */
+export function patchTask(id: string, patch: TaskPatch): Task | null {
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    const spec = TASK_COLUMNS[key as keyof typeof TASK_COLUMNS];
+    if (!spec) continue;
+    sets.push(`${spec.column} = ?`);
+    if (spec.json) params.push(value === null ? null : JSON.stringify(value));
+    else if (typeof value === "boolean") params.push(value ? 1 : 0);
+    else params.push(value);
+  }
+  sets.push("updated_at = ?");
+  params.push(new Date().toISOString(), id);
+  const result = getDb().prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  return result.changes > 0 ? getTaskById(id) : null;
+}
+
+/** Appends one entry to a JSON array column in place. */
+export function appendJson(id: string, column: TaskListColumn, entry: unknown): void {
+  const col = TASK_COLUMNS[column].column;
+  getDb()
+    .prepare(
+      `UPDATE tasks SET ${col} = json_insert(COALESCE(NULLIF(${col}, ''), '[]'), '$[#]', json(?)), updated_at = ? WHERE id = ?`,
+    )
+    .run(JSON.stringify(entry), new Date().toISOString(), id);
+}
+
+/** Bumps updated_at so watchers (the web server's SSE feed) pick up side-table changes. */
+export function touchTask(id: string): void {
+  getDb().prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+}
+
+/** Partial update; kept for callers that predate patchTask (same semantics). */
+export function updateTask(id: string, data: TaskPatch): Task | null {
+  if (!getTaskById(id)) return null;
+  return patchTask(id, data);
 }
 
 export function deleteTask(id: string): boolean {
@@ -857,12 +891,13 @@ export function createProject(data: {
   id: string;
   displayName: string;
   workingDirectory: string;
+  defaultMergeBranch?: string | null;
 }): Project {
   const now = new Date().toISOString();
   const stmt = getDb().prepare(
-    "INSERT INTO projects (id, display_name, working_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO projects (id, display_name, working_directory, default_merge_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   );
-  stmt.run(data.id, data.displayName, data.workingDirectory, now, now);
+  stmt.run(data.id, data.displayName, data.workingDirectory, data.defaultMergeBranch?.trim() || null, now, now);
 
   return getProjectById(data.id)!;
 }
@@ -903,6 +938,7 @@ export function updateProject(
   data: {
     displayName?: string;
     workingDirectory?: string;
+    defaultMergeBranch?: string | null;
   },
 ): Project | null {
   const existing = getProjectById(id);
@@ -912,64 +948,18 @@ export function updateProject(
   const updated = {
     displayName: data.displayName ?? existing.displayName,
     workingDirectory: data.workingDirectory ?? existing.workingDirectory,
+    defaultMergeBranch:
+      data.defaultMergeBranch !== undefined
+        ? data.defaultMergeBranch?.trim() || null
+        : existing.defaultMergeBranch,
   };
 
   const stmt = getDb().prepare(
-    "UPDATE projects SET display_name = ?, working_directory = ?, updated_at = ? WHERE id = ?",
+    "UPDATE projects SET display_name = ?, working_directory = ?, default_merge_branch = ?, updated_at = ? WHERE id = ?",
   );
-  stmt.run(updated.displayName, updated.workingDirectory, now, id);
+  stmt.run(updated.displayName, updated.workingDirectory, updated.defaultMergeBranch, now, id);
 
   return getProjectById(id)!;
-}
-
-// ─── Conversation Entries (normalized) ──────────────────────────────
-
-export function getConversationEntries(taskId: string): ConversationEntry[] {
-  const rows = getDb()
-    .prepare("SELECT author_name, timestamp, message, message_type FROM conversation_entries WHERE task_id = ? ORDER BY timestamp ASC")
-    .all(taskId) as { author_name: string; timestamp: string; message: string; message_type: string }[];
-  return rows.map((r) => ({
-    authorName: r.author_name,
-    timestamp: r.timestamp,
-    message: r.message,
-    messageType: r.message_type as ConversationEntry["messageType"],
-  }));
-}
-
-export function addConversationEntry(data: {
-  taskId: string;
-  authorName: string;
-  message: string;
-  messageType?: string;
-}): void {
-  const now = new Date().toISOString();
-  getDb()
-    .prepare("INSERT INTO conversation_entries (task_id, author_name, timestamp, message, message_type) VALUES (?, ?, ?, ?, ?)")
-    .run(data.taskId, data.authorName, now, data.message, data.messageType ?? "user");
-}
-
-// ─── Status History (normalized) ───────────────────────────────────
-
-export function getStatusHistory(taskId: string): StatusHistoryEntry[] {
-  const rows = getDb()
-    .prepare("SELECT pre_status, new_status, timestamp FROM status_history WHERE task_id = ? ORDER BY timestamp ASC")
-    .all(taskId) as { pre_status: string; new_status: string; timestamp: string }[];
-  return rows.map((r) => ({
-    pre_status: r.pre_status,
-    new_status: r.new_status,
-    timestamp: r.timestamp,
-  }));
-}
-
-export function addStatusHistoryEntry(data: {
-  taskId: string;
-  preStatus: string;
-  newStatus: string;
-}): void {
-  const now = new Date().toISOString();
-  getDb()
-    .prepare("INSERT INTO status_history (task_id, pre_status, new_status, timestamp) VALUES (?, ?, ?, ?)")
-    .run(data.taskId, data.preStatus, data.newStatus, now);
 }
 
 // ─── Activity ─────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+import type { Phase } from "@agentq/shared/catalog";
+
 export interface Task {
   id: string;
   title: string;
@@ -17,6 +19,10 @@ export interface Task {
   contexts: string[];
   projectId: string | null;
   worktreePath: string | null;
+  /** Set while the task waits for a person in `needs_human`. */
+  blocker: Blocker | null;
+  /** Consecutive agent runs that ended without a submit. */
+  revertStreak: number;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -24,6 +30,22 @@ export interface Task {
   archivedAt: string | null;
   /** Absolute path of the archive summary file; the detailed record sits next to it. */
   archivePath: string | null;
+}
+
+export interface Blocker {
+  reason: string;
+  question: string;
+  phase: Phase | null;
+  fromStatus: string;
+  raisedBy: string;
+  at: string;
+}
+
+/** Response of `GET /meta`. */
+export interface Meta {
+  skillsVersion: string | null;
+  installedSkills: Record<string, string | null>;
+  outdatedSkills: string[];
 }
 
 /** Response of `POST /tasks/:id/archive`. */
@@ -46,6 +68,8 @@ export interface StatusHistoryEntry {
   pre_status: string;
   new_status: string;
   timestamp: string;
+  /** "user", an agent id, "runner" or "system" (absent on old entries). */
+  actor?: string;
 }
 
 export interface Agent {
@@ -64,6 +88,8 @@ export interface Project {
   id: string;
   displayName: string;
   workingDirectory: string;
+  /** Branch new tasks merge into unless they name one. */
+  defaultMergeBranch: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,7 +106,7 @@ export interface ActivityEvent {
 export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
 export type RunnerRole = "planner" | "implementer" | "reviewer" | "senior" | "architect";
 export type RunnerPermissionMode = "safe" | "full";
-export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted";
+export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
 
 export interface RunnerJob {
   id: string;
@@ -226,6 +252,9 @@ export const api = {
   archiveTask: (id: string, data: { force?: boolean } = {}) =>
     request<ArchiveResult>(`/tasks/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
   unblock: (id: string) => request<Task>(`/tasks/${id}/unblock`, { method: "POST" }),
+  resolveBlocker: (id: string, data: { answer: string; targetStatus: string }) =>
+    request<Task>(`/tasks/${id}/resolve-blocker`, { method: "POST", body: JSON.stringify(data) }),
+  getMeta: () => request<Meta>("/meta"),
   addComment: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/add-comment`, { method: "POST", body: JSON.stringify(data) }),
 

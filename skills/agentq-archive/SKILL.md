@@ -3,7 +3,7 @@ name: agentq-archive
 description: Archives finished AgentQ tasks into their project's repository, the same as the board's "Archive" button. Use when the user asks to archive a task, archive the complete/completed/done tasks, clean up the Done column, or save a task's history (description, conversation, PR, branch, agents) as Markdown. For each task, the `archive_task` MCP tool writes `archive/<name>.summary.md` and `archive/<name>.detailed.md` in the project and takes the task off the board. The skill also finds the pull request with `gh` when the conversation does not mention it, and writes an overview of what was done.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__list_tasks, mcp__agentq__get_task, mcp__agentq__archive_task, Bash(gh:*), Bash(git:*)
 metadata:
-  version: "2.0.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -96,7 +96,7 @@ Call `archive_task`:
 ```json
 { "taskId": "<taskId>",
   "pullRequests": ["https://github.com/org/repo/pull/42"],
-  "overview": "- Added a theme toggle to the header that persists the choice in localStorage.\n- Plan approved on the first round; one code change request (contrast in dark mode).\n- PR #42 into `develop`." }
+  "overview": "- Added a theme toggle to the header that persists the choice in localStorage.\n- Plan approved on the first round; one code change request (contrast in dark mode).\n- PR #42 into `main`." }
 ```
 
 ### 6. Report

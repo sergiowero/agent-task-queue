@@ -3,13 +3,19 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Project, SubmitResult, Task } from "@agentq/shared";
 import {
+  MIN_COMPATIBLE_SKILLS_VERSION,
+  ROLES,
   TaskStatus,
-  createTask,
+  compareVersions,
+  createTaskForProject,
   getTasks,
   getTaskById,
   getProjects,
   getProjectByTaskId,
   claimNextTask,
+  reportBlocker,
+  skillsBundleVersion,
+  skillsManifest,
   submitPlan,
   submitCode,
   submitReview,
@@ -23,19 +29,21 @@ import { MCP_SERVER_NAME } from "./launch.js";
 export const SERVER_NAME = MCP_SERVER_NAME;
 export const SERVER_VERSION = "0.1.0";
 
-const ROLES = ["planner", "implementer", "reviewer", "senior", "architect"] as const;
+const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
-export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents. Protocol:
-1. Call claim_task with your identity (toolName, version, model, role, sessionId). Roles: planner, implementer, reviewer, senior (all three), architect (planner + reviewer). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
-2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do.
-3. Read task.status to know what to do, working in task.project.workingDirectory:
+export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
+1. Call claim_task with your identity (toolName, version, model, role, sessionId) and skillsVersion (metadata.version of your agentq-claim skill). Roles: ${ROLES.join(", ")} (senior = planner + implementer + reviewer, architect = planner + reviewer). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
+2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills are older than ${SKILLS_VERSION} or still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.
+3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
+4. Read task.status to know what to do, working in task.project.workingDirectory:
    - planning: write an implementation plan, then call submit_plan.
    - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
    - reviewing: review the submitted code (task.worktreePath), then call submit_review with your findings and a verdict.
    - merging: push the feature branch and open a pull request into task.mergeBranch, then call submit_merge with mergeBranch, the pushed commit, authors and the PR in the message.
-4. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-5. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
-6. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
+5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
+6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
+7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
+8. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
 // ─── Result helpers ────────────────────────────────────────────────────
@@ -63,9 +71,17 @@ function run(fn: () => JsonObject): CallToolResult {
   }
 }
 
-function withProject(task: Task): Task & { project: Project | null } {
+/** A task as agents see it: the claim token of whoever holds it stays private. */
+type PublicTask = Omit<Task, "claimToken">;
+
+function publicTask(task: Task): PublicTask {
+  const { claimToken: _claimToken, ...rest } = task;
+  return rest;
+}
+
+function withProject(task: Task): PublicTask & { project: Project | null } {
   const project = task.projectId ? getProjectByTaskId(task.id) : null;
-  return { ...task, project };
+  return { ...publicTask(task), project };
 }
 
 /** Trims each entry and drops the empty ones; undefined stays undefined. */
@@ -97,6 +113,16 @@ const contextSchema = z
   .string()
   .optional()
   .describe("Context entry appended to the task for future agents (decisions, gotchas, pointers)");
+const claimTokenSchema = z
+  .string()
+  .optional()
+  .describe(
+    "claimToken returned by claim_task (runner jobs find it in their prompt). Optional when this MCP session made the claim.",
+  );
+const agentIdSchema = z
+  .string()
+  .optional()
+  .describe("Your agent id from claim_task (agent.id); rejected when it is not the task's assignee");
 const submitContextSchema = z
   .string()
   .trim()
@@ -107,11 +133,25 @@ const submitContextSchema = z
 
 // ─── Server ────────────────────────────────────────────────────────────
 
-export function createAgentQMcpServer(): McpServer {
+export interface AgentQMcpServerOptions {
+  /**
+   * Claims this server starts out holding (taskId → claimToken). A runner job's
+   * server gets its task's claim through AGENTQ_TASK_ID / AGENTQ_CLAIM_TOKEN.
+   */
+  claims?: Record<string, string>;
+}
+
+export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
   );
+  // Each MCP session runs its own server process, so this map is the session's claims.
+  const claims = new Map<string, string>(Object.entries(opts.claims ?? {}));
+  const auth = (input: { taskId: string; claimToken?: string; agentId?: string }) => ({
+    claimToken: input.claimToken || claims.get(input.taskId),
+    agentId: input.agentId,
+  });
 
   server.registerTool(
     "claim_task",
@@ -125,15 +165,30 @@ export function createAgentQMcpServer(): McpServer {
         model: z.string().min(1).describe("Model identifier"),
         role: z
           .enum(ROLES)
-          .describe("Agent role: planner, implementer, reviewer, senior or architect"),
+          .describe(`Agent role: ${ROLES.join(", ")}`),
         sessionId: z.string().min(1).describe("Session ID (UUID) for audit traceability"),
         host: z.string().optional().describe("Host path or machine name"),
         projectId: z.string().optional().describe("Only claim tasks from this project"),
+        skillsVersion: z
+          .string()
+          .optional()
+          .describe("metadata.version of your agentq-claim skill; outdated skills are refused"),
         context: contextSchema,
       },
     },
     (input) =>
       run(() => {
+        if (
+          input.skillsVersion &&
+          compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0
+        ) {
+          return {
+            success: false,
+            reason: "skills_outdated",
+            skillsVersion: SKILLS_VERSION,
+            message: `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}. Stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.`,
+          };
+        }
         const result = claimNextTask({
           role: input.role,
           agent: {
@@ -153,10 +208,14 @@ export function createAgentQMcpServer(): McpServer {
             message: "No tasks available for your role.",
           };
         }
+        claims.set(result.task.id, result.claimToken);
         return {
           success: true,
           task: withProject(result.task),
           agent: { id: result.agent.id, role: result.effectiveRole },
+          claimToken: result.claimToken,
+          skillsVersion: SKILLS_VERSION,
+          skills: skillsManifest(),
         };
       }),
   );
@@ -172,6 +231,8 @@ export function createAgentQMcpServer(): McpServer {
         message: z.string().min(1).describe("The plan (markdown)"),
         author: authorSchema,
         context: submitContextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
       },
     },
     (input) =>
@@ -181,6 +242,7 @@ export function createAgentQMcpServer(): McpServer {
             message: input.message,
             author: input.author,
             context: input.context,
+            ...auth(input),
           }),
         ),
       ),
@@ -201,6 +263,8 @@ export function createAgentQMcpServer(): McpServer {
           .describe("Absolute path of the git worktree containing the changes"),
         author: authorSchema,
         context: submitContextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
       },
     },
     (input) =>
@@ -211,6 +275,7 @@ export function createAgentQMcpServer(): McpServer {
             worktree: input.worktree,
             author: input.author,
             context: input.context,
+            ...auth(input),
           }),
         ),
       ),
@@ -227,6 +292,8 @@ export function createAgentQMcpServer(): McpServer {
         message: z.string().min(1).describe("Review findings (markdown)"),
         author: authorSchema,
         context: submitContextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
       },
     },
     (input) =>
@@ -236,6 +303,7 @@ export function createAgentQMcpServer(): McpServer {
             message: input.message,
             author: input.author,
             context: input.context,
+            ...auth(input),
           }),
         ),
       ),
@@ -256,6 +324,8 @@ export function createAgentQMcpServer(): McpServer {
         worktree: z.string().optional().describe("Worktree path used for the merge"),
         author: authorSchema,
         context: submitContextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
       },
     },
     (input) =>
@@ -269,6 +339,41 @@ export function createAgentQMcpServer(): McpServer {
             worktree: input.worktree,
             author: input.author,
             context: input.context,
+            ...auth(input),
+          }),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "report_blocker",
+    {
+      title: "Report blocker",
+      description:
+        "Stop working on a task you claimed because something outside your control blocks it (push rejected, missing credentials, contradictory or ambiguous requirements). Moves the task to `needs_human` with your question and releases it: no agent retries it until a person answers.",
+      inputSchema: {
+        taskId: taskIdSchema,
+        reason: z.string().trim().min(1).describe("What blocks you, with the relevant error output (markdown)"),
+        question: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("The one concrete question or action a person must answer or take to unblock the task"),
+        author: authorSchema,
+        context: contextSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
+      },
+    },
+    (input) =>
+      run(() =>
+        submitResponse(
+          reportBlocker(input.taskId, {
+            reason: input.reason,
+            question: input.question,
+            author: input.author,
+            context: input.context,
+            ...auth(input),
           }),
         ),
       ),
@@ -359,26 +464,33 @@ export function createAgentQMcpServer(): McpServer {
           .boolean()
           .optional()
           .describe("Require a plan before coding (default: false)"),
-        mergeBranch: z.string().optional().describe("Target merge branch (default: develop)"),
+        mergeBranch: z
+          .string()
+          .optional()
+          .describe("Target merge branch (default: the project's default branch, e.g. main)"),
+        author: authorSchema,
         context: contextSchema,
       },
     },
     (input) =>
       run(() => {
-        const task = createTask({
-          title: input.title,
-          description: input.description,
-          steerDetails: input.steerDetails,
-          guardrails: cleanList(input.guardrails),
-          priority: input.priority ?? 0,
-          recommendedBranch: input.branch || "",
-          requiresPlan: input.requiresPlan || false,
-          mergeBranch: input.mergeBranch || "develop",
-          projectId: input.projectId,
-          contexts: input.context ? [input.context] : [],
-          acceptanceCriteria: cleanList(input.acceptanceCriteria),
-        });
-        return { success: true, task: { ...task, project: getProjectByTaskId(task.id) } };
+        const task = createTaskForProject(
+          {
+            title: input.title,
+            description: input.description,
+            steerDetails: input.steerDetails,
+            guardrails: cleanList(input.guardrails),
+            priority: input.priority ?? 0,
+            recommendedBranch: input.branch || "",
+            requiresPlan: input.requiresPlan || false,
+            mergeBranch: input.mergeBranch,
+            projectId: input.projectId,
+            contexts: input.context ? [input.context] : [],
+            acceptanceCriteria: cleanList(input.acceptanceCriteria),
+          },
+          input.author ?? "agent",
+        );
+        return { success: true, task: withProject(task) };
       }),
   );
 

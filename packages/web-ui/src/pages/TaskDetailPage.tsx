@@ -54,33 +54,16 @@ import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
+import { BlockerPanel } from "../components/BlockerPanel";
+import { STATUS_INFO, UNBLOCK_TARGET, type TaskStatus } from "@agentq/shared/catalog";
 
-const ACTIVE_STATUSES = new Set([
-  "plan_requested",
-  "ready_for_code",
-  "planning",
-  "waiting_plan_review",
-  "plan_changes_requested",
-  "coding",
-  "waiting_code_review",
-  "code_review_requested",
-  "reviewing",
-  "changes_requested",
-  "approved",
-  "merging",
-  "merged",
-]);
+const info = (status: string) => STATUS_INFO[status as TaskStatus];
 
-const EDITABLE_STATUSES = new Set([
-  "plan_requested",
-  "ready_for_code",
-  "plan_changes_requested",
-  "code_review_requested",
-  "changes_requested",
-  "approved",
-  "waiting_plan_review",
-  "waiting_code_review",
-]);
+/** Statuses that still have something to do (an agent or a person acts next). */
+const hasActions = (status: string) => {
+  const kind = info(status)?.kind;
+  return kind === "queued" || kind === "active" || kind === "human";
+};
 
 type TaskAction =
   | "approvePlan"
@@ -90,6 +73,7 @@ type TaskAction =
   | "requestAiReview"
   | "confirmCompletion"
   | "unblock"
+  | "resolveBlocker"
   | "cancel";
 
 const ACTION_DONE: Record<TaskAction, string> = {
@@ -100,24 +84,8 @@ const ACTION_DONE: Record<TaskAction, string> = {
   requestAiReview: "AI review requested",
   confirmCompletion: "Task completed",
   unblock: "Task unblocked",
+  resolveBlocker: "Answer sent",
   cancel: "Task canceled",
-};
-
-/** One line under the "Actions" eyebrow saying what the task is waiting for. */
-const ACTION_HINT: Record<string, string> = {
-  plan_requested: "Waiting for an agent to write a plan.",
-  planning: "An agent is writing the plan.",
-  waiting_plan_review: "The plan is ready for your review.",
-  plan_changes_requested: "Waiting for an agent to revise the plan.",
-  ready_for_code: "Waiting for an agent to write the code.",
-  coding: "An agent is writing the code.",
-  waiting_code_review: "The code is ready for your review.",
-  code_review_requested: "Waiting for an AI review.",
-  reviewing: "An agent is reviewing the code.",
-  changes_requested: "Waiting for an agent to apply the requested changes.",
-  approved: "Approved. Waiting for an agent to merge it.",
-  merging: "An agent is merging the branch.",
-  merged: "Merged. Confirm to mark the task complete.",
 };
 
 const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
@@ -150,7 +118,7 @@ export function TaskDetailPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: ({ action, data }: { action: TaskAction; data?: { message: string } }) => {
+    mutationFn: ({ action, data }: { action: TaskAction; data?: object }) => {
       const fn = api[action] as (taskId: string, data?: unknown) => Promise<Task>;
       return data !== undefined ? fn(id!, data) : fn(id!);
     },
@@ -173,7 +141,7 @@ export function TaskDetailPage() {
     },
   });
 
-  const doAction = (action: TaskAction, data?: { message: string }) =>
+  const doAction = (action: TaskAction, data?: object) =>
     mutation.mutate({ action, data });
 
   const pendingAction = mutation.isPending ? mutation.variables?.action : undefined;
@@ -224,8 +192,8 @@ export function TaskDetailPage() {
     return <TaskDetailSkeleton />;
   }
 
-  const canEdit = EDITABLE_STATUSES.has(task.status);
-  const isActive = ACTIVE_STATUSES.has(task.status);
+  const canEdit = info(task.status)?.editable ?? false;
+  const isActive = hasActions(task.status);
   const reviewingPlan = task.status === "waiting_plan_review";
   const reviewingCode = task.status === "waiting_code_review";
   const conversation = task.conversation ?? [];
@@ -300,8 +268,18 @@ export function TaskDetailPage() {
               <section className="card p-4">
                 <h2 className="eyebrow">Actions</h2>
                 <p className="mt-1 text-sm text-text-secondary">
-                  {ACTION_HINT[task.status] ?? "Waiting for an agent."}
+                  {info(task.status)?.hint ?? "Waiting for an agent."}
                 </p>
+                {task.status === "needs_human" && (
+                  <BlockerPanel
+                    task={task}
+                    busy={pendingAction === "resolveBlocker"}
+                    disabled={mutation.isPending}
+                    onResolve={(answer, targetStatus) =>
+                      doAction("resolveBlocker", { answer, targetStatus })
+                    }
+                  />
+                )}
                 {(reviewingPlan || reviewingCode) && (
                   <Field
                     label="Feedback"
@@ -381,7 +359,7 @@ export function TaskDetailPage() {
                       Confirm complete
                     </Button>
                   )}
-                  {["planning", "coding", "reviewing"].includes(task.status) && (
+                  {UNBLOCK_TARGET[task.status as TaskStatus] && (
                     <Button
                       variant="ghost"
                       icon={UnblockIcon}
@@ -391,15 +369,17 @@ export function TaskDetailPage() {
                       Unblock
                     </Button>
                   )}
-                  <Button
-                    variant="danger-ghost"
-                    icon={CancelTaskIcon}
-                    className="ml-auto"
-                    {...busy("cancel")}
-                    onClick={() => setConfirmCancel(true)}
-                  >
-                    Cancel task
-                  </Button>
+                  {info(task.status)?.cancelable && (
+                    <Button
+                      variant="danger-ghost"
+                      icon={CancelTaskIcon}
+                      className="ml-auto"
+                      {...busy("cancel")}
+                      onClick={() => setConfirmCancel(true)}
+                    >
+                      Cancel task
+                    </Button>
+                  )}
                 </div>
               </section>
             )}
@@ -777,6 +757,11 @@ function HistoryTimeline({ entries }: { entries: Task["history"] }) {
                 </>
               )}
               <StatusBadge status={h.new_status} />
+              {h.actor && (
+                <span className="truncate font-mono text-xs text-text-muted" title={h.actor}>
+                  by {h.actor}
+                </span>
+              )}
               <RelativeTime value={h.timestamp} className="ml-auto text-xs text-text-muted" />
             </div>
           </li>

@@ -20,6 +20,7 @@ import {
   getActivityEvents,
   resetDb,
   revertClaim,
+  unblockTask,
   updateTask,
 } from "@agentq/shared";
 import { RunnerEngine, type RunnerJob } from "./runner.js";
@@ -173,7 +174,16 @@ describe("RunnerEngine", () => {
     expect(prompt).not.toContain("allowed-tools:");
 
     const mcpConfig = JSON.parse(readFileSync(join(HOME, "runs", task.id, `${job.id}.mcp.json`), "utf8"));
-    expect(mcpConfig).toEqual({ mcpServers: { agentq: mcpServerLaunch(DB_PATH) } });
+    const launch = mcpServerLaunch(DB_PATH);
+    const jobToken: string = mcpConfig.mcpServers.agentq.env.AGENTQ_CLAIM_TOKEN;
+    expect(prompt).toContain(`"claimToken": "${jobToken}"`);
+    // The job's server holds the job's claim, so the agent's submit needs no token argument.
+    expect(mcpConfig.mcpServers.agentq).toMatchObject({ command: launch.command, args: launch.args });
+    expect(mcpConfig.mcpServers.agentq.env).toMatchObject({
+      AGENTQ_DB_PATH: DB_PATH,
+      AGENTQ_TASK_ID: task.id,
+    });
+    expect(jobToken).toMatch(/^[0-9a-f-]{36}$/);
 
     const kinds = events.filter((e) => e.event === "runner_job").map((e) => e.data.type);
     expect(kinds[0]).toBe("started");
@@ -348,7 +358,7 @@ describe("RunnerEngine", () => {
     expect(seen[0].ctx.model).toBe("opus");
     expect(seen[0].ctx.cwd).toBe(PROJECT_DIR);
     expect(seen[0].ctx.role).toBe("planner");
-    expect(seen[0].ctx.mcp).toEqual(mcpServerLaunch(DB_PATH));
+    expect(seen[0].ctx.mcp).toMatchObject({ ...mcpServerLaunch(DB_PATH), env: { AGENTQ_DB_PATH: DB_PATH, AGENTQ_TASK_ID: task.id } });
     expect(existsSync(seen[0].ctx.mcpConfigFile)).toBe(true);
     const updated = getTaskById(task.id)!;
     expect(updated.assignedAgent).toBeNull();
@@ -381,6 +391,79 @@ describe("RunnerEngine", () => {
       else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = previous;
     }
   });
+});
+
+describe("RunnerEngine: blocked tasks", () => {
+  it("an agent that reports a blocker sends the task to needs_human; the runner does not retry it", async () => {
+    const task = createTask({ title: "push rejected", description: "", projectId });
+    const claim = createTask({ title: "filler", description: "", projectId });
+    updateTask(claim.id, { status: TaskStatus.Canceled });
+    updateTask(task.id, { status: TaskStatus.Approved });
+    const runner = makeRunner(
+      agentArgv("report_blocker", { reason: "git push: 403", question: "Grant push access?", context: "tried twice" }),
+      { role: "implementer" },
+    );
+    const engine = makeEngine({ revertBackoffMs: 50 });
+    engine.start(runner.id);
+
+    const job = await waitFor(() => {
+      const j = lastJob(engine, runner.id);
+      return j && j.status !== "running" ? j : null;
+    }, 20_000, "job to finish");
+    expect(job.status).toBe("blocked");
+    expect(job.phase).toBe("merge");
+    const blocked = getTaskById(task.id)!;
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker).toMatchObject({ reason: "git push: 403", fromStatus: TaskStatus.Merging });
+    expect(blocked.assignedAgent).toBeNull();
+
+    // Several ticks later: still one job, still waiting for a person.
+    await Bun.sleep(2500);
+    expect(engine.getJobs(runner.id)).toHaveLength(1);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.NeedsHuman);
+  }, 30_000);
+
+  it("after repeated runs without a submit the task goes to needs_human instead of looping", async () => {
+    const task = planTask("always crashes");
+    const runner = makeRunner(bunEval("process.exit(1)"));
+    const engine = makeEngine({ revertBackoffMs: 50 });
+    engine.start(runner.id);
+
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.NeedsHuman, 20_000, "escalation");
+    await waitFor(() => lastJob(engine, runner.id)?.status === "blocked", 5000, "blocked job");
+    const jobs = engine.getJobs(runner.id);
+    expect(jobs).toHaveLength(3);
+    expect(jobs.slice(1).every((j) => j.status === "reverted")).toBe(true);
+    const stored = getTaskById(task.id)!;
+    expect(stored.revertStreak).toBe(3);
+    expect(stored.blocker?.reason).toContain("3 times in a row");
+    await Bun.sleep(1500);
+    expect(engine.getJobs(runner.id)).toHaveLength(3);
+  }, 30_000);
+
+  it("unblocking a task kills the job still working on it", async () => {
+    const task = planTask("unblocked mid-run");
+    const runner = makeRunner(
+      agentArgv("submit_plan", { message: "## Late plan", context: "late" }, "--sleep", "15000"),
+    );
+    const engine = makeEngine();
+    engine.start(runner.id);
+    await waitFor(() => engine.getState(runner.id).activeJobs === 1, 5000, "job to start");
+    const first = lastJob(engine, runner.id)!;
+
+    unblockTask(task.id);
+    expect(engine.abandonTask(task.id, "task unblocked from the portal")).toBe(true);
+    // The runner may claim the re-queued task again; follow the first job only.
+    const job = await waitFor(() => {
+      const j = engine.getJobs(runner.id).find((x) => x.id === first.id);
+      return j && j.status !== "running" ? j : null;
+    }, 15_000, "job to be killed");
+    await engine.stop(runner.id);
+    expect(job.status).toBe("failed");
+    const stored = getTaskById(task.id)!;
+    expect(stored.status).toBe(TaskStatus.PlanChangesRequested);
+    expect(stored.conversation.some((c) => c.message === "## Late plan")).toBe(false);
+  }, 30_000);
 });
 
 describe("revertClaim", () => {
@@ -678,6 +761,8 @@ describe("buildPrompt", () => {
       expect(prompt).toContain("`context` is required");
       expect(prompt).toContain("Do **NOT** call `claim_task`");
       expect(prompt).toContain("mcp__agentq__<tool>");
+      expect(prompt).toContain("`report_blocker`");
+      expect(prompt).not.toContain("still submit");
       expect(prompt).not.toMatch(/agentq (claim|submit)/);
     }
   });

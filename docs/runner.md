@@ -9,7 +9,7 @@ on your side. The tool does the work and finishes by calling the phase's `submit
 tool; the runner only watches the process.
 
 Demo flow: create a task on the board → a runner picks it up within `poll_interval_sec`
-seconds → the plan shows up in *Need Review* → you approve → the same (or another)
+seconds → the plan shows up in *Needs you* → you approve → the same (or another)
 runner picks it up for coding → a PR.
 
 ## Managing runners
@@ -129,13 +129,15 @@ that understand it; `gemini` and `custom` ignore it.
 
 `buildPrompt()` tells the tool it is an AgentQ `<role>` agent, that task `<id>` was
 **already claimed for it** (so it must not call `claim_task`), the current status, the
-AgentQ MCP tools it can use (`get_task`, `post_comment` and the phase's `submit_*`), the
+AgentQ MCP tools it can use (`get_task`, `post_comment`, the phase's `submit_*` and
+`report_blocker`), the
 full task JSON (title, description, steerDetails, guardrails, acceptanceCriteria,
 conversation, contexts, branches, worktreePath, project working directory), the body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the required `context` handoff notes,
-with a per-phase hint of what they should contain), never to ask for permission, and to
-stop once the submit succeeds.
+with a per-phase hint of what they should contain, and the job's `claimToken`), how to call
+`report_blocker` when something outside its control blocks the phase (never submit
+partial work), never to ask for permission, and to stop once the submit succeeds.
 
 Phase by status: `plan_requested` / `plan_changes_requested` → plan,
 `ready_for_code` / `changes_requested` → code, `code_review_requested` → review,
@@ -148,15 +150,20 @@ signal — there is deliberately **no heartbeat or lease**.
 
 When the child exits the runner re-reads the task:
 
-- The task moved on (status changed or it is no longer assigned to this runner's agent)
-  → the agent submitted; the job is `succeeded` (exit 0) or `failed`.
+- The task moved to `needs_human` from the job's status → the agent called
+  `report_blocker`; the job is `blocked` and the task waits for a person (no retry).
+- The task moved on otherwise (status changed, or it no longer carries the job's claim token)
+  → the agent submitted, or a person took the task away; the job is `succeeded` (exit 0) or `failed`.
 - The task is still in the active status (`planning`, `coding`, `reviewing`, `merging`)
-  and assigned to this runner's agent → `revertClaim()` releases it back to the status
+  and still carries the job's claim token → `revertClaim()` releases it back to the status
   it was claimed from (the last history entry's `pre_status` when valid, otherwise
   planning→`plan_requested`, coding→`ready_for_code`, reviewing→`code_review_requested`,
   merging→`approved`), records history, adds a **system** conversation entry with the
   exit code and the last 30 lines of output, and logs a `task_reverted` activity event.
-  The job is `reverted`.
+  The job is `reverted`. After `AGENTQ_MAX_REVERTS` (3) runs in a row that ended without a
+  submit, the task goes to `needs_human` instead, with a blocker quoting the last output,
+  and the job is `blocked`: a broken task no longer loops forever. Any submit, answer or
+  unblock resets the count.
 
 The same revert runs when a job is killed by Stop, by server shutdown, or by the job
 timeout. On Windows the whole process tree is ended (`taskkill /T /F`), so the tool's MCP
@@ -165,12 +172,26 @@ servers and shell children go with it. On every platform the runner stops readin
 (30 s, doubling per consecutive revert, capped at 30 min) so a crashing tool is not
 relaunched in a tight loop; the counter resets when a job for that task succeeds.
 
+When a person unblocks, cancels or answers a task from the portal while a job is still
+working on it, the server kills that job (`abandonTask`). Its claim token is gone, so
+anything the dying agent still submits is refused.
+
+### Claim tokens
+
+Each claim gets a secret `claimToken` that every `submit_*` and `report_blocker` call
+must present. The runner puts it in the job's MCP launch env (`AGENTQ_TASK_ID`,
+`AGENTQ_CLAIM_TOKEN`, `AGENTQ_AGENT_ID`), so the job's server attaches it on its own, and
+also writes it into the prompt's submit arguments for tools that end up using another
+`agentq` server. The runner claims with `runnerId`, which becomes the claim's stable
+`sessionKey` (`runner:<id>`).
+
 ## Environment variables
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
+| `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 
 ## Live updates

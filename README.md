@@ -121,7 +121,7 @@ Open **http://localhost:3000**. The API and the dashboard share that single port
      > Work the AgentQ queue as a senior.
 
      The `agentq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty.
-4. **Review.** The plan lands in *Needs review*. Approve it, and an agent writes the code in its own worktree. Approve the code, and an agent pushes the branch and opens a PR.
+4. **Review.** The plan lands in *Needs you*. Approve it, and an agent writes the code in its own worktree. Approve the code, and an agent pushes the branch and opens a PR.
 5. **Finish.** Confirm completion, then **Archive** to save the whole story as Markdown in the repo.
 
 ## Two ways to run agents
@@ -169,9 +169,14 @@ stateDiagram-v2
     merging --> merged: submit_merge (PR opened)
     merged --> complete: you confirm
     complete --> [*]
+    planning --> needs_human: report_blocker
+    coding --> needs_human: report_blocker
+    reviewing --> needs_human: report_blocker
+    merging --> needs_human: report_blocker
+    needs_human --> approved: you answer
 ```
 
-Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page.
+Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever.
 
 ### Roles
 
@@ -191,7 +196,7 @@ Run a cheap, fast model as implementer and a stronger one as reviewer, or one `s
 |---|---|
 | **Pending** | `plan_requested`, `plan_changes_requested`, `ready_for_code`, `changes_requested`, `code_review_requested`, `approved` |
 | **In progress** | `planning`, `coding`, `reviewing`, `merging` |
-| **Needs review** | `waiting_plan_review`, `waiting_code_review` |
+| **Needs you** | `waiting_plan_review`, `waiting_code_review`, `needs_human` |
 | **Done** | `merged`, `complete` |
 
 ### Writing a good task

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { api } from "../lib/api";
-import { DeleteIcon, EditIcon, FolderIcon, SaveIcon } from "../lib/icons";
+import { DeleteIcon, EditIcon, FolderIcon, MergeIcon, SaveIcon } from "../lib/icons";
 import { Button } from "./Button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Field } from "./Field";
@@ -13,6 +13,7 @@ interface ProjectRef {
   id: string;
   displayName: string;
   workingDirectory: string;
+  defaultMergeBranch?: string | null;
 }
 
 interface EditProjectModalProps {
@@ -68,10 +69,16 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const modal = useModal(onClose);
   const [displayName, setDisplayName] = useState(project.displayName);
   const [workingDirectory, setWorkingDirectory] = useState(project.workingDirectory);
+  const [defaultMergeBranch, setDefaultMergeBranch] = useState(project.defaultMergeBranch ?? "");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const updateMutation = useMutation({
-    mutationFn: () => api.updateProject(project.id, { displayName, workingDirectory }),
+    mutationFn: () =>
+      api.updateProject(project.id, {
+        displayName,
+        workingDirectory,
+        defaultMergeBranch: defaultMergeBranch.trim() || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project updated");
@@ -132,6 +139,19 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               placeholder="/path/to/repo"
               value={workingDirectory}
               onChange={(e) => setWorkingDirectory(e.target.value)}
+              className="font-mono"
+              spellCheck={false}
+            />
+          </Field>
+          <Field
+            label="Default merge branch"
+            icon={MergeIcon}
+            hint="Pull requests target this branch unless a task names another. Empty: detect it from origin/HEAD."
+          >
+            <Input
+              placeholder="main"
+              value={defaultMergeBranch}
+              onChange={(e) => setDefaultMergeBranch(e.target.value)}
               className="font-mono"
               spellCheck={false}
             />

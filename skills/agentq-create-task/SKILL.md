@@ -3,7 +3,7 @@ name: agentq-create-task
 description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
 metadata:
-  version: "3.0.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -38,11 +38,11 @@ Call `create_task`:
   "branch": "<branch-name>",
   "priority": 0,
   "requiresPlan": true,
-  "mergeBranch": "develop",
+  "mergeBranch": "<only when the user names one>",
   "context": "<initial context entry, optional>" }
 ```
 
-Mandatory: `title`, `projectId`, `description`. The task starts in `plan_requested` when `requiresPlan` is true, otherwise in `ready_for_code`. The result is `{ "success": true, "task": { "id": "...", "status": "...", "project": {...}, ... } }`; on failure `{ "success": false, "error": "..." }`.
+Mandatory: `title`, `projectId`, `description`. Omit `mergeBranch` to use the project's default branch (detected from `origin/HEAD`, usually `main`). The task starts in `plan_requested` when `requiresPlan` is true, otherwise in `ready_for_code`. The result is `{ "success": true, "task": { "id": "...", "status": "...", "project": {...}, ... } }`; on failure `{ "success": false, "error": "..." }`.
 
 ## Protocol
 
@@ -69,7 +69,7 @@ Take what the user described and produce a complete, well-structured task.
 **Respect user overrides (do not override what the user specified):**
 - **Priority**: If the user gives a priority, use it. Otherwise default to 0.
 - **Branch**: If the user gives a branch name, use it. Otherwise generate one.
-- **Merge branch**: Default to `develop` unless the user specifies otherwise.
+- **Merge branch**: Omit it (the project's default branch is used) unless the user names one.
 
 **Auto-generate when not specified:**
 - **Branch name**: Derive from the title using kebab-case with conventional prefix:

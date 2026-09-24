@@ -1,9 +1,9 @@
 ---
 name: agentq-review
 description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Inspects the submitted commits read-only in the task worktree, checks them against the task's acceptance criteria and guardrails, writes findings with an approve / request_changes verdict, and submits with the `submit_review` MCP tool. Never edits, commits or pushes.
-allowed-tools: mcp__agentq__submit_review, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
+allowed-tools: mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "3.1.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -57,12 +57,12 @@ The verdict is a recommendation recorded in the task conversation — the user a
 Call the `submit_review` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "message": "<markdown message>", "context": "<handoff notes>" }
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown message>", "context": "<handoff notes>" }
 ```
 
 `context` is required (see Context Handoff in `agentq-claim`). For the next agent, include the verdict and, for `request_changes`, the blocking issues the coder must fix first (file and function); for `approve`, anything the merger or the user should know.
 
-It moves the task back to `waiting_code_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It moves the task back to `waiting_code_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Review Template
 
@@ -83,6 +83,7 @@ The `message` MUST be Markdown.
 
 ## Guardrails
 
+- **DO** call `report_blocker` (see Blocked in `agentq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** implement changes during review phase - only review and give verdict
 - **DO NOT** modify files in the worktree or anywhere else - reviewing is read-only
 - **DO NOT** run `git add`, `git commit` or `git push` during reviewing

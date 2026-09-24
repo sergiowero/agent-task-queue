@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { Task, Project } from "@agentq/shared";
-import { TaskStatus, createTask, beginTransaction, rollbackTransaction } from "@agentq/shared";
+import { TaskStatus, createTask, beginTransaction, rollbackTransaction, skillsBundleVersion } from "@agentq/shared";
+import { forceStatus } from "@agentq/shared/testing";
 import { startServer } from "./index.js";
 
 // Set test DB before the first DB call. The shared package resolves
@@ -41,15 +42,25 @@ async function createTaskViaApi(overrides: Record<string, unknown> = {}): Promis
   return (await res.json()) as Task;
 }
 
+/** Claim tokens of the claims setStatus simulated, by task. */
+const claimTokens = new Map<string, string>();
+
 /** Simulates an agent claim through MCP (the web API has no claim route). */
 async function setStatus(taskId: string, status: TaskStatus): Promise<Task> {
-  const res = await json(`/api/tasks/${taskId}`, "PUT", { status });
-  expect(res.status).toBe(200);
-  return (await res.json()) as Task;
+  const { task, claimToken } = forceStatus(taskId, status);
+  if (claimToken) claimTokens.set(taskId, claimToken);
+  else claimTokens.delete(taskId);
+  return task;
 }
 
+/** Posts a sub-action; agent submissions carry the simulated claim's token. */
 async function subAction(taskId: string, action: string, body?: unknown): Promise<Response> {
-  return json(`/api/tasks/${taskId}/${action}`, "POST", body);
+  const token = claimTokens.get(taskId);
+  const withClaim =
+    token && (action.startsWith("submit-") || action === "report-blocker")
+      ? { claimToken: token, ...(body as object) }
+      : body;
+  return json(`/api/tasks/${taskId}/${action}`, "POST", withClaim);
 }
 
 async function expectTransition(
@@ -211,8 +222,37 @@ describe("POST /api/tasks", () => {
     expect(task.status).toBe(TaskStatus.ReadyForCode);
     expect(task.requiresPlan).toBe(false);
     expect(task.projectId).toBe(testProjectId);
-    expect(task.mergeBranch).toBe("develop");
+    // The project folder is not a git repo, so its default branch falls back to main.
+    expect(task.mergeBranch).toBe("main");
     expect(task.assignedAgent).toBeNull();
+  });
+
+  it("uses the project's default branch unless the task names one", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-api-repo-"));
+    try {
+      const git = (...args: string[]) => Bun.spawnSync(["git", "-C", repo, ...args]);
+      git("init", "-q", "-b", "trunk");
+      git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+      git("update-ref", "refs/remotes/origin/trunk", "HEAD");
+      git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk");
+      const projectId = randomUUID();
+      const res = await json("/api/projects", "POST", {
+        id: projectId,
+        displayName: "Git project",
+        workingDirectory: repo,
+      });
+      expect(res.status).toBe(201);
+      expect((await res.json()).defaultMergeBranch).toBe("trunk");
+
+      expect((await createTaskViaApi({ projectId })).mergeBranch).toBe("trunk");
+      expect((await createTaskViaApi({ projectId, mergeBranch: "release" })).mergeBranch).toBe("release");
+
+      const edited = await json(`/api/projects/${projectId}`, "PUT", { defaultMergeBranch: "main" });
+      expect((await edited.json()).defaultMergeBranch).toBe("main");
+      expect((await createTaskViaApi({ projectId })).mergeBranch).toBe("main");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("creates a plan_requested task when requiresPlan is true", async () => {
@@ -356,11 +396,9 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns 404 for an unknown sub-action name", async () => {
+  it("has no way to set a status directly", async () => {
     const res = await subAction(taskId, "set-status", { targetStatus: TaskStatus.Coding });
-    // set_status passes schema validation but has no handler branch
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "unknown action" });
+    expect(res.status).toBe(400);
   });
 
   it("rejects an action whose name is not in the transition schema", async () => {
@@ -375,10 +413,8 @@ describe("workflow sub-actions (requiresPlan task)", () => {
   });
 
   it("submit-plan -> waiting_plan_review (clears assignedAgent, records conversation)", async () => {
-    await setStatus(taskId, TaskStatus.Planning);
-    await json(`/api/tasks/${taskId}`, "PUT", {
-      assignedAgent: { name: "planner", tool: "planner", model: "m" },
-    });
+    const claimed = await setStatus(taskId, TaskStatus.Planning);
+    expect(claimed.assignedAgent).not.toBeNull();
     const task = await expectTransition(taskId, "submit-plan", TaskStatus.WaitingPlanReview, {
       message: "Plan v1",
       authorName: "planner-bot",
@@ -392,6 +428,7 @@ describe("workflow sub-actions (requiresPlan task)", () => {
       pre_status: TaskStatus.Planning,
       new_status: TaskStatus.WaitingPlanReview,
     });
+    expect(task.claimToken).toBeNull();
   });
 
   it("request-plan-changes -> plan_changes_requested with the user's message", async () => {
@@ -630,6 +667,89 @@ describe("cancel / unblock / comment", () => {
     });
     expect(viaAlias.conversation.length).toBe(2);
     expect(viaAlias.conversation[1].authorName).toBe("user");
+  });
+});
+
+describe("state changes only go through the workflow", () => {
+  it("PUT rejects status, history, conversation, contexts and assignedAgent", async () => {
+    const task = await createTaskViaApi({ title: "Guarded" });
+    for (const body of [
+      { status: TaskStatus.Complete },
+      { history: [] },
+      { conversation: [] },
+      { contexts: ["x"] },
+      { assignedAgent: null },
+    ]) {
+      const res = await json(`/api/tasks/${task.id}`, "PUT", body);
+      expect({ body, status: res.status }).toEqual({ body, status: 400 });
+    }
+    expect((await getTask(task.id)).status).toBe(TaskStatus.ReadyForCode);
+  });
+
+  it("a submit must carry the claim's token", async () => {
+    const task = await createTaskViaApi({ title: "Token", requiresPlan: true });
+    const { claimToken } = forceStatus(task.id, TaskStatus.Planning);
+    const missing = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x" });
+    expect(missing.status).toBe(400);
+    expect((await missing.json()).error).toContain("claimToken");
+    const wrong = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x", claimToken: "nope" });
+    expect(wrong.status).toBe(400);
+    const ok = await json(`/api/tasks/${task.id}/submit-plan`, "POST", {
+      message: "x",
+      claimToken,
+      context: "handoff",
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as Task).contexts).toContain("handoff");
+  });
+
+  it("report-blocker -> needs_human; resolve-blocker sends it on with the answer", async () => {
+    const task = await createTaskViaApi({ title: "Blocked push" });
+    await setStatus(task.id, TaskStatus.Merging);
+    const blocked = await expectTransition(task.id, "report-blocker", TaskStatus.NeedsHuman, {
+      reason: "git push rejected (403)",
+      question: "Can you grant push access?",
+    });
+    expect(blocked.assignedAgent).toBeNull();
+    expect(blocked.blocker).toMatchObject({
+      reason: "git push rejected (403)",
+      question: "Can you grant push access?",
+      phase: "merge",
+      fromStatus: TaskStatus.Merging,
+    });
+
+    const invalid = await subAction(task.id, "resolve-blocker", {
+      answer: "done",
+      targetStatus: TaskStatus.ReadyForCode,
+    });
+    expect(invalid.status).toBe(400);
+
+    const resolved = await expectTransition(task.id, "resolve-blocker", TaskStatus.Approved, {
+      answer: "Access granted, retry.",
+      targetStatus: TaskStatus.Approved,
+    });
+    expect(resolved.blocker).toBeNull();
+    expect(lastMessage(resolved).message).toContain("Access granted, retry.");
+    expect(resolved.history.at(-1)).toMatchObject({ new_status: TaskStatus.Approved, actor: "user" });
+  });
+
+  it("unblock also frees a task stuck in merging", async () => {
+    const task = await createTaskViaApi({ title: "Stuck merge" });
+    await setStatus(task.id, TaskStatus.Merging);
+    const unblocked = await expectTransition(task.id, "unblock", TaskStatus.Approved);
+    expect(unblocked.assignedAgent).toBeNull();
+    expect(unblocked.claimToken).toBeNull();
+  });
+});
+
+describe("GET /api/meta", () => {
+  it("reports the skills bundle version", async () => {
+    const res = await api("/api/meta");
+    expect(res.status).toBe(200);
+    const meta = await res.json();
+    expect(meta.skillsVersion).toBe(skillsBundleVersion());
+    expect(typeof meta.installedSkills).toBe("object");
+    expect(Array.isArray(meta.outdatedSkills)).toBe(true);
   });
 });
 

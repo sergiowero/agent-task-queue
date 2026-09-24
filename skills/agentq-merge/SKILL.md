@@ -1,9 +1,9 @@
 ---
 name: agentq-merge
-description: Merging phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with the `submit_merge` MCP tool. Never merges locally, never force-pushes; on push or PR failure it stops and reports.
-allowed-tools: mcp__agentq__submit_merge, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
+description: Merging phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with the `submit_merge` MCP tool. Never merges locally, never force-pushes; on push or PR failure it calls `report_blocker` so a person takes over.
+allowed-tools: mcp__agentq__submit_merge, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "3.1.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -21,7 +21,7 @@ The code was already committed to the feature branch during the coding phase. Yo
 
 Two branches matter:
 - **Feature branch** = `task.recommendedBranch` — where the worktree lives. The changes were committed here during coding.
-- **Merge target / PR base** = `task.mergeBranch` (default `develop`) — where the finished code must land (via the PR).
+- **Merge target / PR base** = `task.mergeBranch` (the project's default branch unless the task names another, usually `main`) — where the finished code must land (via the PR).
 
 ## Working Directory
 
@@ -54,7 +54,7 @@ git branch --show-current       # MUST be {task.recommendedBranch}
 ```
 
 - If `worktreePath` is not set, use `{project}/.agentq/worktrees/{task.id}`.
-- The coding phase already committed the changes. If the worktree has NO commits on the feature branch, **stop and report** — there is nothing to create a PR for.
+- The coding phase already committed the changes. If the worktree has NO commits on the feature branch, call `report_blocker` — there is nothing to create a PR for.
 
 ### Step 2 — Commit anything left uncommitted
 
@@ -79,8 +79,8 @@ git fetch origin
 git push -u origin {task.recommendedBranch}
 ```
 
-- Before touching anything: `git status` in the main repo. If it has uncommitted changes you did not create, **stop and report** — never stash, commit, or discard the user's work.
-- **If the push fails**, do NOT create the PR. Report the error details (the full command output) to the user so they can add them to the task conversation, and **stop — let the user take control**. Do NOT force-push, do NOT call `submit_merge`.
+- Before touching anything: `git status` in the main repo. If it has uncommitted changes you did not create, call `report_blocker` — never stash, commit, or discard the user's work.
+- **If the push fails**, do NOT create the PR. Call `report_blocker` with the full command output as `reason` and what a person must do (e.g. grant push access, resolve a conflict) as `question`. Do NOT force-push, do NOT call `submit_merge`.
 
 ### Step 4 — Create the PR into mergeBranch with `gh`
 
@@ -99,7 +99,7 @@ Closes task #{task.id}"
 - `--base` = the PR base / merge target (`task.mergeBranch`); `--head` = the pushed feature branch.
 - Capture the **PR URL / number** from the output — you need it for `submit_merge`.
 - If a PR for this exact head branch already exists, reuse it — capture its URL and skip creating a duplicate.
-- **If `gh pr create` fails** (e.g. not authenticated, `gh` not installed, head branch not pushed): report the error details to the user and **stop — let the user take control**. Do NOT call `submit_merge` for a PR that was never created.
+- **If `gh pr create` fails** (e.g. not authenticated, `gh` not installed, head branch not pushed): call `report_blocker` with the error output. Do NOT call `submit_merge` for a PR that was never created.
 
 ### Step 5 — Record the PR
 
@@ -107,6 +107,7 @@ Call the `submit_merge` MCP tool:
 
 ```json
 { "taskId": "<task.id>",
+  "claimToken": "<claimToken from claim_task or the runner prompt>",
   "mergeBranch": "<task.mergeBranch>",
   "commit": "<feature-branch-head-sha>",
   "authors": "<implementer>,<co-authors>",
@@ -121,7 +122,11 @@ It moves the task to `merged` and releases it. On `{ "success": false, "error": 
 
 ### Failure handling
 
-- **Push failure (Step 3)** or **PR creation failure (Step 4)**: do NOT proceed to `submit_merge`. Report the error details to the user and **stop — let the user take control**. Never force-push, never call `submit_merge` for a merge/PR that never happened.
+- **Push failure (Step 3)** or **PR creation failure (Step 4)**: do NOT proceed to `submit_merge`. Call `report_blocker` with the error output and the one thing a person must do. The task goes to `needs_human` and no runner retries it until a person answers. Never force-push, never call `submit_merge` for a merge/PR that never happened.
+
+```json
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "reason": "git push -u origin feat/x failed:\n<output>", "question": "Can you grant push access to origin (or push the branch), then send the task back to approved?" }
+```
 
 ## Submit Merge
 
@@ -129,7 +134,7 @@ It moves the task to `merged` and releases it. On `{ "success": false, "error": 
 
 | Argument | What to pass | Common mistake |
 |----------|--------------|----------------|
-| `mergeBranch` | The **PR base / merge target branch** (`task.mergeBranch`, e.g. `develop`) | Passing the feature branch instead |
+| `mergeBranch` | The **PR base / merge target branch** (`task.mergeBranch`, e.g. `main`) | Passing the feature branch instead |
 | `commit` | The **feature-branch head commit SHA** pushed to `origin` (from `git rev-parse HEAD` on the feature branch) | Passing a merge commit SHA — there is no local merge commit anymore |
 | `authors` | Comma-separated names of everyone who wrote the code (implementing agent + human co-authors) | Passing only the merge-phase agent |
 | `worktree` | Path where the code was implemented (`task.worktreePath`) | Omitting it |
@@ -144,7 +149,7 @@ The `message` MUST be Markdown.
 ## PR Created
 
 - **PR**: [PR URL or number]
-- **Base / Merge branch**: [mergeBranch, e.g. develop]
+- **Base / Merge branch**: [mergeBranch, e.g. main]
 - **Head / Feature branch**: [feature branch]
 - **Commit**: [feature-branch head SHA from git rev-parse HEAD]
 - **Authors**: [implementing agent + co-authors]
@@ -163,8 +168,8 @@ The `message` MUST be Markdown.
 - **DO NOT** force-push (`git push --force` / `-f`)
 - **DO NOT** amend or rewrite commits made in earlier phases - each round of changes is a new commit
 - **DO NOT** commit in the main working directory - commits live in the task worktree
-- **DO NOT** stash, commit, or discard uncommitted changes in the main repo that you did not create - stop and report
+- **DO NOT** stash, commit, or discard uncommitted changes in the main repo that you did not create - call `report_blocker`
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
-- If the push or PR creation fails: report the error details to the user and STOP - let the user take control
+- If the push or PR creation fails: call `report_blocker` with the error output - never "stop and tell the user" (a runner has no user watching)
 - **DO NOT** continue working after submitting - once submitted, stop and wait for next claim
 - **DO NOT** ask for user permission or approval - work autonomously and submit

@@ -1,5 +1,8 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import { Alert } from "./Alert";
 import type { LucideIcon } from "../lib/icons";
 import {
   ActivityIcon,
@@ -230,10 +233,26 @@ export function Layout() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(ellipse_60%_100%_at_50%_0%,rgb(var(--primary)/0.07),transparent)]"
         />
+        <SkillsBanner />
         <div key={pathname} className="relative flex min-h-0 flex-1 flex-col animate-page-in">
           <Outlet />
         </div>
       </main>
+    </div>
+  );
+}
+
+/** Warns when a coding tool still has AgentQ skills older than the ones this server ships. */
+function SkillsBanner() {
+  const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: api.getMeta, staleTime: 60_000 });
+  if (!meta || meta.outdatedSkills.length === 0) return null;
+  return (
+    <div className="relative px-6 pt-4">
+      <Alert tone="warning" title="AgentQ skills are out of date">
+        {meta.outdatedSkills.join(", ")} still {meta.outdatedSkills.length === 1 ? "has" : "have"} an
+        older skills bundle than this server ({meta.skillsVersion}). Run{" "}
+        <code className="font-mono">bun run install:skills</code> in the AgentQ checkout.
+      </Alert>
     </div>
   );
 }

@@ -39,7 +39,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState(0);
   const [branch, setBranch] = useState("");
-  const [mergeBranch, setMergeBranch] = useState("develop");
+  const [mergeBranch, setMergeBranch] = useState("");
   const [requiresPlan, setRequiresPlan] = useState(false);
   const [steerDetails, setSteerDetails] = useState("");
   const [guardrails, setGuardrails] = useState("");
@@ -60,7 +60,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         guardrails: guardrails ? guardrails.split("\n").filter(Boolean) : undefined,
         priority,
         recommendedBranch: branch || undefined,
-        mergeBranch,
+        mergeBranch: mergeBranch.trim() || undefined,
         requiresPlan,
         acceptanceCriteria: criteria ? criteria.split("\n").filter(Boolean) : undefined,
         projectId: selectedProjectId,
@@ -75,6 +75,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
     },
   });
 
+  const projectBranch =
+    projects.find((p) => p.id === selectedProjectId)?.defaultMergeBranch ?? "the project's default branch";
   const canCreate = Boolean(title.trim() && description.trim() && selectedProjectId);
   const extrasFilled = [steerDetails, guardrails, criteria].filter((v) => v.trim()).length;
 
@@ -145,9 +147,9 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
               className="font-mono"
             />
           </Field>
-          <Field label="Merge branch" icon={MergeIcon}>
+          <Field label="Merge branch" icon={MergeIcon} hint="Empty: the project's default branch.">
             <Input
-              placeholder="develop"
+              placeholder={projectBranch}
               value={mergeBranch}
               onChange={(e) => setMergeBranch(e.target.value)}
               className="font-mono"

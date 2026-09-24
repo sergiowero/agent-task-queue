@@ -1,27 +1,14 @@
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
 import { MCP_SERVER_NAME } from "@agentq/mcp";
-import type { Agent, Project, Task } from "@agentq/shared";
-import { TaskStatus } from "@agentq/shared";
+import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
+import { STATUS_INFO, readSkill, stripFrontmatter } from "@agentq/shared";
 
-export type Phase = "plan" | "code" | "review" | "merge";
+export type { Phase };
+export { stripFrontmatter };
 
-const PHASE_BY_STATUS: Partial<Record<TaskStatus, Phase>> = {
-  [TaskStatus.PlanRequested]: "plan",
-  [TaskStatus.PlanChangesRequested]: "plan",
-  [TaskStatus.Planning]: "plan",
-  [TaskStatus.ReadyForCode]: "code",
-  [TaskStatus.ChangesRequested]: "code",
-  [TaskStatus.Coding]: "code",
-  [TaskStatus.CodeReviewRequested]: "review",
-  [TaskStatus.Reviewing]: "review",
-  [TaskStatus.Approved]: "merge",
-  [TaskStatus.Merging]: "merge",
-};
-
-/** Phase for a status, accepting both the claimable and the active (claimed) status. */
+/** Phase for a status the runner claims from or into (queued or active statuses only). */
 export function phaseForStatus(status: TaskStatus): Phase | null {
-  return PHASE_BY_STATUS[status] ?? null;
+  const info = STATUS_INFO[status];
+  return info && (info.kind === "queued" || info.kind === "active") ? info.phase : null;
 }
 
 const CONTEXT_ARG = "<handoff notes for the agent of the next phase>";
@@ -62,18 +49,8 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
   }),
 };
 
-const SKILLS_DIR = resolve(import.meta.dir, "../../../../skills");
-
-/** Strips the leading `--- ... ---` YAML frontmatter block, if present. */
-export function stripFrontmatter(md: string): string {
-  const m = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-  return m ? md.slice(m[0].length).trimStart() : md;
-}
-
 export function readPhaseSkill(phase: Phase): string {
-  const file = resolve(SKILLS_DIR, `agentq-${phase}`, "SKILL.md");
-  if (!existsSync(file)) return `(skill file not found: ${file})`;
-  return stripFrontmatter(readFileSync(file, "utf8"));
+  return readSkill(`agentq-${phase}`)?.body ?? `(skill file not found: skills/agentq-${phase}/SKILL.md)`;
 }
 
 export interface BuildPromptInput {
@@ -81,6 +58,8 @@ export interface BuildPromptInput {
   project: Project | null;
   agent: Agent;
   effectiveRole: string;
+  /** The job's claim: every submit for this task must carry it. */
+  claimToken?: string;
   /** Overrides the skill body read from disk (tests). */
   phaseSkill?: string;
 }
@@ -90,6 +69,15 @@ export function buildPrompt(input: BuildPromptInput): string {
   const phase = phaseForStatus(task.status) ?? "code";
   const skill = input.phaseSkill ?? readPhaseSkill(phase);
   const submit = SUBMIT_TOOL[phase](task.id);
+  const claim = input.claimToken ? { claimToken: input.claimToken } : {};
+  const submitArgs = { ...submit.args, ...claim };
+  const blockerArgs = {
+    taskId: task.id,
+    reason: "<what blocks you, with the relevant error output>",
+    question: "<the one question or action a person must answer or take>",
+    context: "<what you tried>",
+    ...claim,
+  };
 
   const taskJson = {
     id: task.id,
@@ -127,6 +115,7 @@ export function buildPrompt(input: BuildPromptInput): string {
     "- `get_task` — re-read this task (conversation, contexts, worktree path)",
     "- `post_comment` — add a note to the task conversation without changing its status",
     `- \`${submit.tool}\` — submit this phase (see Finish)`,
+    "- `report_blocker` — stop because something outside your control blocks the phase (see Finish)",
     "",
     "## Task",
     "",
@@ -143,7 +132,13 @@ export function buildPrompt(input: BuildPromptInput): string {
     `When the work for this phase is done, call the \`${submit.tool}\` tool of the \`${MCP_SERVER_NAME}\` MCP server with:`,
     "",
     "```json",
-    JSON.stringify(submit.args, null, 2),
+    JSON.stringify(submitArgs, null, 2),
+    "```",
+    "",
+    "If something outside your control blocks the phase (push rejected, missing credentials, contradictory or ambiguous task), call `report_blocker` instead. The task goes to a person, who answers; no agent retries it meanwhile:",
+    "",
+    "```json",
+    JSON.stringify(blockerArgs, null, 2),
     "```",
     "",
     `\`context\` is required: short handoff notes, stored in \`task.contexts\`, for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Do not repeat \`message\`.`,
@@ -152,8 +147,9 @@ export function buildPrompt(input: BuildPromptInput): string {
     "- You are running headless. Never ask for permission or confirmation; decide and proceed.",
     "- Do not claim other tasks. Work only on the task above.",
     "- Write every message in Markdown and always pass `context` handoff notes for the next agent.",
-    `- Stop immediately after \`${submit.tool}\` returns \`"success": true\`.`,
-    "- If it returns an error, fix the arguments and call it again. If you cannot complete the phase, still submit with a message explaining what blocks you.",
+    `- Stop immediately after \`${submit.tool}\` or \`report_blocker\` returns \`"success": true\`.`,
+    input.claimToken ? "- Pass `claimToken` exactly as shown on every submit and `report_blocker` call." : "",
+    "- If a call returns an error, fix the arguments and call it again. If you cannot finish the phase, call `report_blocker`; never submit partial work to move the task forward.",
     "",
   ]
     .filter((line) => line !== undefined)

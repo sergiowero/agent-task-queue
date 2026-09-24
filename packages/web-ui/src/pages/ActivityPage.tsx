@@ -18,6 +18,7 @@ import {
   ConversationIcon,
   InProgressIcon,
   MergeIcon,
+  NeedsHumanIcon,
   PlanIcon,
   RequestChangesIcon,
   RevertedIcon,
@@ -48,6 +49,8 @@ const EVENT_META: Record<string, EventMeta> = {
   task_canceled: { label: "Task canceled", icon: CancelTaskIcon, tone: "danger" },
   task_reverted: { label: "Task reverted", icon: RevertedIcon, tone: "warning" },
   task_unblocked: { label: "Task unblocked", icon: UnblockIcon, tone: "info" },
+  task_blocked: { label: "Blocked, needs you", icon: NeedsHumanIcon, tone: "danger" },
+  blocker_resolved: { label: "Blocker resolved", icon: UnblockIcon, tone: "success" },
   plan_submitted: { label: "Plan submitted", icon: PlanIcon, tone: "accent" },
   plan_approved: { label: "Plan approved", icon: ApproveIcon, tone: "success" },
   plan_changes_requested: {

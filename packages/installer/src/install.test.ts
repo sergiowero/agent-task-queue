@@ -156,6 +156,20 @@ describe(`install:all on ${process.platform}`, () => {
     expect(snapshot()).toEqual(before);
   }, 60_000);
 
+  it("removes AgentQ skills the repo no longer ships and leaves other skills alone", () => {
+    const skills = join(home, ".claude", "skills");
+    mkdirSync(join(skills, "agentq-retired"), { recursive: true });
+    writeFileSync(join(skills, "agentq-retired", "SKILL.md"), "old");
+    mkdirSync(join(skills, "someone-elses-skill"), { recursive: true });
+    writeFileSync(join(skills, "someone-elses-skill", "SKILL.md"), "keep me");
+
+    expect(runInstallAll().exitCode).toBe(0);
+    expect(existsSync(join(skills, "agentq-retired"))).toBe(false);
+    expect(existsSync(join(skills, "someone-elses-skill", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skills, "agentq-claim", "SKILL.md"))).toBe(true);
+    rmSync(join(skills, "someone-elses-skill"), { recursive: true, force: true });
+  }, 60_000);
+
   it("starts the registered server the way an MCP client does", async () => {
     // A fresh machine: the server creates ~/.agentq itself.
     expect(existsSync(join(home, ".agentq"))).toBe(false);

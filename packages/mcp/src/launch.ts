@@ -17,6 +17,7 @@ export const RUNNER_MCP_TOOLS = [
   "submit_code",
   "submit_review",
   "submit_merge",
+  "report_blocker",
 ] as const;
 
 /** How to start the server over stdio: `command args...` with `env` set. */
@@ -34,8 +35,21 @@ export interface McpServerLaunch {
 export function mcpServerLaunch(
   dbPath: string,
   bunPath: string = process.execPath,
+  extraEnv: Record<string, string> = {},
 ): McpServerLaunch {
-  return { command: bunPath, args: ["run", MCP_ENTRY], env: { AGENTQ_DB_PATH: dbPath } };
+  return { command: bunPath, args: ["run", MCP_ENTRY], env: { AGENTQ_DB_PATH: dbPath, ...extraEnv } };
+}
+
+/**
+ * Env that hands a runner job's MCP server the job's claim, so the agent's
+ * submits for that task carry the claim token without the model passing it.
+ */
+export function claimEnv(taskId: string, claimToken: string, agentId?: string): Record<string, string> {
+  return {
+    AGENTQ_TASK_ID: taskId,
+    AGENTQ_CLAIM_TOKEN: claimToken,
+    ...(agentId ? { AGENTQ_AGENT_ID: agentId } : {}),
+  };
 }
 
 /**

@@ -123,9 +123,10 @@ const STATUS_LABELS: Record<string, string> = {
   merged: "Merged",
   complete: "Complete",
   canceled: "Canceled",
+  needs_human: "Needs human",
 };
 
-export function statusLabel(status: string): string {
+export function archiveStatusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status.replace(/_/g, " ");
 }
 
@@ -351,7 +352,8 @@ function sessionOutcome(session: AgentSession): string {
   const submitted = SUBMITTED_TO[session.status];
   if (submitted && submitted.status === session.endStatus) return submitted.label;
   if (session.endStatus === TaskStatus.Canceled) return "Task canceled";
-  return `Released without submitting (back to ${statusLabel(session.endStatus)})`;
+  if (session.endStatus === TaskStatus.NeedsHuman) return "Blocked (needs human)";
+  return `Released without submitting (back to ${archiveStatusLabel(session.endStatus)})`;
 }
 
 function completedAt(task: Task): string | null {
@@ -389,7 +391,7 @@ function pullRequestList(pullRequests: string[]): string {
 
 function statusPath(history: StatusHistoryEntry[]): string | null {
   if (history.length === 0) return null;
-  return [history[0].pre_status, ...history.map((h) => h.new_status)].map(statusLabel).join(" → ");
+  return [history[0].pre_status, ...history.map((h) => h.new_status)].map(archiveStatusLabel).join(" → ");
 }
 
 function projectLine(project: Project | null): string {
@@ -428,7 +430,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     "",
     `- **Task:** ${inlineCode(task.id)}`,
     `- **Project:** ${projectLine(project)}`,
-    `- **Status:** ${statusLabel(task.status)}`,
+    `- **Status:** ${archiveStatusLabel(task.status)}`,
     `- **Priority:** P${task.priority}`,
     `- **Branch:** ${branch}`,
     `- **Merge target:** ${inlineCode(task.mergeBranch)}`,
@@ -501,7 +503,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
         ["#", "Phase", "Agent", "Claimed", "Duration", "Outcome"],
         sessions.map((s, i) => [
           String(i + 1),
-          PHASE_LABELS[s.status] ?? statusLabel(s.status),
+          PHASE_LABELS[s.status] ?? archiveStatusLabel(s.status),
           inlineCode(s.agentId),
           formatTimestamp(s.claimedAt),
           durationBetween(s.claimedAt, s.endedAt),
@@ -540,7 +542,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
         ? `${project.displayName} · id ${inlineCode(project.id)} · ${inlineCode(project.workingDirectory)}`
         : codeOrNone(task.projectId)
     }`,
-    `- **Status:** ${statusLabel(task.status)}`,
+    `- **Status:** ${archiveStatusLabel(task.status)}`,
     `- **Priority:** P${task.priority}`,
     `- **Requires plan:** ${task.requiresPlan ? "Yes" : "No"}`,
     `- **Recommended branch:** ${codeOrNone(task.recommendedBranch)}`,
@@ -626,7 +628,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
         ["#", "Phase", "Agent", "Claimed", "Ended", "Duration", "Outcome", "Submission"],
         sessions.map((s, i) => [
           String(i + 1),
-          PHASE_LABELS[s.status] ?? statusLabel(s.status),
+          PHASE_LABELS[s.status] ?? archiveStatusLabel(s.status),
           inlineCode(s.agentId),
           formatTimestamp(s.claimedAt),
           formatTimestamp(s.endedAt),
@@ -668,12 +670,13 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
   if (task.history.length) {
     out.push(
       table(
-        ["#", "When", "From", "To", "Time in previous status"],
+        ["#", "When", "From", "To", "By", "Time in previous status"],
         task.history.map((h, i) => [
           String(i + 1),
           formatTimestamp(h.timestamp),
-          statusLabel(h.pre_status),
-          statusLabel(h.new_status),
+          archiveStatusLabel(h.pre_status),
+          archiveStatusLabel(h.new_status),
+          h.actor ? inlineCode(h.actor) : "—",
           durationBetween(i === 0 ? task.createdAt : task.history[i - 1].timestamp, h.timestamp),
         ]),
       ),
@@ -770,7 +773,7 @@ export function archiveTask(taskId: string, options: ArchiveTaskOptions = {}): A
   }
   if (!ARCHIVABLE_STATUSES.has(task.status)) {
     throw new WorkflowError(
-      `Only complete tasks can be archived; this one is ${statusLabel(task.status)}.`,
+      `Only complete tasks can be archived; this one is ${archiveStatusLabel(task.status)}.`,
     );
   }
   if (task.archivedAt && !options.force) {
