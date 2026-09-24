@@ -5,6 +5,7 @@ import {
   createAgent,
   createTask,
   getClaimableTasks,
+  getDbHandle,
   getProjectById,
   getTaskById,
   patchTask,
@@ -13,8 +14,11 @@ import {
   withTransaction,
   type TaskPatch,
 } from "./database.js";
+import { afterCode, afterPlan, afterReview, resolvePolicy, type GatePolicy } from "./policy.js";
+import { addFindings, getFinding, getOpenFindings, updateFinding, type NewFinding } from "./records.js";
 import {
   ALL_STATUSES,
+  BLOCKING_SEVERITIES,
   CLAIM_RULES,
   CLAIMABLE_FROM,
   COMPOUND_ROLES,
@@ -25,9 +29,11 @@ import {
   canTransition,
   resolveTargets,
   statusLabel,
+  type Phase,
+  type Verdict,
 } from "./catalog.js";
 import { detectDefaultBranch } from "./git.js";
-import type { AgentReference, Agent, Blocker, ConversationEntry, Task } from "./types.js";
+import type { AgentReference, Agent, Blocker, ConversationEntry, Producer, Task } from "./types.js";
 import { TaskStatus } from "./types.js";
 
 export { COMPOUND_ROLES, REVERT_FALLBACK };
@@ -156,6 +162,7 @@ export function transitionTask(task: Task, to: TaskStatus, opts: TransitionOptio
   if (opts.release) {
     patch.assignedAgent = null;
     patch.claimToken = null;
+    patch.leaseExpiresAt = null;
   }
   patchTask(task.id, patch);
   const author = opts.author ?? opts.actor;
@@ -179,6 +186,15 @@ function requireTask(taskId: string): Task {
   return task;
 }
 
+/** The autonomy policy that applies to a task (its override, else its project's level). */
+export function policyFor(task: Task): GatePolicy {
+  return resolvePolicy(task.projectId ? getProjectById(task.projectId) : null, task);
+}
+
+function minutesFromNow(minutes: number): string {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
 // ─── Claims ───────────────────────────────────────────────────────────
 
 export const MAX_CLAIM_ATTEMPTS = 10;
@@ -198,6 +214,11 @@ export interface ClaimNextTaskInput {
   excludeTaskIds?: string[];
   /** Set when a runner claims: its id is the stable identity of the claim. */
   runnerId?: string;
+  /**
+   * Stable identity for separation of duties, when neither a runner id nor the
+   * agent's sessionId says it well (the MCP server passes its own instance id).
+   */
+  sessionKey?: string;
 }
 
 export interface ClaimNextTaskResult {
@@ -214,12 +235,15 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
     throw new Error(`Invalid role: ${input.role}`);
   }
 
+  const sessionKey =
+    input.sessionKey ?? (input.runnerId ? `runner:${input.runnerId}` : `session:${input.agent.sessionId}`);
   return withTransaction(() => {
     const candidates = getClaimableTasks(
       claimableStatuses,
       input.projectId,
       MAX_CLAIM_ATTEMPTS,
       input.excludeTaskIds ?? [],
+      { sessionKey, model: input.agent.model },
     );
     for (const candidate of candidates) {
       const effectiveRole = getEffectiveRole(candidate.status, input.role);
@@ -231,7 +255,7 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       const assignedAgent: AgentReference = {
         ...buildAgentRef(input.agent.toolName, input.agent.model),
         agentId,
-        sessionKey: input.runnerId ? `runner:${input.runnerId}` : `session:${input.agent.sessionId}`,
+        sessionKey,
         ...(input.runnerId ? { runnerId: input.runnerId } : {}),
         claimedAt: new Date().toISOString(),
       };
@@ -261,6 +285,10 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       });
       const context = input.context?.trim();
       if (context) appendJson(candidate.id, "contexts", context);
+      // A runner watches its process; a hand-opened session keeps its claim by staying active.
+      if (!input.runnerId) {
+        patchTask(candidate.id, { leaseExpiresAt: minutesFromNow(policyFor(candidate).leaseMin) });
+      }
 
       return { task: getTaskById(candidate.id)!, agent, effectiveRole, claimToken };
     }
@@ -276,6 +304,14 @@ function agentIdFor(agent: ClaimNextTaskInput["agent"]): string {
 export function releaseTask(taskId: string, patch?: Omit<TaskPatch, "assignedAgent">): Task | null {
   if (!getTaskById(taskId)) return null;
   return patchTask(taskId, { ...patch, assignedAgent: null, claimToken: null });
+}
+
+/** Extends the lease of a hand-opened session's claim (any activity from the session counts). */
+export function touchLease(taskId: string, claimToken: string): boolean {
+  const task = getTaskById(taskId);
+  if (!task || !task.leaseExpiresAt || task.claimToken !== claimToken) return false;
+  patchTask(taskId, { leaseExpiresAt: minutesFromNow(policyFor(task).leaseMin) });
+  return true;
 }
 
 /** Proof of claim a submit may carry. */
@@ -452,7 +488,12 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
       messageType: "user",
       event: "blocker_resolved",
       details: answer || undefined,
-      patch: { blocker: null, revertStreak: 0 },
+      // A person's answer gives the agents a fresh set of rounds.
+      patch: {
+        blocker: null,
+        revertStreak: 0,
+        roundBaseline: { plan: task.planRound, code: task.codeRound },
+      },
     });
   });
 }
@@ -611,74 +652,202 @@ export interface SubmitResult {
 
 interface SubmitSpec {
   from: TaskStatus;
-  to: TaskStatus;
+  phase: Phase;
   messageType: MessageType;
   event: string;
+  /** Label of the submission, e.g. "Plan submitted". */
   done: string;
 }
 
-function submit(taskId: string, spec: SubmitSpec, input: SubmitInput, message: string | undefined, patch: TaskPatch = {}, details?: string): SubmitResult {
+function producerOf(task: Task): Producer {
+  const agent = task.assignedAgent;
+  return {
+    sessionKey: agent?.sessionKey ?? null,
+    agentId: agent?.agentId ?? null,
+    tool: agent?.tool ?? null,
+    model: agent?.model ?? null,
+    at: new Date().toISOString(),
+  };
+}
+
+interface SubmitPlanOut {
+  to: TaskStatus;
+  message?: string;
+  patch?: TaskPatch;
+  details?: string;
+  /** Written after the transition (e.g. why the task went to a person). */
+  note?: { message: string; event?: string };
+}
+
+function submit(
+  taskId: string,
+  spec: SubmitSpec,
+  input: SubmitInput,
+  decide: (task: Task, policy: GatePolicy) => SubmitPlanOut,
+): SubmitResult {
   return withTransaction(() => {
     const task = requireClaim(taskId, spec.from, input);
     const author = input.author ?? "agent";
-    const updated = transitionTask(task, spec.to, {
+    const out = decide(task, policyFor(task));
+    const updated = transitionTask(task, out.to, {
       actor: task.assignedAgent?.agentId ?? author,
       author,
-      message,
+      message: out.message,
       messageType: spec.messageType,
       event: spec.event,
-      details,
+      details: out.details,
       release: true,
       context: input.context,
-      patch: { ...patch, revertStreak: 0 },
+      patch: {
+        ...out.patch,
+        revertStreak: 0,
+        producers: { ...task.producers, [spec.phase]: producerOf(task) },
+      },
     });
-    return { task: updated, previousStatus: task.status, newStatus: updated.status, message: spec.done };
+    let final = updated;
+    if (out.note) {
+      final = addConversation(updated, "system", out.note.message, "system");
+      if (out.note.event) addActivity(taskId, out.note.event, "system", out.note.message);
+    }
+    return {
+      task: final,
+      previousStatus: task.status,
+      newStatus: final.status,
+      message: `${spec.done}. Task moved to ${statusLabel(final.status)}.`,
+    };
   });
 }
 
 export function submitPlan(taskId: string, input: SubmitInput = {}): SubmitResult {
   return submit(
     taskId,
-    {
-      from: TaskStatus.Planning,
-      to: TaskStatus.WaitingPlanReview,
-      messageType: "plan",
-      event: "plan_submitted",
-      done: "Plan submitted. Task moved to Waiting Plan Review.",
-    },
+    { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
-    input.message,
+    (task, policy) => ({ to: afterPlan(task, policy), message: input.message }),
   );
 }
 
 export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitResult {
   return submit(
     taskId,
-    {
-      from: TaskStatus.Coding,
-      to: TaskStatus.WaitingCodeReview,
-      messageType: "code",
-      event: "code_submitted",
-      done: "Code submitted. Task moved to Waiting Code Review.",
-    },
+    { from: TaskStatus.Coding, phase: "code", messageType: "code", event: "code_submitted", done: "Code submitted" },
     input,
-    input.message,
-    { worktreePath: input.worktree ?? null },
+    (task, policy) => ({
+      to: afterCode(task, policy),
+      message: input.message,
+      patch: { worktreePath: input.worktree ?? null },
+    }),
   );
 }
 
-export function submitReview(taskId: string, input: SubmitInput = {}): SubmitResult {
+export interface ReviewFindingInput extends NewFinding {}
+
+export interface SubmitReviewInput extends SubmitInput {
+  verdict: Verdict;
+  /** New findings of this round. */
+  findings?: ReviewFindingInput[];
+  /** Earlier findings the reviewer checked: verified (fixed) or still open. */
+  verifiedFindings?: { id: string; status: "verified" | "open" }[];
+  /** Required with verdict needs_human: what a person must decide. */
+  question?: string;
+}
+
+/** Counts AI approvals in the project, this one included, for 1-in-N human sampling. */
+function approvalsInProject(projectId: string | null): number {
+  if (!projectId) return 1;
+  const row = getDbHandle()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM activity a JOIN tasks t ON t.id = a.task_id
+       WHERE t.project_id = ? AND a.event_type = 'review_submitted' AND a.details = 'approve'`,
+    )
+    .get(projectId) as { n: number };
+  return row.n + 1;
+}
+
+export function submitReview(taskId: string, input: SubmitReviewInput): SubmitResult {
   return submit(
     taskId,
-    {
-      from: TaskStatus.Reviewing,
-      to: TaskStatus.WaitingCodeReview,
-      messageType: "review",
-      event: "review_submitted",
-      done: "Review submitted. Task moved to Waiting Code Review.",
-    },
+    { from: TaskStatus.Reviewing, phase: "review", messageType: "review", event: "review_submitted", done: `Review submitted (${input.verdict})` },
     input,
-    input.message,
+    (task, policy) => {
+      const reviewer = task.assignedAgent?.agentId ?? input.author ?? "agent";
+      const round = task.codeRound + 1;
+
+      // Earlier findings first: verified ones close, reopened ones count again.
+      for (const check of input.verifiedFindings ?? []) {
+        const finding = getFinding(taskId, check.id);
+        if (!finding) throw new WorkflowError(`Unknown finding ${check.id}.`);
+        if (check.status === "verified") {
+          updateFinding(taskId, check.id, { status: "verified" });
+        } else if (finding.status !== "open") {
+          updateFinding(taskId, check.id, { status: "open", reopened: true });
+        }
+      }
+      addFindings(taskId, "R", round, input.findings ?? [], reviewer);
+      const open = getOpenFindings(taskId, "code");
+      const blocking = open.filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
+
+      if (input.verdict === "approve" && blocking.length) {
+        throw new WorkflowError(
+          `Cannot approve with open blocker or major findings: ${blocking.map((f) => f.id).join(", ")}. Verify them or request changes.`,
+        );
+      }
+      if (input.verdict === "request_changes" && open.length === 0) {
+        throw new WorkflowError("request_changes needs at least one open finding (pass findings[]).");
+      }
+      if (input.verdict === "needs_human" && !input.question?.trim()) {
+        throw new WorkflowError("needs_human needs a question for the person who decides.");
+      }
+
+      const sampled =
+        input.verdict === "approve" &&
+        policy.humanSampleEvery > 0 &&
+        approvalsInProject(task.projectId) % policy.humanSampleEvery === 0;
+      const routing = afterReview({ ...task, codeRound: round }, policy, input.verdict, { sampled });
+      const openIds = open.map((f) => `${f.id} (${f.severity})`).join(", ") || "none";
+
+      let blocker: Blocker | null = null;
+      let note: SubmitPlanOut["note"];
+      if (routing.reason === "needs_human") {
+        blocker = {
+          reason: `The reviewer could not decide. Open findings: ${openIds}.`,
+          question: input.question!.trim(),
+          phase: "review",
+          fromStatus: task.status,
+          raisedBy: reviewer,
+          at: new Date().toISOString(),
+        };
+      } else if (routing.reason === "round_limit") {
+        blocker = {
+          reason: `The reviewer asked for changes ${round - (task.roundBaseline.code ?? 0)} times (limit ${policy.maxReviewRounds}). Open findings: ${openIds}.`,
+          question: "Read the open findings and decide: send the task back for another round, take over the fix, or approve it as is.",
+          phase: "review",
+          fromStatus: task.status,
+          raisedBy: "system",
+          at: new Date().toISOString(),
+        };
+        note = { message: `Review round limit reached; a person decides. ${blocker.reason}`, event: "review_escalated" };
+      } else if (routing.reason === "high_risk") {
+        note = { message: "The AI reviewer approved; the task is high risk, so a person reviews the code too.", event: "review_escalated" };
+      } else if (routing.reason === "sampled") {
+        note = {
+          message: `The AI reviewer approved; this approval was picked for a human spot check (1 in ${policy.humanSampleEvery}).`,
+          event: "review_sampled",
+        };
+      }
+
+      return {
+        to: routing.status,
+        message: input.message,
+        details: input.verdict,
+        note,
+        patch: {
+          codeRound: round,
+          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString() },
+          ...(blocker ? { blocker } : {}),
+        },
+      };
+    },
   );
 }
 
@@ -695,17 +864,9 @@ export function submitMerge(taskId: string, input: SubmitMergeInput): SubmitResu
     .join(", ");
   return submit(
     taskId,
-    {
-      from: TaskStatus.Merging,
-      to: TaskStatus.Merged,
-      messageType: "merge",
-      event: "merge_submitted",
-      done: "Merge submitted. Task moved to Merged.",
-    },
+    { from: TaskStatus.Merging, phase: "merge", messageType: "merge", event: "merge_submitted", done: "Merge submitted" },
     input,
-    `Merge submitted. ${mergeDetails}`,
-    {},
-    mergeDetails,
+    () => ({ to: TaskStatus.Merged, message: `Merge submitted. ${mergeDetails}`, details: mergeDetails }),
   );
 }
 

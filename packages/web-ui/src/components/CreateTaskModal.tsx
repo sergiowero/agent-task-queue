@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import toast from "react-hot-toast";
+import {
+  AUTONOMY_LEVELS,
+  RISKS,
+  TASK_TYPES,
+  type AutonomyLevel,
+  type Risk,
+  type TaskType,
+} from "@agentq/shared/catalog";
 import { api } from "../lib/api";
 import {
   AddIcon,
@@ -41,6 +49,9 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [branch, setBranch] = useState("");
   const [mergeBranch, setMergeBranch] = useState("");
   const [requiresPlan, setRequiresPlan] = useState(false);
+  const [type, setType] = useState<TaskType>("feature");
+  const [risk, setRisk] = useState<Risk | "">("");
+  const [autonomy, setAutonomy] = useState<string>("");
   const [steerDetails, setSteerDetails] = useState("");
   const [guardrails, setGuardrails] = useState("");
   const [criteria, setCriteria] = useState("");
@@ -62,6 +73,9 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         recommendedBranch: branch || undefined,
         mergeBranch: mergeBranch.trim() || undefined,
         requiresPlan,
+        type,
+        risk: risk || undefined,
+        autonomy: autonomy === "" ? undefined : (Number(autonomy) as AutonomyLevel),
         acceptanceCriteria: criteria ? criteria.split("\n").filter(Boolean) : undefined,
         projectId: selectedProjectId,
       }),
@@ -154,6 +168,38 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
               onChange={(e) => setMergeBranch(e.target.value)}
               className="font-mono"
             />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Field label="Type">
+            <Select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
+              {Object.entries(TASK_TYPES).map(([value, t]) => (
+                <option key={value} value={value}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Risk" hint="High risk: a person also reviews the code.">
+            <Select value={risk} onChange={(e) => setRisk(e.target.value as Risk | "")}>
+              <option value="">Default for {TASK_TYPES[type].label.toLowerCase()} ({TASK_TYPES[type].defaultRisk})</option>
+              {Object.entries(RISKS).map(([value, r]) => (
+                <option key={value} value={value}>
+                  {r.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Autonomy">
+            <Select value={autonomy} onChange={(e) => setAutonomy(e.target.value)}>
+              <option value="">Project default</option>
+              {Object.entries(AUTONOMY_LEVELS).map(([value, l]) => (
+                <option key={value} value={value}>
+                  {l.label}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
 

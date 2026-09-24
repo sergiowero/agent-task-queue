@@ -13,7 +13,10 @@ import {
   getAgentById,
   getActivityEvents,
   getProjectById,
+  updateProject,
 } from "./database.js";
+import { getFindings } from "./records.js";
+import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
 import {
   approveCode,
@@ -34,6 +37,7 @@ import {
   submitMerge,
   submitPlan,
   submitReview,
+  touchLease,
   transitionTask,
   unblockTask,
 } from "./workflow.js";
@@ -385,7 +389,7 @@ describe("workflow actions", () => {
   const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "s-planner" };
 
   beforeAll(() => {
-    createProject({ id: projectId, displayName: "Actions", workingDirectory: "/tmp/actions" });
+    createProject({ id: projectId, displayName: "Actions", workingDirectory: "/tmp/actions", autonomy: 0 });
   });
 
   afterEach(() => {
@@ -449,8 +453,10 @@ describe("workflow actions", () => {
     const coder = claimNextTask({ role: "implementer", agent: planner, projectId })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: coder.claimToken });
     expect(requestAiReview(task.id).status).toBe(TaskStatus.CodeReviewRequested);
-    const reviewer = claimNextTask({ role: "reviewer", agent: planner, projectId })!;
-    submitReview(task.id, { message: "ok", claimToken: reviewer.claimToken });
+    // Another session reviews: nobody reviews their own code.
+    expect(claimNextTask({ role: "reviewer", agent: planner, projectId })).toBeNull();
+    const reviewer = claimNextTask({ role: "reviewer", agent: { ...planner, sessionId: "s-reviewer" }, projectId })!;
+    submitReview(task.id, { verdict: "approve", message: "ok", claimToken: reviewer.claimToken });
     expect(requestCodeChanges(task.id, { message: "fix" }).status).toBe(TaskStatus.ChangesRequested);
     const again = claimNextTask({ role: "implementer", agent: planner, projectId })!;
     submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken });
@@ -538,5 +544,161 @@ describe("workflow actions", () => {
     const explicit = createTaskForProject({ title: "explicit", description: "d", projectId, mergeBranch: "release" });
     createdTaskIds.push(explicit.id);
     expect(explicit.mergeBranch).toBe("release");
+  });
+});
+
+describe("autonomy L2: reviews that decide", () => {
+  const projectId = "l2-project-" + Date.now();
+  const createdTaskIds: string[] = [];
+  const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "s-coder" };
+  const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "s-reviewer" };
+
+  beforeAll(() => {
+    createProject({ id: projectId, displayName: "L2", workingDirectory: "/tmp/l2" });
+  });
+
+  afterEach(() => {
+    for (const id of createdTaskIds) {
+      try { deleteTask(id); } catch { softDeleteTask(id); }
+    }
+    createdTaskIds.length = 0;
+    updateProject(projectId, { policy: { humanSampleEvery: 0, requireDifferentModel: false } });
+  });
+
+  afterAll(() => {
+    try { deleteProject(projectId); } catch {}
+  });
+
+  /** A task coded by `coder` and waiting for an AI review. */
+  function coded(risk: "low" | "medium" | "high" = "medium") {
+    const task = createTask({ title: "l2", description: "d", projectId, risk });
+    createdTaskIds.push(task.id);
+    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    expect(c.task.id).toBe(task.id);
+    const submitted = submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    expect(submitted.newStatus).toBe(TaskStatus.CodeReviewRequested);
+    return task.id;
+  }
+
+  function review(taskId: string, input: Omit<Parameters<typeof submitReview>[1], "claimToken">) {
+    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    expect(r.task.id).toBe(taskId);
+    return submitReview(taskId, { ...input, claimToken: r.claimToken });
+  }
+
+  function recode(taskId: string) {
+    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    expect(c.task.id).toBe(taskId);
+    submitCode(taskId, { message: "fixed", worktree: "/w", claimToken: c.claimToken });
+  }
+
+  it("submit_code asks for an AI review without a click, and the coder cannot take it", () => {
+    const id = coded();
+    expect(claimNextTask({ role: "senior", agent: coder, projectId })).toBeNull();
+    expect(getTaskById(id)!.producers.code).toMatchObject({ sessionKey: "session:s-coder", model: "sonnet" });
+  });
+
+  it("approve moves the task to approved; the verdict is recorded", () => {
+    const id = coded();
+    const out = review(id, { verdict: "approve", message: "LGTM", findings: [{ severity: "nit", text: "rename x" }] });
+    expect(out.newStatus).toBe(TaskStatus.Approved);
+    const task = getTaskById(id)!;
+    expect(task.codeRound).toBe(1);
+    expect(task.lastReview).toMatchObject({ round: 1, verdict: "approve", by: "reviewer@1|opus" });
+    expect(getFindings(id).map((f) => [f.id, f.severity, f.status])).toEqual([["R1-1", "nit", "open"]]);
+  });
+
+  it("refuses approve with open blocker/major findings, and request_changes without findings", () => {
+    const id = coded();
+    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    expect(() =>
+      submitReview(id, { verdict: "approve", message: "x", claimToken: r.claimToken, findings: [{ severity: "major", text: "no tests" }] }),
+    ).toThrow("open blocker or major findings: R1-1");
+    expect(getFindings(id)).toEqual([]);
+    expect(() => submitReview(id, { verdict: "request_changes", message: "x", claimToken: r.claimToken })).toThrow(
+      "at least one open finding",
+    );
+    expect(() => submitReview(id, { verdict: "needs_human", message: "x", claimToken: r.claimToken })).toThrow("question");
+    expect(getTaskById(id)!.status).toBe(TaskStatus.Reviewing);
+  });
+
+  it("request_changes loops back with findings by id; the next review verifies them", () => {
+    const id = coded();
+    expect(review(id, { verdict: "request_changes", message: "fix", findings: [{ severity: "major", text: "no tests", file: "a.ts", line: 3 }] }).newStatus).toBe(
+      TaskStatus.ChangesRequested,
+    );
+    recode(id);
+    const second = review(id, { verdict: "approve", message: "ok now", verifiedFindings: [{ id: "R1-1", status: "verified" }] });
+    expect(second.newStatus).toBe(TaskStatus.Approved);
+    expect(getFindings(id).map((f) => [f.id, f.status])).toEqual([["R1-1", "verified"]]);
+  });
+
+  it("after three change requests a person decides; answering gives a fresh set of rounds", () => {
+    const id = coded();
+    for (let round = 1; round <= 2; round++) {
+      expect(review(id, { verdict: "request_changes", message: "again", findings: [{ severity: "minor", text: `r${round}` }] }).newStatus).toBe(
+        TaskStatus.ChangesRequested,
+      );
+      recode(id);
+    }
+    const third = review(id, { verdict: "request_changes", message: "still", findings: [{ severity: "major", text: "r3" }] });
+    expect(third.newStatus).toBe(TaskStatus.NeedsHuman);
+    const blocked = getTaskById(id)!;
+    expect(blocked.blocker?.reason).toContain("R3-1 (major)");
+    expect(blocked.conversation.at(-1)!.messageType).toBe("system");
+    expect(getActivityEvents({ taskId: id }).some((e) => e.eventType === "review_escalated")).toBe(true);
+
+    resolveBlocker(id, { answer: "One more try.", targetStatus: TaskStatus.ChangesRequested });
+    recode(id);
+    expect(review(id, { verdict: "request_changes", message: "r4", findings: [{ severity: "minor", text: "r4" }] }).newStatus).toBe(
+      TaskStatus.ChangesRequested,
+    );
+  });
+
+  it("high-risk tasks and sampled approvals still reach a person", () => {
+    expect(review(coded("high"), { verdict: "approve", message: "ok" }).newStatus).toBe(TaskStatus.WaitingCodeReview);
+    updateProject(projectId, { policy: { humanSampleEvery: 1 } });
+    const id = coded();
+    expect(review(id, { verdict: "approve", message: "ok" }).newStatus).toBe(TaskStatus.WaitingCodeReview);
+    expect(getTaskById(id)!.conversation.at(-1)!.message).toContain("spot check");
+  });
+
+  it("requireDifferentModel keeps the coder's model off the review", () => {
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const id = coded();
+    const sameModel = { ...reviewer, model: "sonnet" };
+    expect(claimNextTask({ role: "reviewer", agent: sameModel, projectId })).toBeNull();
+    expect(claimNextTask({ role: "reviewer", agent: reviewer, projectId })!.task.id).toBe(id);
+  });
+
+  it("claims by hand-opened sessions get a lease; the sweeper returns expired ones to the queue", () => {
+    const task = createTask({ title: "lease", description: "d", projectId });
+    createdTaskIds.push(task.id);
+    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const lease = getTaskById(task.id)!.leaseExpiresAt!;
+    expect(new Date(lease).getTime()).toBeGreaterThan(Date.now() + 80 * 60_000);
+    expect(touchLease(task.id, "wrong")).toBe(false);
+    expect(touchLease(task.id, c.claimToken)).toBe(true);
+
+    expect(sweepQueue(new Date()).expired).toEqual([]);
+    const later = new Date(Date.now() + 3 * 60 * 60_000);
+    expect(sweepQueue(later).expired).toEqual([task.id]);
+    const released = getTaskById(task.id)!;
+    expect(released.status).toBe(TaskStatus.ReadyForCode);
+    expect(released.leaseExpiresAt).toBeNull();
+
+    const byRunner = claimNextTask({ role: "implementer", agent: coder, projectId, runnerId: "r1" })!;
+    expect(byRunner.task.leaseExpiresAt).toBeNull();
+    expect(byRunner.task.assignedAgent?.sessionKey).toBe("runner:r1");
+  });
+
+  it("a review nobody eligible picks up goes to a person after reviewStarvationMin", () => {
+    const id = coded();
+    expect(sweepQueue(new Date()).starved).toEqual([]);
+    const later = new Date(Date.now() + 21 * 60_000);
+    expect(sweepQueue(later).starved).toEqual([id]);
+    const task = getTaskById(id)!;
+    expect(task.status).toBe(TaskStatus.WaitingCodeReview);
+    expect(task.history.at(-1)!.actor).toBe("system:sweeper");
   });
 });

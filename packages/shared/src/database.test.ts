@@ -480,6 +480,8 @@ describe("Migration Status", () => {
     expect(names).toEqual([...names].sort());
     expect(names).toContain("010_project_default_merge_branch");
     expect(names).toContain("011_task_claim_and_blocker");
+    expect(names).toContain("012_autonomy_and_policy");
+    expect(names).toContain("013_task_findings");
     expect(status.every((m) => m.applied)).toBe(true);
   });
 });

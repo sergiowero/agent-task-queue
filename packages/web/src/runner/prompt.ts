@@ -17,12 +17,12 @@ const CONTEXT_ARG = "<handoff notes for the agent of the next phase>";
 const CONTEXT_HINT: Record<Phase, string> = {
   plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
   code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
-  review: "the verdict and the blocking issues the coder must fix next (or why it is safe to merge)",
+  review: "the verdict, the finding ids the coder must fix first and why (or why it is safe to merge)",
   merge: "the PR URL/number, the base and head branches, and anything left for the user after the merge",
 };
 
 /** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
-export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, string> }> = {
+export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, unknown> }> = {
   plan: (taskId) => ({
     tool: "submit_plan",
     args: { taskId, message: "<markdown plan>", context: CONTEXT_ARG },
@@ -33,7 +33,14 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
   }),
   review: (taskId) => ({
     tool: "submit_review",
-    args: { taskId, message: "<markdown findings with verdict>", context: CONTEXT_ARG },
+    args: {
+      taskId,
+      verdict: "<approve | request_changes | needs_human>",
+      findings: [{ severity: "<blocker | major | minor | nit>", file: "<path>", line: 0, text: "<what is wrong and what to do>" }],
+      verifiedFindings: [{ id: "<R1-1>", status: "<verified | open>" }],
+      message: "<markdown review summary>",
+      context: CONTEXT_ARG,
+    },
   }),
   merge: (taskId) => ({
     tool: "submit_merge",

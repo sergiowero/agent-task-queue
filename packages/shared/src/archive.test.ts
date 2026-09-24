@@ -191,7 +191,7 @@ describe("archiveTask", () => {
       projectId,
       contexts: ["created by test"],
     });
-    const codex = { ...agent, toolName: "codex", model: "gpt" };
+    const codex = { ...agent, toolName: "codex", model: "gpt", sessionId: "codex-session" };
     const claim = (who = agent) => claimNextTask({ role: "senior", agent: who, projectId })!;
     let claimed = claim();
     const t = claimed.task;
@@ -206,7 +206,7 @@ describe("archiveTask", () => {
     submitCode(t.id, { message: "## Changes\n- Toggle in header", worktree: "/w/t", claimToken: claimed.claimToken });
     requestAiReview(t.id);
     claimed = claim();
-    submitReview(t.id, { message: "Looks good. **Verdict:** approve", claimToken: claimed.claimToken });
+    submitReview(t.id, { verdict: "approve", message: "Looks good. **Verdict:** approve", claimToken: claimed.claimToken });
     requestCodeChanges(t.id, { message: "Please fix contrast." });
     claimed = claim(codex);
     submitCode(t.id, { message: "## Changes\n- Fixed contrast", worktree: "/w/t", claimToken: claimed.claimToken });
@@ -223,7 +223,7 @@ describe("archiveTask", () => {
   }
 
   beforeAll(() => {
-    createProject({ id: projectId, displayName: "Archive Project", workingDirectory: projectDir });
+    createProject({ id: projectId, displayName: "Archive Project", workingDirectory: projectDir, autonomy: 0 });
     createProject({ id: sideProjectId, displayName: "Side Project", workingDirectory: projectDir });
     mkdirSync(projectDir, { recursive: true });
     task = completeTask("Add dark mode toggle");
@@ -347,5 +347,43 @@ describe("archiveTask", () => {
     expect(docs.detailed).toContain("[a.summary.md](./a.summary.md)");
     expect(docs.detailed).toContain("Archived from AgentQ on 2026-01-02 03:04:05 UTC");
     expect(docs.detailed).toContain("_No messages._");
+    expect(docs.detailed).not.toContain("## Review findings");
+  });
+
+  it("lists review findings with their id, severity and status", () => {
+    const bare = createTask({ title: "Findings", description: "", projectId: sideProjectId });
+    const docs = buildArchiveDocuments({
+      task: { ...bare, status: TaskStatus.Complete },
+      project: null,
+      agents: [],
+      activity: [],
+      archivedAt: "2026-01-02T03:04:05.000Z",
+      summaryFile: "a.summary.md",
+      detailedFile: "a.detailed.md",
+      pullRequests: [],
+      findings: [
+        {
+          id: "R1-1",
+          taskId: bare.id,
+          round: 1,
+          phase: "code",
+          severity: "major",
+          file: "src/a.ts",
+          line: 3,
+          text: "No test for the empty list",
+          status: "verified",
+          resolution: "Added a test",
+          raisedBy: "reviewer",
+          reopenCount: 1,
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      ],
+    });
+    expect(docs.detailed).toContain("## Review findings");
+    expect(docs.detailed).toContain("`R1-1`");
+    expect(docs.detailed).toContain("verified (reopened ×1)");
+    expect(docs.detailed).toContain("`src/a.ts:3`");
+    expect(docs.detailed).toContain("_Added a test_");
   });
 });

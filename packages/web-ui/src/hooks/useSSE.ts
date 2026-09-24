@@ -46,6 +46,8 @@ export function useSSE(
           queryClient.setQueryData<Task>(["task", data.id], (old) =>
             old ? { ...old, ...data } : undefined,
           );
+          // Findings and other records live beside the task: refetch them.
+          queryClient.invalidateQueries({ queryKey: ["task-details", data.id] });
         }
         onMessageRef.current({ event: "task_updated", data });
         retryDelay = 1000;

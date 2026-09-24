@@ -3,6 +3,9 @@ export {
   normalizeStatus,
   type Task,
   type Blocker,
+  type Finding,
+  type LastReview,
+  type Producer,
   type ConversationEntry,
   type StatusHistoryEntry,
   type AgentReference,
@@ -30,6 +33,8 @@ export {
   patchTask,
   appendJson,
   touchTask,
+  getDbHandle,
+  type ClaimFilter,
   type TaskPatch,
   deleteTask,
   softDeleteTask,
@@ -83,6 +88,8 @@ export {
   submitReview,
   submitMerge,
   postComment,
+  policyFor,
+  touchLease,
   reportBlocker,
   resolveBlocker,
   approvePlan,
@@ -107,6 +114,8 @@ export {
   type SubmitInput,
   type SubmitCodeInput,
   type SubmitMergeInput,
+  type SubmitReviewInput,
+  type ReviewFindingInput,
   type SubmitResult,
   type TransitionOptions,
   ROLE_STATUSES,
@@ -115,6 +124,33 @@ export {
 } from "./workflow.js";
 
 export * from "./catalog.js";
+
+export {
+  DEFAULT_POLICY,
+  LEVEL_GATES,
+  resolvePolicy,
+  reviewRoundsUsed,
+  afterPlan,
+  afterCode,
+  afterReview,
+  type Gate,
+  type GatePolicy,
+  type PolicySettings,
+  type ReviewRouting,
+  type RoutingTask,
+} from "./policy.js";
+
+export {
+  addFindings,
+  getFinding,
+  getFindings,
+  getOpenFindings,
+  updateFinding,
+  type NewFinding,
+  type FindingSource,
+} from "./records.js";
+
+export { sweepQueue, type SweepResult } from "./sweeper.js";
 
 export {
   SKILLS_DIR,
@@ -166,6 +202,12 @@ export {
   updateRunnerSchema,
   runnerToolSchema,
   runnerRoleSchema,
+  riskSchema,
+  taskTypeSchema,
+  autonomySchema,
+  verdictSchema,
+  severitySchema,
+  policySettingsSchema,
   type CreateRunnerInput,
   type UpdateRunnerInput,
   type CreateTaskInput,

@@ -319,11 +319,18 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     add(active as TaskStatus, ...(origins ?? []), REVERT_FALLBACK[active as TaskStatus]!);
   }
   for (const [active, target] of Object.entries(UNBLOCK_TARGET)) add(active as TaskStatus, target!);
-  // Submissions.
+  // Submissions (where each one lands is decided by the autonomy policy).
   add(TaskStatus.Planning, TaskStatus.WaitingPlanReview);
-  add(TaskStatus.Coding, TaskStatus.WaitingCodeReview);
-  add(TaskStatus.Reviewing, TaskStatus.WaitingCodeReview);
+  add(TaskStatus.Coding, TaskStatus.WaitingCodeReview, TaskStatus.CodeReviewRequested);
+  add(
+    TaskStatus.Reviewing,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.Approved,
+    TaskStatus.ChangesRequested,
+  );
   add(TaskStatus.Merging, TaskStatus.Merged);
+  // Nobody eligible picked the review up in time: a person reviews instead.
+  add(TaskStatus.CodeReviewRequested, TaskStatus.WaitingCodeReview);
   // Human decisions.
   add(TaskStatus.WaitingPlanReview, TaskStatus.ReadyForCode, TaskStatus.PlanChangesRequested);
   add(
@@ -349,6 +356,68 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   return TRANSITIONS[from]?.includes(to) ?? false;
 }
 
+/**
+ * Separation of duties: claiming a task in these statuses is refused to whoever
+ * produced the named phase's artifact (nobody reviews their own code).
+ */
+export const SEPARATION: Partial<Record<TaskStatus, Phase>> = {
+  [TaskStatus.CodeReviewRequested]: "code",
+};
+
+// ─── Autonomy, risk and task types ────────────────────────────────────
+
+export type AutonomyLevel = 0 | 1 | 2 | 3;
+export type Risk = "low" | "medium" | "high";
+export type TaskType = "feature" | "bug" | "refactor" | "docs" | "chore";
+export type Verdict = "approve" | "request_changes" | "needs_human";
+export type Severity = "blocker" | "major" | "minor" | "nit";
+export type FindingStatus = "open" | "fixed" | "wontfix" | "verified";
+
+export const DEFAULT_AUTONOMY: AutonomyLevel = 2;
+
+export const AUTONOMY_LEVELS: Record<AutonomyLevel, { label: string; description: string }> = {
+  0: {
+    label: "L0 Supervised",
+    description: "A person approves the plan, reviews the code and merges the PR. AI reviews only on request.",
+  },
+  1: {
+    label: "L1 Human plan",
+    description: "A person approves the plan; agents review the code, and the task reaches the PR without a click.",
+  },
+  2: {
+    label: "L2 Human PR",
+    description: "Agents review each other; a person approves risky plans, answers escalations and merges the PR.",
+  },
+  3: {
+    label: "L3 Autonomous",
+    description: "Like L2, for low-risk work (docs, tests, chores): a green, low-risk PR may merge itself.",
+  },
+};
+
+export const RISKS: Record<Risk, { label: string; description: string }> = {
+  low: { label: "Low", description: "Docs, tests, small isolated changes." },
+  medium: { label: "Medium", description: "Regular features and fixes." },
+  high: { label: "High", description: "Migrations, auth, CI, public APIs: a person reviews the code too." },
+};
+
+export const TASK_TYPES: Record<TaskType, { label: string; defaultRisk: Risk }> = {
+  feature: { label: "Feature", defaultRisk: "medium" },
+  bug: { label: "Bug", defaultRisk: "medium" },
+  refactor: { label: "Refactor", defaultRisk: "medium" },
+  docs: { label: "Docs", defaultRisk: "low" },
+  chore: { label: "Chore", defaultRisk: "low" },
+};
+
+export const RISK_ORDER: Risk[] = ["low", "medium", "high"];
+
+/** The higher of two risks (agents and checks may raise risk, never lower it). */
+export function maxRisk(a: Risk, b: Risk): Risk {
+  return RISK_ORDER.indexOf(a) >= RISK_ORDER.indexOf(b) ? a : b;
+}
+
+/** Findings of these severities block an approve. */
+export const BLOCKING_SEVERITIES: Severity[] = ["blocker", "major"];
+
 // ─── Activity ─────────────────────────────────────────────────────────
 
 /** Activity event types written by the workflow, with a short human label. */
@@ -369,6 +438,10 @@ export const EVENT_TYPES: Record<string, string> = {
   task_unblocked: "Unblocked",
   task_blocked: "Blocked (needs human)",
   blocker_resolved: "Blocker resolved",
+  review_escalated: "Review escalated",
+  review_sampled: "Sampled for human review",
+  review_starved: "No reviewer picked it up",
+  lease_expired: "Claim expired",
   task_reverted: "Reverted",
   task_archived: "Archived",
   comment_added: "Comment",

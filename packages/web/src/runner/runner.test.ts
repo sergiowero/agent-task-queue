@@ -10,6 +10,7 @@ import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@agentq/mcp";
 import type { Runner, RunnerTool } from "@agentq/shared";
 import {
   TaskStatus,
+  claimNextTask,
   createProject,
   createRunner,
   createTask,
@@ -464,6 +465,50 @@ describe("RunnerEngine: blocked tasks", () => {
     expect(stored.status).toBe(TaskStatus.PlanChangesRequested);
     expect(stored.conversation.some((c) => c.message === "## Late plan")).toBe(false);
   }, 30_000);
+});
+
+describe("RunnerEngine: separation of duties (autonomy L2)", () => {
+  it("a senior runner does not review its own code; another runner does, and its verdict routes the task", async () => {
+    const task = createTask({ title: "review me", description: "", projectId });
+    const author = makeRunner(
+      agentArgv("submit_code", { message: "## Changes", worktree: PROJECT_DIR, context: "look at x" }),
+      { role: "senior" },
+    );
+    const engine = makeEngine();
+    engine.start(author.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.CodeReviewRequested, 20_000, "code submitted");
+
+    // Several polls later the author still has not picked up its own review.
+    await Bun.sleep(2500);
+    expect(engine.getJobs(author.id)).toHaveLength(1);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.CodeReviewRequested);
+    await engine.stop(author.id);
+
+    const reviewer = makeRunner(
+      agentArgv("submit_review", { verdict: "approve", message: "LGTM", context: "safe to merge" }),
+      { role: "reviewer" },
+    );
+    engine.start(reviewer.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.Approved, 20_000, "review approved");
+    const reviewed = getTaskById(task.id)!;
+    expect(reviewed.lastReview?.verdict).toBe("approve");
+    expect(reviewed.producers.code?.sessionKey).toBe(`runner:${author.id}`);
+    expect(reviewed.producers.review?.sessionKey).toBe(`runner:${reviewer.id}`);
+  }, 60_000);
+
+  it("recoverOrphans gives back tasks whose runner job did not survive a restart", () => {
+    const task = planTask("orphaned");
+    const claimed = claimNextTask({
+      role: "planner",
+      agent: { toolName: "custom", version: "1", model: "m", sessionId: "gone" },
+      projectId,
+      runnerId: "runner-that-died",
+    })!;
+    expect(claimed.task.id).toBe(task.id);
+    const engine = makeEngine();
+    expect(engine.recoverOrphans()).toContain(task.id);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
+  });
 });
 
 describe("revertClaim", () => {

@@ -9,10 +9,12 @@ import {
   setTaskArchive,
   slugify,
 } from "./database.js";
+import { getFindings } from "./records.js";
 import type {
   ActivityEvent,
   Agent,
   ConversationEntry,
+  Finding,
   Project,
   StatusHistoryEntry,
   Task,
@@ -75,6 +77,8 @@ export interface ArchiveDocumentsInput {
   /** Optional overview written by an agent, placed at the top of the summary. */
   overview?: string;
   runnerJobs?: ArchiveRunnerJob[];
+  /** Review findings of the task (plan and code reviews). */
+  findings?: Finding[];
 }
 
 export interface ArchiveDocuments {
@@ -685,6 +689,24 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     out.push("_No status changes were recorded._");
   }
 
+  // Review findings
+  const findings = input.findings ?? [];
+  if (findings.length) {
+    out.push("", "## Review findings", "");
+    out.push(
+      table(
+        ["Id", "Severity", "Status", "Where", "Finding"],
+        findings.map((f) => [
+          inlineCode(f.id),
+          f.severity,
+          f.status + (f.reopenCount ? ` (reopened ×${f.reopenCount})` : ""),
+          f.file ? inlineCode(f.line ? `${f.file}:${f.line}` : f.file) : "—",
+          f.text.replace(/\s+/g, " ") + (f.resolution ? ` — _${f.resolution.replace(/\s+/g, " ")}_` : ""),
+        ]),
+      ),
+    );
+  }
+
   // Conversation
   out.push("", "## Conversation", "");
   if (task.conversation.length) {
@@ -809,6 +831,7 @@ export function archiveTask(taskId: string, options: ArchiveTaskOptions = {}): A
     pullRequests,
     overview: options.overview,
     runnerJobs: options.runnerJobs,
+    findings: getFindings(task.id),
   });
 
   const summaryPath = join(directory, summaryFile);

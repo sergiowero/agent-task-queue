@@ -3,7 +3,7 @@ name: agentq-merge
 description: Merging phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch from the main repo, opens a pull request into `task.mergeBranch` with `gh pr create`, and records the PR with the `submit_merge` MCP tool. Never merges locally, never force-pushes; on push or PR failure it calls `report_blocker` so a person takes over.
 allowed-tools: mcp__agentq__submit_merge, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "3.2.0"
+  version: "4.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

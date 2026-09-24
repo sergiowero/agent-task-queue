@@ -1,6 +1,27 @@
 import { z } from "zod";
 import { ROLES, TaskStatus } from "./catalog.js";
 
+export const riskSchema = z.enum(["low", "medium", "high"]);
+export const taskTypeSchema = z.enum(["feature", "bug", "refactor", "docs", "chore"]);
+export const autonomySchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
+export const verdictSchema = z.enum(["approve", "request_changes", "needs_human"]);
+export const severitySchema = z.enum(["blocker", "major", "minor", "nit"]);
+
+/** Project overrides of the default policy (every key optional). */
+export const policySettingsSchema = z
+  .object({
+    maxPlanRounds: z.number().int().min(1).max(10),
+    maxReviewRounds: z.number().int().min(1).max(10),
+    maxVerifyFailures: z.number().int().min(1).max(10),
+    requireDifferentModel: z.boolean(),
+    humanSampleEvery: z.number().int().min(0).max(1000),
+    reviewStarvationMin: z.number().int().min(0).max(24 * 60),
+    leaseMin: z.number().int().min(5).max(24 * 60),
+    autoMerge: z.boolean(),
+  })
+  .partial()
+  .strict();
+
 export const createTaskSchema = z.object({
   title: z.string().min(1, "Title is required").max(200),
   description: z.string().max(5000).default(""),
@@ -13,6 +34,9 @@ export const createTaskSchema = z.object({
   requiresPlan: z.boolean().optional(),
   mergeBranch: z.string().max(200).optional(),
   projectId: z.string().uuid(),
+  type: taskTypeSchema.optional(),
+  risk: riskSchema.optional(),
+  autonomy: autonomySchema.nullable().optional(),
 });
 
 /**
@@ -32,6 +56,9 @@ export const updateTaskSchema = z
     mergeBranch: z.string().max(200).optional(),
     projectId: z.string().uuid().nullable().optional(),
     worktreePath: z.string().max(500).nullable().optional(),
+    type: taskTypeSchema.optional(),
+    risk: riskSchema.optional(),
+    autonomy: autonomySchema.nullable().optional(),
   })
   .strict();
 
@@ -61,6 +88,9 @@ export const transitionTaskSchema = z.object({
   targetStatus: z.nativeEnum(TaskStatus).optional(),
   // submit_* over HTTP: the claim holder's proof
   claimToken: z.string().optional(),
+  // submit_review
+  verdict: verdictSchema.optional(),
+  question: z.string().max(5000).optional(),
   context: z.string().max(10000).optional(),
   // archive
   force: z.boolean().optional(),
@@ -75,12 +105,16 @@ export const createProjectSchema = z.object({
   displayName: z.string().min(1).max(200),
   workingDirectory: z.string().min(1).max(1000),
   defaultMergeBranch: branchNameSchema.nullable().optional(),
+  autonomy: autonomySchema.optional(),
+  policy: policySettingsSchema.optional(),
 });
 
 export const updateProjectSchema = z.object({
   displayName: z.string().min(1).max(200).optional(),
   workingDirectory: z.string().min(1).max(1000).optional(),
   defaultMergeBranch: branchNameSchema.nullable().optional(),
+  autonomy: autonomySchema.optional(),
+  policy: policySettingsSchema.optional(),
 });
 
 export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "custom"]);

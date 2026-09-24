@@ -1,4 +1,12 @@
-import type { Phase } from "@agentq/shared/catalog";
+import type {
+  AutonomyLevel,
+  FindingStatus,
+  Phase,
+  Risk,
+  Severity,
+  TaskType,
+  Verdict,
+} from "@agentq/shared/catalog";
 
 export interface Task {
   id: string;
@@ -23,6 +31,15 @@ export interface Task {
   blocker: Blocker | null;
   /** Consecutive agent runs that ended without a submit. */
   revertStreak: number;
+  type: TaskType;
+  risk: Risk;
+  /** Overrides the project's autonomy level; null uses the project's. */
+  autonomy: AutonomyLevel | null;
+  planRound: number;
+  /** AI code reviews so far. */
+  codeRound: number;
+  verifyFailures: number;
+  lastReview: { round: number; verdict: Verdict; by: string; at: string } | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -39,6 +56,37 @@ export interface Blocker {
   fromStatus: string;
   raisedBy: string;
   at: string;
+}
+
+export interface PolicySettings {
+  maxPlanRounds: number;
+  maxReviewRounds: number;
+  maxVerifyFailures: number;
+  requireDifferentModel: boolean;
+  humanSampleEvery: number;
+  reviewStarvationMin: number;
+  leaseMin: number;
+  autoMerge: boolean;
+}
+
+export interface Finding {
+  id: string;
+  round: number;
+  phase: "plan" | "code";
+  severity: Severity;
+  file: string | null;
+  line: number | null;
+  text: string;
+  status: FindingStatus;
+  resolution: string | null;
+  raisedBy: string;
+  reopenCount: number;
+  createdAt: string;
+}
+
+/** Response of `GET /tasks/:id/details`: records kept beside the task. */
+export interface TaskDetails {
+  findings: Finding[];
 }
 
 /** Response of `GET /meta`. */
@@ -90,6 +138,8 @@ export interface Project {
   workingDirectory: string;
   /** Branch new tasks merge into unless they name one. */
   defaultMergeBranch: string | null;
+  autonomy: AutonomyLevel;
+  policy: Partial<PolicySettings>;
   createdAt: string;
   updatedAt: string;
 }
@@ -255,6 +305,7 @@ export const api = {
   resolveBlocker: (id: string, data: { answer: string; targetStatus: string }) =>
     request<Task>(`/tasks/${id}/resolve-blocker`, { method: "POST", body: JSON.stringify(data) }),
   getMeta: () => request<Meta>("/meta"),
+  getTaskDetails: (id: string) => request<TaskDetails>(`/tasks/${id}/details`),
   addComment: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/add-comment`, { method: "POST", body: JSON.stringify(data) }),
 

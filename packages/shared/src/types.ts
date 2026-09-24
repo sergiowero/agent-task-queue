@@ -1,5 +1,14 @@
-import type { TaskStatus} from "./catalog.js";
-import { type Phase } from "./catalog.js";
+import type {
+  AutonomyLevel,
+  FindingStatus,
+  Phase,
+  Risk,
+  Severity,
+  TaskStatus,
+  TaskType,
+  Verdict,
+} from "./catalog.js";
+import type { PolicySettings } from "./policy.js";
 
 export { TaskStatus, normalizeStatus } from "./catalog.js";
 
@@ -31,6 +40,41 @@ export interface AgentReference {
   sessionKey?: string;
   runnerId?: string;
   claimedAt?: string;
+}
+
+/** Who produced a phase's artifact (plan, code, review, merge): used for separation of duties. */
+export interface Producer {
+  sessionKey: string | null;
+  agentId: string | null;
+  tool: string | null;
+  model: string | null;
+  at: string;
+}
+
+export interface LastReview {
+  round: number;
+  verdict: Verdict;
+  by: string;
+  at: string;
+}
+
+/** A review finding, tracked by id across rounds ("R2-3" = code review round 2, finding 3). */
+export interface Finding {
+  id: string;
+  taskId: string;
+  round: number;
+  phase: "plan" | "code";
+  severity: Severity;
+  file: string | null;
+  line: number | null;
+  text: string;
+  status: FindingStatus;
+  resolution: string | null;
+  raisedBy: string;
+  /** Times a reviewer reopened it after the coder marked it fixed or wontfix. */
+  reopenCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Why an agent (or the runner) stopped and what it needs from a person. */
@@ -73,6 +117,23 @@ export interface Task {
   blocker: Blocker | null;
   /** Consecutive runs that ended without a submit; reset by any submit or human action. */
   revertStreak: number;
+  type: TaskType;
+  risk: Risk;
+  /** Overrides the project's autonomy level; null uses the project's. */
+  autonomy: AutonomyLevel | null;
+  /** Plan critiques so far. */
+  planRound: number;
+  /** AI code reviews so far (finding ids use it: R{codeRound}-n). */
+  codeRound: number;
+  /** Consecutive red verifications. */
+  verifyFailures: number;
+  /** Round counts at the last time a person reset the limits (answering an escalation). */
+  roundBaseline: { plan?: number; code?: number };
+  /** Who produced each phase's latest artifact. */
+  producers: Partial<Record<Phase, Producer>>;
+  /** Hand-opened agent sessions must show activity before this time or lose the claim. */
+  leaseExpiresAt: string | null;
+  lastReview: LastReview | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -101,6 +162,9 @@ export interface Project {
   workingDirectory: string;
   /** Branch new tasks merge into (detected from origin/HEAD when the project is created). */
   defaultMergeBranch: string | null;
+  autonomy: AutonomyLevel;
+  /** Overrides of the default policy settings. */
+  policy: Partial<PolicySettings>;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
