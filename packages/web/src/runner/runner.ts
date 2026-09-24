@@ -12,6 +12,8 @@ import {
   getRunnerById,
   getRunners,
   getTaskById,
+  getTasks,
+  isActiveStatus,
   revertClaim,
 } from "@agentq/shared";
 import type { BuiltCommand, CommandBuilder } from "./commands.js";
@@ -337,6 +339,26 @@ export class RunnerEngine {
       context: `Claimed by runner ${runner.name}`,
       runnerId: runner.id,
     });
+  }
+
+  /**
+   * Called on server boot, before runners start: tasks a runner held when the
+   * server went down have no process any more, so they go back to the queue.
+   */
+  recoverOrphans(): string[] {
+    const live = new Set(
+      [...this.runtimes.values()].flatMap((rt) => [...rt.active.values()].map((a) => a.job.taskId)),
+    );
+    const recovered: string[] = [];
+    for (const task of getTasks(undefined, { includeArchived: true })) {
+      if (!isActiveStatus(task.status) || !task.assignedAgent?.runnerId || live.has(task.id)) continue;
+      const reverted = revertClaim(task.id, "The server restarted while a runner job held this task; it went back to the queue.");
+      if (reverted) {
+        recovered.push(task.id);
+        this.broadcast("task_updated", reverted);
+      }
+    }
+    return recovered;
   }
 
   /**

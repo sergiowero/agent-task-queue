@@ -97,10 +97,12 @@ beforeAll(async () => {
   server = startServer({ port: 0, dev: false });
   baseUrl = `http://localhost:${server.port}`;
 
+  // L0 (supervised): the lifecycle suites below expect the classic human gates.
   const res = await json("/api/projects", "POST", {
     id: testProjectId,
     displayName: "API Test Project",
     workingDirectory: "/tmp/api-test-project",
+    autonomy: 0,
   });
   expect(res.status).toBe(201);
 });
@@ -484,7 +486,11 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(early.status).toBe(400);
 
     await setStatus(taskId, TaskStatus.Reviewing);
+    const noVerdict = await subAction(taskId, "submit-review", { message: "LGTM with nits" });
+    expect(noVerdict.status).toBe(400);
+    expect((await noVerdict.json()).error).toContain("verdict");
     const task = await expectTransition(taskId, "submit-review", TaskStatus.WaitingCodeReview, {
+      verdict: "approve",
       message: "LGTM with nits",
     });
     const last = task.conversation[task.conversation.length - 1];
@@ -739,6 +745,40 @@ describe("state changes only go through the workflow", () => {
     const unblocked = await expectTransition(task.id, "unblock", TaskStatus.Approved);
     expect(unblocked.assignedAgent).toBeNull();
     expect(unblocked.claimToken).toBeNull();
+  });
+});
+
+describe("autonomy, risk and findings", () => {
+  it("projects take an autonomy level and policy overrides; tasks a type, risk and override", async () => {
+    const projectId = randomUUID();
+    const created = await json("/api/projects", "POST", {
+      id: projectId,
+      displayName: "Autonomy",
+      workingDirectory: "/tmp/autonomy",
+    });
+    expect((await created.json()).autonomy).toBe(2);
+    const edited = await json(`/api/projects/${projectId}`, "PUT", {
+      autonomy: 1,
+      policy: { maxReviewRounds: 4, requireDifferentModel: true },
+    });
+    expect(await edited.json()).toMatchObject({ autonomy: 1, policy: { maxReviewRounds: 4, requireDifferentModel: true } });
+    const bad = await json(`/api/projects/${projectId}`, "PUT", { autonomy: 7 });
+    expect(bad.status).toBe(400);
+    const unknownKey = await json(`/api/projects/${projectId}`, "PUT", { policy: { nope: 1 } });
+    expect(unknownKey.status).toBe(400);
+
+    const docs = await createTaskViaApi({ projectId, type: "docs" });
+    expect(docs).toMatchObject({ type: "docs", risk: "low", autonomy: null });
+    const raised = await json(`/api/tasks/${docs.id}`, "PUT", { risk: "high", autonomy: 0 });
+    expect(await raised.json()).toMatchObject({ risk: "high", autonomy: 0 });
+  });
+
+  it("GET /api/tasks/:id/details returns the review findings", async () => {
+    const task = await createTaskViaApi({ title: "Findings" });
+    const res = await api(`/api/tasks/${task.id}/details`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ findings: [] });
+    expect((await api(`/api/tasks/${randomUUID()}/details`)).status).toBe(404);
   });
 });
 

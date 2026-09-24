@@ -14,7 +14,14 @@ import {
   getProjectByTaskId,
   claimNextTask,
   reportBlocker,
+  getFindings,
+  policyFor,
+  reviewRoundsUsed,
+  severitySchema,
   skillsBundleVersion,
+  sweepQueue,
+  touchLease,
+  verdictSchema,
   skillsManifest,
   submitPlan,
   submitCode,
@@ -24,6 +31,7 @@ import {
   archiveTask,
   WorkflowError,
 } from "@agentq/shared";
+import { randomUUID } from "crypto";
 import { MCP_SERVER_NAME } from "./launch.js";
 
 export const SERVER_NAME = MCP_SERVER_NAME;
@@ -38,7 +46,7 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (ski
 4. Read task.status to know what to do, working in task.project.workingDirectory:
    - planning: write an implementation plan, then call submit_plan.
    - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
-   - reviewing: review the submitted code (task.worktreePath), then call submit_review with your findings and a verdict.
+   - reviewing: review the submitted code (task.worktreePath), verify the previous round's findings by id, then call submit_review with a verdict (approve, request_changes, needs_human) and structured findings. The verdict routes the task: approve moves it on, request_changes sends it back to the coder with your findings.
    - merging: push the feature branch and open a pull request into task.mergeBranch, then call submit_merge with mergeBranch, the pushed commit, authors and the PR in the message.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
@@ -63,7 +71,7 @@ function errorResult(error: string): CallToolResult {
 }
 
 /** Runs a handler, turning thrown errors into `{ success: false, error }` results. */
-function run(fn: () => JsonObject): CallToolResult {
+function runTool(fn: () => JsonObject): CallToolResult {
   try {
     return jsonResult(fn());
   } catch (error) {
@@ -82,6 +90,11 @@ function publicTask(task: Task): PublicTask {
 function withProject(task: Task): PublicTask & { project: Project | null } {
   const project = task.projectId ? getProjectByTaskId(task.id) : null;
   return { ...publicTask(task), project };
+}
+
+/** A task with its project and its review findings (what an agent needs to continue it). */
+function taskDetails(task: Task) {
+  return { ...withProject(task), findings: getFindings(task.id) };
 }
 
 /** Trims each entry and drops the empty ones; undefined stays undefined. */
@@ -146,12 +159,24 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
   );
-  // Each MCP session runs its own server process, so this map is the session's claims.
+  // Each MCP session runs its own server process, so this map is the session's claims
+  // and this id is the session's identity for separation of duties.
   const claims = new Map<string, string>(Object.entries(opts.claims ?? {}));
+  const instanceId = randomUUID();
   const auth = (input: { taskId: string; claimToken?: string; agentId?: string }) => ({
     claimToken: input.claimToken || claims.get(input.taskId),
     agentId: input.agentId,
   });
+  /** Any call from this session keeps its claims alive (hand-opened sessions have a lease). */
+  const keepAlive = () => {
+    for (const [taskId, token] of claims) touchLease(taskId, token);
+  };
+  const run = (fn: () => JsonObject): CallToolResult => {
+    try {
+      keepAlive();
+    } catch {}
+    return runTool(fn);
+  };
 
   server.registerTool(
     "claim_task",
@@ -189,6 +214,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             message: `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}. Stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.`,
           };
         }
+        sweepQueue();
         const result = claimNextTask({
           role: input.role,
           agent: {
@@ -200,6 +226,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           },
           context: input.context,
           projectId: input.projectId,
+          sessionKey: `mcp:${instanceId}`,
         });
         if (!result) {
           return {
@@ -209,9 +236,16 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           };
         }
         claims.set(result.task.id, result.claimToken);
+        const policy = policyFor(result.task);
         return {
           success: true,
-          task: withProject(result.task),
+          task: taskDetails(result.task),
+          autonomy: policy.level,
+          round: {
+            codeRound: result.task.codeRound,
+            used: reviewRoundsUsed(result.task),
+            maxReviewRounds: policy.maxReviewRounds,
+          },
           agent: { id: result.agent.id, role: result.effectiveRole },
           claimToken: result.claimToken,
           skillsVersion: SKILLS_VERSION,
@@ -286,10 +320,31 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit review",
       description:
-        "Submit review findings for a task you claimed in `reviewing` status. Moves it back to `waiting_code_review` and releases it.",
+        "Submit a verdict and structured findings for a task you claimed in `reviewing`. The verdict routes the task: approve moves it on (to `approved`, or to a person when the task is high risk or sampled), request_changes sends it back to `changes_requested` with your findings (after the project's round limit a person decides), needs_human asks a person. Approve is refused while blocker or major findings are open. Under autonomy L0 the verdict is advice and a person decides.",
       inputSchema: {
         taskId: taskIdSchema,
-        message: z.string().min(1).describe("Review findings (markdown)"),
+        verdict: verdictSchema.describe("approve, request_changes or needs_human"),
+        findings: z
+          .array(
+            z.object({
+              severity: severitySchema.describe("blocker and major block approval; minor and nit do not"),
+              file: z.string().optional(),
+              line: z.number().int().optional(),
+              text: z.string().min(1).describe("What is wrong and what to do instead"),
+            }),
+          )
+          .max(20)
+          .default([])
+          .describe("New findings of this round (ids are assigned: R<round>-<n>)"),
+        verifiedFindings: z
+          .array(z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) }))
+          .default([])
+          .describe("Earlier findings you checked: verified (fixed) or still open"),
+        question: z
+          .string()
+          .optional()
+          .describe("Required with needs_human: what a person must decide"),
+        message: z.string().min(1).describe("Review summary (markdown)"),
         author: authorSchema,
         context: submitContextSchema,
         claimToken: claimTokenSchema,
@@ -300,6 +355,10 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
       run(() =>
         submitResponse(
           submitReview(input.taskId, {
+            verdict: input.verdict,
+            findings: input.findings,
+            verifiedFindings: input.verifiedFindings,
+            question: input.question,
             message: input.message,
             author: input.author,
             context: input.context,
@@ -307,6 +366,24 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           }),
         ),
       ),
+  );
+
+  server.registerTool(
+    "heartbeat",
+    {
+      title: "Heartbeat",
+      description:
+        "Keep your claim on a task alive during long work. Claims made by hand-opened sessions expire after the project's lease (90 min by default) without any AgentQ call; every AgentQ call from your session already counts, so call this only during long silent stretches.",
+      inputSchema: { taskId: taskIdSchema, claimToken: claimTokenSchema },
+    },
+    (input) =>
+      run(() => {
+        const token = auth(input).claimToken;
+        const task = getTaskById(input.taskId);
+        if (!task) throw new WorkflowError("Task not found.");
+        const extended = !!token && touchLease(input.taskId, token);
+        return { success: true, taskId: input.taskId, leaseExpiresAt: getTaskById(input.taskId)!.leaseExpiresAt, extended };
+      }),
   );
 
   server.registerTool(
@@ -383,7 +460,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     "get_task",
     {
       title: "Get task",
-      description: "Fetch a task by ID, including its project, conversation, history and contexts.",
+      description: "Fetch a task by ID, including its project, conversation, history, contexts and review findings.",
       inputSchema: { taskId: taskIdSchema },
       annotations: { readOnlyHint: true },
     },
@@ -393,7 +470,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         if (!task) {
           throw new WorkflowError("Task not found.");
         }
-        return { success: true, task: withProject(task) };
+        return { success: true, task: taskDetails(task) };
       }),
   );
 

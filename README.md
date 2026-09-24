@@ -158,10 +158,13 @@ stateDiagram-v2
     waiting_plan_review --> plan_changes_requested: you request changes
     plan_changes_requested --> planning: planner claims
     ready_for_code --> coding: implementer claims
-    coding --> waiting_code_review: submit_code
+    coding --> waiting_code_review: submit_code (L0)
+    coding --> code_review_requested: submit_code (L1+)
+    reviewing --> approved: approve (L1+)
+    reviewing --> changes_requested: request_changes (L1+)
     waiting_code_review --> code_review_requested: you request an AI review
     code_review_requested --> reviewing: reviewer claims
-    reviewing --> waiting_code_review: submit_review
+    reviewing --> waiting_code_review: submit_review (L0)
     waiting_code_review --> changes_requested: you request changes
     changes_requested --> coding: implementer claims
     waiting_code_review --> approved: you approve
@@ -177,6 +180,10 @@ stateDiagram-v2
 ```
 
 Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever.
+
+### Autonomy
+
+Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
 
 ### Roles
 

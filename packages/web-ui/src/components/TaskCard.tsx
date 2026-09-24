@@ -71,6 +71,21 @@ export function TaskCard({
 
       <div className="mt-3 flex min-h-6 items-center gap-2">
         <StatusBadge status={task.status} />
+        {task.codeRound > 0 && (
+          <Badge
+            tone={
+              task.lastReview?.verdict === "approve"
+                ? "success"
+                : task.lastReview?.verdict === "needs_human"
+                  ? "danger"
+                  : "warning"
+            }
+          >
+            R{task.codeRound}
+            {task.lastReview ? ` ${task.lastReview.verdict === "approve" ? "✓" : task.lastReview.verdict === "request_changes" ? "✗" : "?"}` : ""}
+          </Badge>
+        )}
+        {task.risk === "high" && <Badge tone="danger">high risk</Badge>}
         {task.assignedAgent && (
           <span className="flex min-w-0 items-center gap-1 text-xs text-text-muted">
             <AgentsIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />

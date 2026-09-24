@@ -29,6 +29,8 @@ import {
   detectDefaultBranch,
   installedSkillVersions,
   reportBlocker,
+  getFindings,
+  sweepQueue,
   requestAiReview,
   requestCodeChanges,
   requestPlanChanges,
@@ -361,6 +363,7 @@ export function startServer(opts: StartServerOptions = {}) {
         handleTasksList,
         handleCreateTask,
         handleTaskSubActions,
+        handleTaskDetails,
         handleTaskById,
         handleUnmatchedApi,
         handleDevProxy,
@@ -398,7 +401,23 @@ async function main() {
   process.on("SIGTERM", () => void shutdown());
 
   const server = startServer();
+  // Runner jobs do not survive a restart: give their tasks back before runners claim again.
+  runnerEngine.recoverOrphans();
   runnerEngine.startEnabledRunners();
+  // Expired claims of silent sessions and reviews nobody eligible picked up.
+  const sweep = () => {
+    try {
+      const { expired, starved } = sweepQueue();
+      for (const id of [...expired, ...starved]) {
+        const task = getTaskById(id);
+        if (task) broadcastSSE("task_updated", task);
+      }
+    } catch (e) {
+      console.error("[sweeper]", e);
+    }
+  };
+  sweep();
+  setInterval(sweep, 60_000);
 
   console.log(`AgentQ Web Server running on http://localhost:${server.port}`);
 }
@@ -727,8 +746,19 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         worktree: typeof body?.worktree === "string" ? body.worktree : undefined,
         ...auth,
       }).task,
-    submit_review: () =>
-      submitReview(taskId, { message: data.message, author, context: data.context, ...auth }).task,
+    submit_review: () => {
+      if (!data.verdict) return errorResponse("verdict is required (approve, request_changes or needs_human)");
+      return submitReview(taskId, {
+        verdict: data.verdict,
+        findings: Array.isArray(body?.findings) ? body.findings : [],
+        verifiedFindings: Array.isArray(body?.verifiedFindings) ? body.verifiedFindings : [],
+        question: data.question,
+        message: data.message,
+        author,
+        context: data.context,
+        ...auth,
+      }).task;
+    },
     submit_merge: () => {
       if (!body?.branch || !body?.commit || !body?.authors) {
         return errorResponse("branch, commit, and authors are required");
@@ -799,6 +829,15 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   }
   broadcastSSE("task_updated", result);
   return jsonResponse(result);
+});
+
+/** Records kept beside a task (review findings); fetched separately from the task itself. */
+const handleTaskDetails = wrapHandler(async (req, url) => {
+  const match = url.pathname.match(/^\/api\/tasks\/([a-z0-9-]+)\/details$/);
+  if (!match || req.method !== "GET") throw null;
+  const task = getTaskById(match[1]);
+  if (!task) return errorResponse("not found", 404);
+  return jsonResponse({ findings: getFindings(task.id) });
 });
 
 const handleTaskById = wrapHandler(async (req, url) => {

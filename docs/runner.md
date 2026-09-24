@@ -176,6 +176,20 @@ When a person unblocks, cancels or answers a task from the portal while a job is
 working on it, the server kills that job (`abandonTask`). Its claim token is gone, so
 anything the dying agent still submits is refused.
 
+### Separation of duties and restarts
+
+A runner claims with its id, so every claim of the same runner has the same
+`sessionKey` (`runner:<id>`) across jobs. Submits record it as the producer of
+the artifact, and a claim never returns the review of code the same runner
+wrote. On an L1+ project a single `senior` runner therefore needs a second
+runner that can review; the Runners page says so. Reviews nobody eligible picks
+up go to a person after the project's `reviewStarvationMin`.
+
+When the server starts, tasks that a runner job held when the server went down
+go back to the queue (`recoverOrphans`), before any runner claims again. The
+server also sweeps every minute: expired leases of hand-opened sessions and
+starved reviews (see [policy.md](policy.md)).
+
 ### Claim tokens
 
 Each claim gets a secret `claimToken` that every `submit_*` and `report_blocker` call

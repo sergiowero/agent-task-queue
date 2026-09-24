@@ -123,6 +123,7 @@ A unit of work assigned to an agent. Contains:
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (completion conditions)
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
+- **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
 - **Workflow**: requiresPlan flag (immutable), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
@@ -140,6 +141,7 @@ A coding agent that claims and works on tasks. Contains:
 A local repository that tasks belong to. Contains:
 - **Identity**: UUID, displayName
 - **Location**: workingDirectory (absolute path to repo)
+- **Autonomy**: level L0–L3 (default L2) and policy overrides (review rounds, spot checks, different reviewer model, lease, starvation); see [policy.md](policy.md)
 - **defaultMergeBranch**: branch new tasks target unless they name one; detected from `origin/HEAD` when the project is created (falls back to `main`/`master`), editable
 - **Lifecycle**: timestamps, soft delete support
 
@@ -179,15 +181,15 @@ The task lifecycle moves through these states:
 
 **coding** → Agent is actively implementing the task.
 
-**waiting_code_review** → Code submitted, awaiting review. Can trigger an on-demand AI review.
+**waiting_code_review** → Code waiting for a person: under L0 after every submit; under L1+ only when an AI approval is high risk or sampled, or no reviewer picked it up. Can trigger an on-demand AI review.
 
-**code_review_requested** → User explicitly requested an AI code review. Pending reviewer assignment.
+**code_review_requested** → Waiting for an AI reviewer: under L1+ right after `submit_code`, under L0 when a person requests it. Never claimed by the session that wrote the code.
 
 **reviewing** → Agent is actively reviewing the submitted code.
 
-**changes_requested** → Reviewer identified issues. Feedback loop back to coding.
+**changes_requested** → A person or the AI reviewer (L1+) asked for changes; the findings are tracked by id. Feedback loop back to coding.
 
-**approved** → Code accepted. Ready for merge.
+**approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for merge.
 
 **merging** → Agent is merging code into target branch.
 

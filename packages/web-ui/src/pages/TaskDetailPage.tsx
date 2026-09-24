@@ -55,7 +55,19 @@ import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
 import { BlockerPanel } from "../components/BlockerPanel";
-import { STATUS_INFO, UNBLOCK_TARGET, type TaskStatus } from "@agentq/shared/catalog";
+import {
+  AUTONOMY_LEVELS,
+  RISKS,
+  STATUS_INFO,
+  TASK_TYPES,
+  UNBLOCK_TARGET,
+  type AutonomyLevel,
+  type Risk,
+  type TaskStatus,
+  type TaskType,
+} from "@agentq/shared/catalog";
+import { FindingsList } from "../components/FindingsList";
+import { Select } from "../components/Select";
 
 const info = (status: string) => STATUS_INFO[status as TaskStatus];
 
@@ -90,6 +102,8 @@ const ACTION_DONE: Record<TaskAction, string> = {
 
 const stagger = (i: number) => ({ "--i": i }) as CSSProperties;
 
+const VERDICT_TONE = { approve: "success", request_changes: "warning", needs_human: "danger" } as const;
+
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -117,6 +131,14 @@ export function TaskDetailPage() {
     queryFn: api.getProjects,
   });
 
+  const { data: details } = useQuery({
+    queryKey: ["task-details", id],
+    queryFn: () => api.getTaskDetails(id!),
+    enabled: !!id,
+    refetchInterval: 5000,
+  });
+  const findings = details?.findings ?? [];
+
   const mutation = useMutation({
     mutationFn: ({ action, data }: { action: TaskAction; data?: object }) => {
       const fn = api[action] as (taskId: string, data?: unknown) => Promise<Task>;
@@ -124,6 +146,7 @@ export function TaskDetailPage() {
     },
     onSuccess: (_task, { action }) => {
       queryClient.invalidateQueries({ queryKey: ["task", id] });
+      queryClient.invalidateQueries({ queryKey: ["task-details", id] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setFeedback("");
       toast.success(ACTION_DONE[action]);
@@ -576,6 +599,71 @@ export function TaskDetailPage() {
                     await updateMutation.mutateAsync({ mergeBranch: v.trim() })
                   }
                 />
+                <PropertyRow icon={DescriptionIcon} label="Type">
+                  <Select
+                    selectSize="sm"
+                    aria-label="Task type"
+                    wrapperClassName="w-32"
+                    value={task.type}
+                    disabled={!canEdit || updateMutation.isPending}
+                    onChange={(e) => updateMutation.mutate({ type: e.target.value as TaskType })}
+                  >
+                    {Object.entries(TASK_TYPES).map(([value, t]) => (
+                      <option key={value} value={value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                </PropertyRow>
+                <PropertyRow icon={GuardrailIcon} label="Risk">
+                  <Select
+                    selectSize="sm"
+                    aria-label="Risk"
+                    wrapperClassName="w-32"
+                    value={task.risk}
+                    disabled={!canEdit || updateMutation.isPending}
+                    onChange={(e) => updateMutation.mutate({ risk: e.target.value as Risk })}
+                  >
+                    {Object.entries(RISKS).map(([value, r]) => (
+                      <option key={value} value={value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </Select>
+                </PropertyRow>
+                <PropertyRow icon={AgentsIcon} label="Autonomy">
+                  <Select
+                    selectSize="sm"
+                    aria-label="Autonomy"
+                    wrapperClassName="w-40"
+                    value={task.autonomy === null ? "" : String(task.autonomy)}
+                    disabled={!canEdit || updateMutation.isPending}
+                    onChange={(e) =>
+                      updateMutation.mutate({
+                        autonomy: e.target.value === "" ? null : (Number(e.target.value) as AutonomyLevel),
+                      })
+                    }
+                  >
+                    <option value="">
+                      Project ({AUTONOMY_LEVELS[(projects.find((p) => p.id === task.projectId)?.autonomy ?? 2) as AutonomyLevel].label})
+                    </option>
+                    {Object.entries(AUTONOMY_LEVELS).map(([value, l]) => (
+                      <option key={value} value={value}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </Select>
+                </PropertyRow>
+                {task.codeRound > 0 && (
+                  <PropertyRow icon={AiReviewIcon} label="AI review">
+                    <Badge tone="neutral">R{task.codeRound}</Badge>
+                    {task.lastReview && (
+                      <Badge tone={VERDICT_TONE[task.lastReview.verdict]}>
+                        {task.lastReview.verdict.replace("_", " ")}
+                      </Badge>
+                    )}
+                  </PropertyRow>
+                )}
                 <PropertyRow icon={PlanIcon} label="Requires plan">
                   <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
                     {task.requiresPlan ? "Yes" : "No"}
@@ -625,6 +713,12 @@ export function TaskDetailPage() {
           </aside>
 
           <section className="min-w-0 xl:col-start-1 xl:row-start-2">
+            {findings.length > 0 && (
+              <div className="card mb-4 p-4">
+                <h2 className="eyebrow mb-3">Review findings</h2>
+                <FindingsList findings={findings} />
+              </div>
+            )}
             <Tabs
               label="Task activity"
               value={tab}

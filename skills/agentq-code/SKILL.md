@@ -3,7 +3,7 @@ name: agentq-code
 description: Coding phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
 allowed-tools: mcp__agentq__submit_code, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "3.2.0"
+  version: "4.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -68,11 +68,11 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
 
 ### Review fixes (claimed from `changes_requested`)
 
-When a review requests changes, the feedback is in the task conversation (`messageType: "review"`). Fix it and commit AGAIN in the same worktree:
+When a review requests changes, the feedback is in `task.findings[]` (each finding has an id like `R1-2`, a severity, and usually a file and line) and in the review message of the conversation (`messageType: "review"`). A person's change request is a `user` message. Fix it and commit AGAIN in the same worktree:
 
 1. Go to the existing worktree (never create a new one)
-2. Read the review feedback from `task.conversation[]`
-3. Fix the issues
+2. Read the open findings (`task.findings[]` with `status: "open"`) and the latest review message
+3. Fix every `blocker` and `major` finding; fix `minor`/`nit` ones when cheap. In your `submit_code` message, answer each open finding by id: fixed (and how) or not fixed (and why)
 4. Commit again:
    ```bash
    git add -A
@@ -90,9 +90,9 @@ Commit your changes in the worktree BEFORE calling `submit_code` — it only rec
 { "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown message>", "worktree": "<absolute worktree path>", "context": "<handoff notes>" }
 ```
 
-`context` is required too (see Context Handoff in `agentq-claim`). For the reviewer, include: what to look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, say which review points you fixed and any you deliberately did not, and why.
+`context` is required too (see Context Handoff in `agentq-claim`). For the reviewer, include: what to look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
 
-It stores the worktree path, moves the task to `waiting_code_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It stores the worktree path, releases the task and sends it to review: to an AI reviewer (`code_review_requested`) under autonomy L1 and higher, to a person (`waiting_code_review`) under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Code Template
 

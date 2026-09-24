@@ -1,19 +1,25 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
+import { AUTONOMY_LEVELS, type AutonomyLevel } from "@agentq/shared/catalog";
 import { api } from "../lib/api";
+import type { PolicySettings } from "../lib/api";
 import { DeleteIcon, EditIcon, FolderIcon, MergeIcon, SaveIcon } from "../lib/icons";
 import { Button } from "./Button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Field } from "./Field";
 import { Input } from "./Input";
 import { Modal, useModal } from "./Modal";
+import { Select } from "./Select";
+import { Toggle } from "./Toggle";
 
 interface ProjectRef {
   id: string;
   displayName: string;
   workingDirectory: string;
   defaultMergeBranch?: string | null;
+  autonomy?: AutonomyLevel;
+  policy?: Partial<PolicySettings>;
 }
 
 interface EditProjectModalProps {
@@ -70,6 +76,10 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const [displayName, setDisplayName] = useState(project.displayName);
   const [workingDirectory, setWorkingDirectory] = useState(project.workingDirectory);
   const [defaultMergeBranch, setDefaultMergeBranch] = useState(project.defaultMergeBranch ?? "");
+  const [autonomy, setAutonomy] = useState<AutonomyLevel>(project.autonomy ?? 2);
+  const [maxReviewRounds, setMaxReviewRounds] = useState(String(project.policy?.maxReviewRounds ?? 3));
+  const [humanSampleEvery, setHumanSampleEvery] = useState(String(project.policy?.humanSampleEvery ?? 0));
+  const [requireDifferentModel, setRequireDifferentModel] = useState(project.policy?.requireDifferentModel ?? false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const updateMutation = useMutation({
@@ -78,6 +88,12 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
         displayName,
         workingDirectory,
         defaultMergeBranch: defaultMergeBranch.trim() || null,
+        autonomy,
+        policy: {
+          maxReviewRounds: Math.max(1, parseInt(maxReviewRounds, 10) || 3),
+          humanSampleEvery: Math.max(0, parseInt(humanSampleEvery, 10) || 0),
+          requireDifferentModel,
+        },
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -156,6 +172,29 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               spellCheck={false}
             />
           </Field>
+          <Field label="Autonomy" hint={AUTONOMY_LEVELS[autonomy].description}>
+            <Select value={String(autonomy)} onChange={(e) => setAutonomy(Number(e.target.value) as AutonomyLevel)}>
+              {Object.entries(AUTONOMY_LEVELS).map(([value, l]) => (
+                <option key={value} value={value}>
+                  {l.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="AI review rounds" hint="Change requests before a person decides.">
+              <Input type="number" min={1} max={10} value={maxReviewRounds} onChange={(e) => setMaxReviewRounds(e.target.value)} />
+            </Field>
+            <Field label="Human spot check" hint="Every Nth AI approval also goes to you (0 = never).">
+              <Input type="number" min={0} value={humanSampleEvery} onChange={(e) => setHumanSampleEvery(e.target.value)} />
+            </Field>
+          </div>
+          <Toggle
+            checked={requireDifferentModel}
+            onChange={setRequireDifferentModel}
+            label="Reviewer uses a different model"
+            description="An AI review is never claimed by an agent on the coder's model."
+          />
         </div>
       </Modal>
       {confirmingDelete && (

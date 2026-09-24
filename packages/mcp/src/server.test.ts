@@ -42,6 +42,7 @@ const TOOL_NAMES = [
   "post_comment",
   "archive_task",
   "report_blocker",
+  "heartbeat",
 ];
 
 const senior = {
@@ -83,7 +84,8 @@ describe("AgentQ MCP server", () => {
   let client: Client;
 
   beforeAll(async () => {
-    createProject({ id: projectId, displayName: "MCP Project", workingDirectory: "/tmp/mcp" });
+    // L0 (supervised): the submits keep their classic destinations; L2 routing has its own suite.
+    createProject({ id: projectId, displayName: "MCP Project", workingDirectory: "/tmp/mcp", autonomy: 0 });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await createAgentQMcpServer().connect(serverTransport);
@@ -175,7 +177,7 @@ describe("AgentQ MCP server", () => {
       tool: "TestAgent",
       model: "test-model",
       agentId: "testagent@1.0|test-model",
-      sessionKey: "session:session-mcp",
+      sessionKey: expect.stringMatching(/^mcp:/),
     });
     // The token comes back once, to the claimer; the task itself never shows it.
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
@@ -195,7 +197,7 @@ describe("AgentQ MCP server", () => {
       taskId,
       previousStatus: TaskStatus.Planning,
       newStatus: TaskStatus.WaitingPlanReview,
-      message: "Plan submitted. Task moved to Waiting Plan Review.",
+      message: "Plan submitted. Task moved to Plan review.",
     });
     expect(planResult.structuredContent).toEqual(plan);
 
@@ -269,7 +271,7 @@ describe("AgentQ MCP server", () => {
       taskId: coding.id,
       previousStatus: TaskStatus.Coding,
       newStatus: TaskStatus.WaitingCodeReview,
-      message: "Code submitted. Task moved to Waiting Code Review.",
+      message: "Code submitted. Task moved to Code review.",
     });
     const storedCode = getTaskById(coding.id)!;
     expect(storedCode.worktreePath).toBe("/tmp/wt-code");
@@ -282,14 +284,14 @@ describe("AgentQ MCP server", () => {
     const review = parse(
       (await client.callTool({
         name: "submit_review",
-        arguments: { taskId: reviewing.id, message: "LGTM", context: "Approve, no blockers" },
+        arguments: { taskId: reviewing.id, verdict: "approve", message: "LGTM", context: "Approve, no blockers" },
       })) as CallToolResult,
     );
     expect(review).toMatchObject({
       success: true,
       previousStatus: TaskStatus.Reviewing,
       newStatus: TaskStatus.WaitingCodeReview,
-      message: "Review submitted. Task moved to Waiting Code Review.",
+      message: "Review submitted (approve). Task moved to Code review.",
     });
 
     const merging = createTask({ title: "merging", description: "d", projectId });
@@ -426,6 +428,7 @@ describe("AgentQ MCP agent workflow", () => {
   const projectId = "mcp-workflow-" + Date.now();
   const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model" };
   let client: Client;
+  let primaryClient: Client | null = null;
   let planTaskId: string;
   let codeTaskId: string;
 
@@ -455,6 +458,7 @@ describe("AgentQ MCP agent workflow", () => {
       id: projectId,
       displayName: "Workflow Project",
       workingDirectory: "/tmp/workflow",
+      autonomy: 0,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await createAgentQMcpServer().connect(serverTransport);
@@ -577,7 +581,7 @@ describe("AgentQ MCP agent workflow", () => {
     const submits: [string, string, Record<string, unknown>][] = [
       ["submit_plan", planTaskId, { message: "x" }],
       ["submit_code", codeTaskId, { message: "x", worktree: "/tmp/wt" }],
-      ["submit_review", codeTaskId, { message: "x" }],
+      ["submit_review", codeTaskId, { verdict: "approve", message: "x" }],
       ["submit_merge", codeTaskId, { mergeBranch: "develop", commit: "abc", authors: "dev" }],
     ];
     for (const [tool, taskId, args] of submits) {
@@ -593,6 +597,15 @@ describe("AgentQ MCP agent workflow", () => {
 
   it("senior claims a code_review_requested task as reviewer -> reviewing", async () => {
     updateTask(codeTaskId, { status: TaskStatus.CodeReviewRequested });
+    // This session wrote the code, so it may not review it: another session does.
+    const own = await claim("senior", "s4");
+    expect(own.reason).toBe("no_tasks_available");
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    const reviewerClient = new Client({ name: "reviewer-client", version: "0.0.0" });
+    await reviewerClient.connect(clientTransport);
+    primaryClient = client;
+    client = reviewerClient;
     const out = await claim("senior", "s4");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(codeTaskId);
@@ -600,15 +613,18 @@ describe("AgentQ MCP agent workflow", () => {
     expect(out.agent.role).toBe("reviewer");
   });
 
-  it("submit_review moves the task back to waiting_code_review", async () => {
+  it("submit_review moves the task back to waiting_code_review (L0: the verdict is advice)", async () => {
     const out = await ok("submit_review", {
       taskId: codeTaskId,
+      verdict: "approve",
       message: "Looks good",
       context: "Approve, no blockers",
     });
     expect(out.success).toBe(true);
     expect(out.taskId).toBe(codeTaskId);
     expect(await status(codeTaskId)).toBe(TaskStatus.WaitingCodeReview);
+    await client.close();
+    client = primaryClient!;
   });
 
   it("implementer claims an approved task -> merging", async () => {
@@ -899,6 +915,47 @@ describe("AgentQ MCP claims and blockers", () => {
     // Nothing claims a task that waits for a person.
     const none = parse(await call(client, "claim_task", { ...agent, role: "senior", sessionId: "s3", projectId }));
     expect(none.reason).toBe("no_tasks_available");
+  });
+
+  it("L2: submit_review needs a verdict; findings come back on get_task; the verdict routes", async () => {
+    const task = createTask({ title: "l2 review", description: "d", projectId });
+    const coder = await connect();
+    const reviewer = await connect();
+    parse(await call(coder, "claim_task", { ...agent, role: "implementer", sessionId: "c1", projectId }));
+    const coded = parse(await call(coder, "submit_code", { taskId: task.id, message: "c", worktree: "/w", context: "c" }));
+    expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
+
+    const claimed = parse(await call(reviewer, "claim_task", { ...agent, role: "reviewer", sessionId: "r1", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    expect(claimed).toMatchObject({ autonomy: 2, round: { codeRound: 0, maxReviewRounds: 3 } });
+
+    expect(validationError(await call(reviewer, "submit_review", { taskId: task.id, message: "m", context: "c" }))).toContain("verdict");
+    const out = parse(
+      await call(reviewer, "submit_review", {
+        taskId: task.id,
+        verdict: "request_changes",
+        findings: [{ severity: "major", file: "src/a.ts", line: 12, text: "Missing test for the empty case" }],
+        message: "One blocker",
+        context: "Fix R1-1 first",
+      }),
+    );
+    expect(out.newStatus).toBe(TaskStatus.ChangesRequested);
+    const got = parse(await call(coder, "get_task", { taskId: task.id }));
+    expect(got.task.findings).toMatchObject([{ id: "R1-1", severity: "major", file: "src/a.ts", line: 12, status: "open" }]);
+    expect(got.task.lastReview).toMatchObject({ verdict: "request_changes", round: 1 });
+  });
+
+  it("heartbeat extends a hand-opened session's lease", async () => {
+    createTask({ title: "long work", description: "d", projectId });
+    const client = await connect();
+    const { task } = parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "h1", projectId }));
+    const before = getTaskById(task.id)!.leaseExpiresAt!;
+    await Bun.sleep(5);
+    const beat = parse(await call(client, "heartbeat", { taskId: task.id }));
+    expect(beat).toMatchObject({ success: true, extended: true });
+    expect(beat.leaseExpiresAt > before).toBe(true);
+    const stranger = await connect();
+    expect(parse(await call(stranger, "heartbeat", { taskId: task.id })).extended).toBe(false);
   });
 
   it("refuses agents whose skills are older than the server supports", async () => {

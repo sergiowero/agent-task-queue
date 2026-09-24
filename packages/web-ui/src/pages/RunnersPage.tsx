@@ -634,6 +634,13 @@ export function RunnersPage() {
         )}
         {runners.length > 0 && (
           <div className="space-y-5">
+            {runners.filter((r) => ["reviewer", "senior", "architect"].includes(r.role)).length === 1 && (
+              <Alert tone="info" title="Reviews need a second agent">
+                With autonomy L1 or higher, code goes to an AI review without a click, but a runner never
+                reviews code it wrote. Add a second runner that can review (reviewer, architect or senior),
+                ideally on a different model; otherwise unclaimed reviews go to you after a while.
+              </Alert>
+            )}
             <div className="grid grid-cols-3 gap-3">
               <StatCard icon={RunnersIcon} label="Runners" value={runners.length} tone="primary" />
               <StatCard

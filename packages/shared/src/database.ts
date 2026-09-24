@@ -3,6 +3,9 @@ import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import type { AutonomyLevel, Risk, TaskType } from "./catalog.js";
+import { SEPARATION, TASK_TYPES } from "./catalog.js";
+import type { PolicySettings } from "./policy.js";
 import type {
   Task,
   ConversationEntry,
@@ -74,6 +77,11 @@ function getDb(): Database {
     runMigrations();
   }
   return db;
+}
+
+/** The open database, for modules that keep their own tables (records.ts). */
+export function getDbHandle(): Database {
+  return getDb();
 }
 
 /**
@@ -352,6 +360,66 @@ const MIGRATIONS: Migration[] = [
       try { d.exec("UPDATE tasks SET claim_token = NULL, blocker = NULL, revert_streak = 0"); } catch {}
     },
   },
+  {
+    // Autonomy levels, risk, task types, round counters and claim leases.
+    name: "012_autonomy_and_policy",
+    up: (d) => {
+      addColumn(d, "projects", "autonomy INTEGER NOT NULL DEFAULT 2");
+      addColumn(d, "projects", "policy TEXT DEFAULT '{}'");
+      d.exec("UPDATE projects SET autonomy = 2");
+      addColumn(d, "tasks", "autonomy INTEGER");
+      addColumn(d, "tasks", "risk TEXT NOT NULL DEFAULT 'medium'");
+      addColumn(d, "tasks", "type TEXT NOT NULL DEFAULT 'feature'");
+      addColumn(d, "tasks", "plan_round INTEGER NOT NULL DEFAULT 0");
+      addColumn(d, "tasks", "code_round INTEGER NOT NULL DEFAULT 0");
+      addColumn(d, "tasks", "verify_failures INTEGER NOT NULL DEFAULT 0");
+      addColumn(d, "tasks", "round_baseline TEXT DEFAULT '{}'");
+      addColumn(d, "tasks", "producers TEXT DEFAULT '{}'");
+      addColumn(d, "tasks", "lease_expires_at TEXT");
+      addColumn(d, "tasks", "last_review TEXT");
+      // Existing tasks: one round per AI review already in the conversation.
+      const rows = d.prepare("SELECT id, conversation FROM tasks").all() as { id: string; conversation: string }[];
+      const set = d.prepare("UPDATE tasks SET code_round = ? WHERE id = ?");
+      for (const row of rows) {
+        const reviews = parseJson<ConversationEntry[]>(row.conversation, []).filter((e) => e.messageType === "review").length;
+        if (reviews) set.run(reviews, row.id);
+      }
+    },
+    down: (d) => {
+      try {
+        d.exec(`UPDATE tasks SET autonomy = NULL, risk = 'medium', type = 'feature', plan_round = 0, code_round = 0,
+          verify_failures = 0, round_baseline = '{}', producers = '{}', lease_expires_at = NULL, last_review = NULL`);
+        d.exec("UPDATE projects SET autonomy = 2, policy = '{}'");
+      } catch {}
+    },
+  },
+  {
+    // Review findings, tracked by id across rounds.
+    name: "013_task_findings",
+    up: (d) => {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS task_findings (
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          id TEXT NOT NULL,
+          round INTEGER NOT NULL,
+          phase TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          severity TEXT NOT NULL,
+          file TEXT,
+          line INTEGER,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          resolution TEXT,
+          raised_by TEXT NOT NULL,
+          reopen_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (task_id, id)
+        );
+      `);
+    },
+    down: (d) => d.exec("DROP TABLE IF EXISTS task_findings"),
+  },
 ];
 
 function runMigrations(): void {
@@ -454,6 +522,16 @@ function rowToTask(row: any): Task {
     claimToken: row.claim_token ?? null,
     blocker: parseJson(row.blocker, null),
     revertStreak: row.revert_streak ?? 0,
+    type: row.type ?? "feature",
+    risk: row.risk ?? "medium",
+    autonomy: row.autonomy ?? null,
+    planRound: row.plan_round ?? 0,
+    codeRound: row.code_round ?? 0,
+    verifyFailures: row.verify_failures ?? 0,
+    roundBaseline: parseJson(row.round_baseline, {}),
+    producers: parseJson(row.producers, {}),
+    leaseExpiresAt: row.lease_expires_at ?? null,
+    lastReview: parseJson(row.last_review, null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -483,6 +561,8 @@ function rowToProject(row: any): Project {
     displayName: row.display_name,
     workingDirectory: row.working_directory,
     defaultMergeBranch: row.default_merge_branch ?? null,
+    autonomy: row.autonomy ?? 2,
+    policy: parseJson(row.policy, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -551,6 +631,9 @@ export function createTask(data: {
   mergeBranch?: string;
   projectId: string;
   contexts?: string[];
+  type?: TaskType;
+  risk?: Risk;
+  autonomy?: AutonomyLevel | null;
 }): Task {
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -576,6 +659,16 @@ export function createTask(data: {
     claimToken: null,
     blocker: null,
     revertStreak: 0,
+    type: data.type ?? "feature",
+    risk: data.risk ?? TASK_TYPES[data.type ?? "feature"].defaultRisk,
+    autonomy: data.autonomy ?? null,
+    planRound: 0,
+    codeRound: 0,
+    verifyFailures: 0,
+    roundBaseline: {},
+    producers: {},
+    leaseExpiresAt: null,
+    lastReview: null,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -586,8 +679,9 @@ export function createTask(data: {
   const stmt = getDb().prepare(
     `INSERT INTO tasks (id, title, description, steer_details, guardrails, acceptance_criteria, priority,
       recommended_branch, real_branch, requires_plan, merge_branch, status,
-      assigned_agent_id, conversation, history, contexts, project_id, worktree_path, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      assigned_agent_id, conversation, history, contexts, project_id, worktree_path, created_at, updated_at,
+      type, risk, autonomy)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   stmt.run(
     task.id,
@@ -610,6 +704,9 @@ export function createTask(data: {
     task.worktreePath,
     task.createdAt,
     task.updatedAt,
+    task.type,
+    task.risk,
+    task.autonomy,
   );
 
   return task;
@@ -621,25 +718,47 @@ export function getTaskById(id: string): Task | null {
   return row ? rowToTask(row) : null;
 }
 
+export interface ClaimFilter {
+  /** Identity of the claimer: tasks whose artifact it produced are skipped (separation of duties). */
+  sessionKey?: string;
+  /** Model of the claimer: skipped when the project requires a different model than the producer's. */
+  model?: string;
+}
+
 export function getClaimableTasks(
   statuses: string[],
   projectId?: string,
   limit = 10,
   excludeTaskIds: string[] = [],
+  filter: ClaimFilter = {},
 ): Task[] {
   if (statuses.length === 0) return [];
   const placeholders = statuses.map(() => "?").join(", ");
-  let sql = `SELECT * FROM tasks WHERE status IN (${placeholders}) AND assigned_agent_id IS NULL AND deleted_at IS NULL AND archived_at IS NULL`;
+  let sql = `SELECT t.* FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+    WHERE t.status IN (${placeholders}) AND t.assigned_agent_id IS NULL AND t.deleted_at IS NULL AND t.archived_at IS NULL`;
   const params: any[] = [...statuses];
   if (projectId) {
-    sql += " AND project_id = ?";
+    sql += " AND t.project_id = ?";
     params.push(projectId);
   }
   if (excludeTaskIds.length > 0) {
-    sql += ` AND id NOT IN (${excludeTaskIds.map(() => "?").join(", ")})`;
+    sql += ` AND t.id NOT IN (${excludeTaskIds.map(() => "?").join(", ")})`;
     params.push(...excludeTaskIds);
   }
-  sql += " ORDER BY priority DESC, created_at ASC LIMIT ?";
+  // Nobody claims the review of an artifact they produced.
+  for (const [status, phase] of Object.entries(SEPARATION)) {
+    if (!statuses.includes(status)) continue;
+    if (filter.sessionKey) {
+      sql += ` AND NOT (t.status = ? AND json_extract(t.producers, '$.${phase}.sessionKey') IS ?)`;
+      params.push(status, filter.sessionKey);
+    }
+    if (filter.model) {
+      sql += ` AND NOT (t.status = ? AND json_extract(t.producers, '$.${phase}.model') IS ?
+        AND COALESCE(json_extract(p.policy, '$.requireDifferentModel'), 0) = 1)`;
+      params.push(status, filter.model);
+    }
+  }
+  sql += " ORDER BY t.priority DESC, t.created_at ASC LIMIT ?";
   params.push(limit);
   return getDb().prepare(sql).all(...params).map(rowToTask);
 }
@@ -693,6 +812,16 @@ const TASK_COLUMNS = {
   claimToken: { column: "claim_token", json: false },
   blocker: { column: "blocker", json: true },
   revertStreak: { column: "revert_streak", json: false },
+  type: { column: "type", json: false },
+  risk: { column: "risk", json: false },
+  autonomy: { column: "autonomy", json: false },
+  planRound: { column: "plan_round", json: false },
+  codeRound: { column: "code_round", json: false },
+  verifyFailures: { column: "verify_failures", json: false },
+  roundBaseline: { column: "round_baseline", json: true },
+  producers: { column: "producers", json: true },
+  leaseExpiresAt: { column: "lease_expires_at", json: false },
+  lastReview: { column: "last_review", json: true },
 } as const;
 
 export type TaskPatch = {
@@ -892,12 +1021,23 @@ export function createProject(data: {
   displayName: string;
   workingDirectory: string;
   defaultMergeBranch?: string | null;
+  autonomy?: AutonomyLevel;
+  policy?: Partial<PolicySettings>;
 }): Project {
   const now = new Date().toISOString();
   const stmt = getDb().prepare(
-    "INSERT INTO projects (id, display_name, working_directory, default_merge_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO projects (id, display_name, working_directory, default_merge_branch, autonomy, policy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  stmt.run(data.id, data.displayName, data.workingDirectory, data.defaultMergeBranch?.trim() || null, now, now);
+  stmt.run(
+    data.id,
+    data.displayName,
+    data.workingDirectory,
+    data.defaultMergeBranch?.trim() || null,
+    data.autonomy ?? 2,
+    JSON.stringify(data.policy ?? {}),
+    now,
+    now,
+  );
 
   return getProjectById(data.id)!;
 }
@@ -939,6 +1079,8 @@ export function updateProject(
     displayName?: string;
     workingDirectory?: string;
     defaultMergeBranch?: string | null;
+    autonomy?: AutonomyLevel;
+    policy?: Partial<PolicySettings>;
   },
 ): Project | null {
   const existing = getProjectById(id);
@@ -952,12 +1094,22 @@ export function updateProject(
       data.defaultMergeBranch !== undefined
         ? data.defaultMergeBranch?.trim() || null
         : existing.defaultMergeBranch,
+    autonomy: data.autonomy ?? existing.autonomy,
+    policy: data.policy ? { ...existing.policy, ...data.policy } : existing.policy,
   };
 
   const stmt = getDb().prepare(
-    "UPDATE projects SET display_name = ?, working_directory = ?, default_merge_branch = ?, updated_at = ? WHERE id = ?",
+    "UPDATE projects SET display_name = ?, working_directory = ?, default_merge_branch = ?, autonomy = ?, policy = ?, updated_at = ? WHERE id = ?",
   );
-  stmt.run(updated.displayName, updated.workingDirectory, updated.defaultMergeBranch, now, id);
+  stmt.run(
+    updated.displayName,
+    updated.workingDirectory,
+    updated.defaultMergeBranch,
+    updated.autonomy,
+    JSON.stringify(updated.policy),
+    now,
+    id,
+  );
 
   return getProjectById(id)!;
 }
