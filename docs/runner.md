@@ -129,10 +129,11 @@ that understand it; `gemini` and `custom` ignore it.
 
 `buildPrompt()` tells the tool it is an AgentQ `<role>` agent, that task `<id>` was
 **already claimed for it** (so it must not call `claim_task`), the current status, the
-AgentQ MCP tools it can use (`get_task`, `post_comment`, the phase's `submit_*` and
-`report_blocker`), the
-full task JSON (title, description, steerDetails, guardrails, acceptanceCriteria,
-conversation, contexts, branches, worktreePath, project working directory), the body of
+AgentQ MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
+`submit_*` and `report_blocker`), the task **brief** (see [mcp.md](mcp.md): plan,
+criteria, open findings, latest handoffs, human notes; not the whole conversation, so
+the prompt does not grow round after round), the
+body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the required `context` handoff notes,
 with a per-phase hint of what they should contain, and the job's `claimToken`), how to call

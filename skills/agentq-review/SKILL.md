@@ -1,15 +1,15 @@
 ---
 name: agentq-review
 description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
-allowed-tools: mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
+allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.1.0"
+  version: "4.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Review Skill
 
-Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
 
 ## Phase
 

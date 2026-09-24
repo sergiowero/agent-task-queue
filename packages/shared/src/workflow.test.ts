@@ -541,7 +541,8 @@ describe("workflow actions", () => {
     createdTaskIds.push(task.id);
     expect(task.mergeBranch).toBe("main");
     expect(getProjectById(projectId)!.defaultMergeBranch).toBe("main");
-    expect(getActivityEvents({ taskId: task.id }).map((e) => [e.eventType, e.actor])).toEqual([["task_created", "agent"]]);
+    expect(getActivityEvents({ taskId: task.id }).map((e) => e.eventType).sort()).toEqual(["dor_warning", "task_created"]);
+    expect(task.dorIssues).toContain("No acceptance criteria: say how anyone will know the task is done.");
     const explicit = createTaskForProject({ title: "explicit", description: "d", projectId, mergeBranch: "release" });
     createdTaskIds.push(explicit.id);
     expect(explicit.mergeBranch).toBe("release");

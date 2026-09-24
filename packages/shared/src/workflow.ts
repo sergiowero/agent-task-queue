@@ -19,6 +19,7 @@ import { afterCode, afterPlan, afterReview, afterVerify, resolvePolicy, type Gat
 import {
   addEvidence,
   addFindings,
+  addHandoff,
   getFinding,
   getOpenFindings,
   updateFinding,
@@ -27,6 +28,7 @@ import {
 } from "./records.js";
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
+import { checkDefinitionOfReady } from "./dor.js";
 import {
   ALL_STATUSES,
   BLOCKING_SEVERITIES,
@@ -309,7 +311,10 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
         messageType: "agent",
       });
       const context = input.context?.trim();
-      if (context) appendJson(candidate.id, "contexts", context);
+      if (context) {
+        appendJson(candidate.id, "contexts", context);
+        addHandoff(candidate.id, { phase: "claim", round: candidate.codeRound, agentId: agent.id, summary: context });
+      }
       // A runner watches its process; a hand-opened session keeps its claim by staying active.
       if (!input.runnerId) {
         patchTask(candidate.id, { leaseExpiresAt: minutesFromNow(policyFor(candidate).leaseMin) });
@@ -475,6 +480,14 @@ export function reportBlocker(taskId: string, input: ReportBlockerInput): Submit
       context: input.context,
       patch: { blocker, revertStreak: 0 },
     });
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: blocker.phase ?? "code",
+        round: task.codeRound,
+        agentId: raisedBy,
+        summary: input.context,
+      });
+    }
     return {
       task: updated,
       previousStatus: task.status,
@@ -505,6 +518,14 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     }
     const actor = input.actor ?? "user";
     const answer = input.answer.trim();
+    if (answer) {
+      addHandoff(taskId, {
+        phase: "human",
+        round: task.codeRound,
+        agentId: actor,
+        summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
+      });
+    }
     return transitionTask(task, input.targetStatus, {
       actor,
       message: answer
@@ -583,8 +604,14 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
   });
 }
 
+function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
+  const task = getTaskById(taskId);
+  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
+}
+
 export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
+  humanHandoff(taskId, message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
@@ -594,6 +621,7 @@ export function approveCode(taskId: string, input: HumanActionInput = {}): Task 
 
 export function requestCodeChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
+  humanHandoff(taskId, message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.ChangesRequested, "code_changes_requested", message || "Code changes requested.", input, message);
 }
 
@@ -650,6 +678,11 @@ export function editTask(taskId: string, edit: TaskEdit): Task {
   const { acceptanceCriteria, ...rest } = edit;
   const patch: TaskPatch = { ...rest };
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
+  const project = task.projectId ? getProjectById(task.projectId) : null;
+  if (resolveProfile(project?.profile).dorMode !== "off") {
+    const next = { ...task, ...patch };
+    patch.dorIssues = checkDefinitionOfReady({ ...next, acceptanceCriteria: next.acceptanceCriteria });
+  }
   return patchTask(taskId, patch)!;
 }
 
@@ -679,8 +712,17 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
     mergeBranch = detectDefaultBranch(project.workingDirectory);
     updateProject(project.id, { defaultMergeBranch: mergeBranch });
   }
-  const task = createTask({ ...input, mergeBranch });
+  const mode = resolveProfile(project.profile).dorMode;
+  const issues = mode === "off" ? [] : checkDefinitionOfReady(input);
+  if (mode === "enforce" && issues.length) {
+    throw new WorkflowError(`The task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
+  }
+  const task = createTask({ ...input, mergeBranch, dorIssues: issues });
   addActivity(task.id, "task_created", actor);
+  if (issues.length) addActivity(task.id, "dor_warning", actor, issues.join("\n"));
+  for (const note of input.contexts ?? []) {
+    if (note.trim()) addHandoff(task.id, { phase: "human", round: 0, agentId: actor, summary: note });
+  }
   return task;
 }
 
@@ -689,7 +731,14 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
 export interface SubmitInput extends ClaimAuth {
   message?: string;
   author?: string;
+  /** Handoff summary for the next phase (also appended to task.contexts). */
   context?: string;
+  /** Decisions taken, and why. */
+  decisions?: string[];
+  /** What could go wrong or is still uncertain. */
+  risks?: string[];
+  /** What the next phase should do or check first. */
+  next?: string[];
 }
 
 export interface SubmitMergeInput extends SubmitInput {
@@ -760,6 +809,17 @@ function submit(
         producers: { ...task.producers, [spec.phase]: producerOf(task) },
       },
     });
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: spec.phase,
+        round: spec.phase === "plan" ? updated.planRound : updated.codeRound,
+        agentId: task.assignedAgent?.agentId ?? author,
+        summary: input.context,
+        decisions: input.decisions,
+        risks: input.risks,
+        next: input.next,
+      });
+    }
     let final = updated;
     if (out.note) {
       final = addConversation(updated, "system", out.note.message, "system");

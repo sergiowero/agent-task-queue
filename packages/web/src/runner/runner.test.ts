@@ -11,6 +11,9 @@ import type { Runner, RunnerTool } from "@agentq/shared";
 import {
   TaskStatus,
   claimNextTask,
+  getFindings,
+  submitCode,
+  submitReview,
   createProject,
   createRunner,
   createTask,
@@ -810,6 +813,45 @@ describe("buildPrompt", () => {
       expect(prompt).not.toContain("still submit");
       expect(prompt).not.toMatch(/agentq (claim|submit)/);
     }
+  });
+
+  it("the prompt does not grow with review rounds: it carries the brief, not the conversation", () => {
+    const pid = randomUUID();
+    createProject({ id: pid, displayName: "Rounds", workingDirectory: PROJECT_DIR, policy: { maxReviewRounds: 10 } });
+    const task = createTask({ title: "rounds", description: "A long enough description for readiness.", projectId: pid });
+    const coderAgent = { toolName: "c", version: "1", model: "c", sessionId: "c" };
+    const reviewerAgent = { toolName: "r", version: "1", model: "r", sessionId: "r" };
+    const agent = { id: "c@1|c", toolName: "c", version: "1", model: "c", role: "implementer" } as any;
+    const promptAt: number[] = [];
+    let first = "";
+    for (let round = 1; round <= 5; round++) {
+      const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
+      const prompt = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+      promptAt.push(prompt.length);
+      if (round === 1) first = prompt;
+      const open = getFindings(task.id).filter((f) => f.status === "open");
+      submitCode(task.id, {
+        message: `## Round ${round} ROUND-MARKER-${round}\n${"lorem ipsum ".repeat(200)}`,
+        worktree: "/w",
+        claimToken: c.claimToken,
+        context: `round ${round}`,
+        findingResolutions: open.map((f) => ({ id: f.id, status: "fixed" as const, resolution: "done" })),
+      });
+      const r = claimNextTask({ role: "reviewer", agent: reviewerAgent, projectId: pid })!;
+      submitReview(task.id, {
+        verdict: "request_changes",
+        message: `review ${round} ${"dolor sit amet ".repeat(150)}`,
+        claimToken: r.claimToken,
+        verifiedFindings: open.map((f) => ({ id: f.id, status: "verified" as const })),
+        findings: [{ severity: "minor", text: `finding ${round}` }],
+      });
+    }
+    const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
+    const last = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+    expect(getTaskById(task.id)!.conversation.length).toBeGreaterThan(15);
+    expect(last.length - promptAt[1]).toBeLessThan(2048);
+    expect(last).not.toContain("ROUND-MARKER-1");
+    expect(first).toContain("get_task_brief");
   });
 
   it("inlines phase skills that speak MCP, not a command line", () => {

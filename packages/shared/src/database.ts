@@ -16,7 +16,8 @@ import type {
   AgentReference,
   Project,
   ActivityEvent,
-  Runner} from "./types.js";
+  Runner,
+  TaskReference} from "./types.js";
 import {
   TaskStatus,
   normalizeStatus,
@@ -164,29 +165,6 @@ function initSchema(): void {
   `);
 
   d.exec(`
-    CREATE TABLE IF NOT EXISTS conversation_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      author_name TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      message TEXT NOT NULL,
-      message_type TEXT DEFAULT 'user',
-      FOREIGN KEY (task_id) REFERENCES tasks(id)
-    );
-  `);
-
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS status_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      pre_status TEXT NOT NULL,
-      new_status TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      FOREIGN KEY (task_id) REFERENCES tasks(id)
-    );
-  `);
-
-  d.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
@@ -208,6 +186,15 @@ function markMigrationApplied(name: string): void {
 /** Adds a column, ignoring "duplicate column" (fresh databases already have some). */
 function addColumn(d: Database, table: string, column: string): void {
   try { d.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`); } catch {}
+}
+
+/** Tables only the historical migrations 002–005 use (dropped by 020). */
+function createLegacyTables(d: Database): void {
+  d.exec(`CREATE TABLE IF NOT EXISTS conversation_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+    author_name TEXT NOT NULL, timestamp TEXT NOT NULL, message TEXT NOT NULL, message_type TEXT DEFAULT 'user',
+    FOREIGN KEY (task_id) REFERENCES tasks(id))`);
+  d.exec(`CREATE TABLE IF NOT EXISTS status_history (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+    pre_status TEXT NOT NULL, new_status TEXT NOT NULL, timestamp TEXT NOT NULL, FOREIGN KEY (task_id) REFERENCES tasks(id))`);
 }
 
 interface Migration {
@@ -234,6 +221,7 @@ const MIGRATIONS: Migration[] = [
   {
     name: "002_add_indexes",
     up: (d) => {
+      createLegacyTables(d);
       d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)");
       d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
       d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at)");
@@ -259,6 +247,7 @@ const MIGRATIONS: Migration[] = [
     // Historical: copied conversations into conversation_entries (a table nothing reads any more).
     name: "004_extract_conversation",
     up: (d) => {
+      createLegacyTables(d);
       const rows = d.prepare("SELECT id, conversation FROM tasks WHERE conversation IS NOT NULL AND conversation != '[]'").all() as { id: string; conversation: string }[];
       const insertStmt = d.prepare("INSERT INTO conversation_entries (task_id, author_name, timestamp, message, message_type) VALUES (?, ?, ?, ?, ?)");
       for (const row of rows) {
@@ -276,6 +265,7 @@ const MIGRATIONS: Migration[] = [
     // Historical: copied history into status_history (a table nothing reads any more).
     name: "005_extract_history",
     up: (d) => {
+      createLegacyTables(d);
       const rows = d.prepare("SELECT id, history FROM tasks WHERE history IS NOT NULL AND history != '[]'").all() as { id: string; history: string }[];
       const insertStmt = d.prepare("INSERT INTO status_history (task_id, pre_status, new_status, timestamp) VALUES (?, ?, ?, ?)");
       for (const row of rows) {
@@ -494,6 +484,58 @@ const MIGRATIONS: Migration[] = [
     up: (d) => d.exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT NOT NULL)"),
     down: (d) => d.exec("DROP TABLE IF EXISTS app_state"),
   },
+  {
+    // Structured handoffs between phases; existing context notes become "legacy" handoffs.
+    name: "018_task_handoffs",
+    up: (d) => {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS task_handoffs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL,
+          round INTEGER NOT NULL DEFAULT 0,
+          agent_id TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          decisions TEXT NOT NULL DEFAULT '[]',
+          risks TEXT NOT NULL DEFAULT '[]',
+          next TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL
+        );
+      `);
+      d.exec("CREATE INDEX IF NOT EXISTS idx_handoffs_task_id ON task_handoffs(task_id)");
+      const rows = d.prepare("SELECT id, contexts, created_at FROM tasks").all() as { id: string; contexts: string; created_at: string }[];
+      const insert = d.prepare(
+        "INSERT INTO task_handoffs (task_id, phase, round, agent_id, summary, created_at) VALUES (?, 'legacy', 0, 'unknown', ?, ?)",
+      );
+      for (const row of rows) {
+        for (const note of parseJson<string[]>(row.contexts, [])) {
+          if (typeof note === "string" && note.trim()) insert.run(row.id, note.trim(), row.created_at);
+        }
+      }
+    },
+    down: (d) => d.exec("DROP TABLE IF EXISTS task_handoffs"),
+  },
+  {
+    // Non-goals, references and Definition-of-Ready issues.
+    name: "019_task_info",
+    up: (d) => {
+      addColumn(d, "tasks", "non_goals TEXT DEFAULT '[]'");
+      addColumn(d, "tasks", "refs TEXT DEFAULT '[]'");
+      addColumn(d, "tasks", "dor_issues TEXT DEFAULT '[]'");
+    },
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET non_goals = '[]', refs = '[]', dor_issues = '[]'"); } catch {}
+    },
+  },
+  {
+    // conversation_entries / status_history were copies nothing read (migrations 004/005).
+    name: "020_drop_legacy_tables",
+    up: (d) => {
+      d.exec("DROP TABLE IF EXISTS conversation_entries");
+      d.exec("DROP TABLE IF EXISTS status_history");
+    },
+    down: (d) => createLegacyTables(d),
+  },
 ];
 
 function runMigrations(): void {
@@ -612,6 +654,9 @@ function rowToTask(row: any): Task {
     diffStats: parseJson(row.diff_stats, null),
     verification: parseJson(row.verification, null),
     riskReasons: parseJson(row.risk_reasons, []),
+    nonGoals: parseJson(row.non_goals, []),
+    references: parseJson(row.refs, []),
+    dorIssues: parseJson(row.dor_issues, []),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -715,6 +760,9 @@ export function createTask(data: {
   type?: TaskType;
   risk?: Risk;
   autonomy?: AutonomyLevel | null;
+  nonGoals?: string[];
+  references?: TaskReference[];
+  dorIssues?: string[];
 }): Task {
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -756,6 +804,9 @@ export function createTask(data: {
     diffStats: null,
     verification: null,
     riskReasons: [],
+    nonGoals: data.nonGoals ?? [],
+    references: data.references ?? [],
+    dorIssues: data.dorIssues ?? [],
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -767,8 +818,8 @@ export function createTask(data: {
     `INSERT INTO tasks (id, title, description, steer_details, guardrails, acceptance_criteria, priority,
       recommended_branch, real_branch, requires_plan, merge_branch, status,
       assigned_agent_id, conversation, history, contexts, project_id, worktree_path, created_at, updated_at,
-      type, risk, autonomy)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      type, risk, autonomy, non_goals, refs, dor_issues)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   stmt.run(
     task.id,
@@ -794,6 +845,9 @@ export function createTask(data: {
     task.type,
     task.risk,
     task.autonomy,
+    JSON.stringify(task.nonGoals),
+    JSON.stringify(task.references),
+    JSON.stringify(task.dorIssues),
   );
 
   return task;
@@ -915,6 +969,10 @@ const TASK_COLUMNS = {
   diffStats: { column: "diff_stats", json: true },
   verification: { column: "verification", json: true },
   riskReasons: { column: "risk_reasons", json: true },
+  nonGoals: { column: "non_goals", json: true },
+  // "references" is an SQL keyword.
+  references: { column: "refs", json: true },
+  dorIssues: { column: "dor_issues", json: true },
 } as const;
 
 export type TaskPatch = {
@@ -972,8 +1030,6 @@ export function deleteTask(id: string): boolean {
   const d = getDb();
   return d.transaction(() => {
     d.prepare("DELETE FROM activity WHERE task_id = ?").run(id);
-    d.prepare("DELETE FROM conversation_entries WHERE task_id = ?").run(id);
-    d.prepare("DELETE FROM status_history WHERE task_id = ?").run(id);
     const result = d.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     return result.changes > 0;
   })();

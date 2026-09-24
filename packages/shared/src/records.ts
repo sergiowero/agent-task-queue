@@ -5,7 +5,7 @@
  */
 import { getDbHandle, touchTask } from "./database.js";
 import type { FindingStatus, Severity } from "./catalog.js";
-import type { Evidence, Finding } from "./types.js";
+import type { Evidence, Finding, Handoff } from "./types.js";
 
 function rowToFinding(row: any): Finding {
   return {
@@ -178,4 +178,78 @@ export function getEvidence(taskId: string): Evidence[] {
     .prepare("SELECT * FROM task_evidence WHERE task_id = ? ORDER BY seq ASC")
     .all(taskId)
     .map(rowToEvidence);
+}
+
+// ─── Handoffs ─────────────────────────────────────────────────────────
+
+function rowToHandoff(row: any): Handoff {
+  const list = (raw: string) => {
+    try {
+      const v = JSON.parse(raw);
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    phase: row.phase,
+    round: row.round,
+    agentId: row.agent_id,
+    summary: row.summary,
+    decisions: list(row.decisions),
+    risks: list(row.risks),
+    next: list(row.next),
+    createdAt: row.created_at,
+  };
+}
+
+export interface NewHandoff {
+  phase: Handoff["phase"];
+  round: number;
+  agentId: string;
+  summary: string;
+  decisions?: string[];
+  risks?: string[];
+  next?: string[];
+}
+
+const clean = (items?: string[]) => (items ?? []).map((i) => i.trim()).filter(Boolean);
+
+export function addHandoff(taskId: string, h: NewHandoff): Handoff | null {
+  const summary = h.summary.trim();
+  if (!summary) return null;
+  const result = getDbHandle()
+    .prepare(
+      "INSERT INTO task_handoffs (task_id, phase, round, agent_id, summary, decisions, risks, next, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      taskId,
+      h.phase,
+      h.round,
+      h.agentId,
+      summary,
+      JSON.stringify(clean(h.decisions)),
+      JSON.stringify(clean(h.risks)),
+      JSON.stringify(clean(h.next)),
+      new Date().toISOString(),
+    );
+  touchTask(taskId);
+  const row = getDbHandle().prepare("SELECT * FROM task_handoffs WHERE id = ?").get(Number(result.lastInsertRowid));
+  return row ? rowToHandoff(row) : null;
+}
+
+export function getHandoffs(taskId: string): Handoff[] {
+  return getDbHandle()
+    .prepare("SELECT * FROM task_handoffs WHERE task_id = ? ORDER BY id ASC")
+    .all(taskId)
+    .map(rowToHandoff);
+}
+
+/** The newest handoff of each phase, oldest phase first. */
+export function latestHandoffs(taskId: string): Handoff[] {
+  const byPhase = new Map<string, Handoff>();
+  for (const h of getHandoffs(taskId)) byPhase.set(h.phase, h);
+  return [...byPhase.values()].sort((a, b) => a.id - b.id);
 }

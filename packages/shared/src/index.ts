@@ -5,6 +5,8 @@ export {
   type Blocker,
   type Finding,
   type Evidence,
+  type Handoff,
+  type TaskReference,
   type ValidationPlan,
   type ApprovedPlan,
   type DiffStats,
@@ -167,12 +169,19 @@ export {
   updateFinding,
   addEvidence,
   getEvidence,
+  addHandoff,
+  getHandoffs,
+  latestHandoffs,
+  type NewHandoff,
   type NewEvidence,
   type NewFinding,
   type FindingSource,
 } from "./records.js";
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
+
+export { buildTaskBrief, previousPhase, type TaskBrief } from "./brief.js";
+export { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 
 export {
   normalizeCriteria,
@@ -249,6 +258,7 @@ export {
   policySettingsSchema,
   criterionInputSchema,
   criteriaInputSchema,
+  referenceSchema,
   projectProfileSchema,
   type CreateRunnerInput,
   type UpdateRunnerInput,

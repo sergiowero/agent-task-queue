@@ -59,6 +59,10 @@ export interface Task {
     at: string;
   } | null;
   riskReasons: string[];
+  nonGoals: string[];
+  references: { label: string; target: string }[];
+  /** Definition-of-Ready problems found when the task was created or edited. */
+  dorIssues: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -123,10 +127,23 @@ export interface Evidence {
   createdAt: string;
 }
 
+export interface Handoff {
+  id: number;
+  phase: string;
+  round: number;
+  agentId: string;
+  summary: string;
+  decisions: string[];
+  risks: string[];
+  next: string[];
+  createdAt: string;
+}
+
 /** Response of `GET /tasks/:id/details`: records kept beside the task. */
 export interface TaskDetails {
   findings: Finding[];
   evidence: Evidence[];
+  handoffs: Handoff[];
 }
 
 /** Response of `GET /meta`. */

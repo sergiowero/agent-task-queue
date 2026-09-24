@@ -79,9 +79,13 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         acceptanceCriteria: criteria ? criteria.split("\n").filter(Boolean) : undefined,
         projectId: selectedProjectId,
       }),
-    onSuccess: () => {
+    onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      toast.success("Task created");
+      if (task.dorIssues?.length) {
+        toast(`Task created, but it may not be ready: ${task.dorIssues[0]}`, { icon: "⚠️", duration: 6000 });
+      } else {
+        toast.success("Task created");
+      }
       modal.close();
     },
     onError: (e: Error) => {
@@ -173,7 +177,17 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Type">
-            <Select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
+            <Select
+              value={type}
+              onChange={(e) => {
+                const next = e.target.value as TaskType;
+                setType(next);
+                // Offer the type's skeleton while the description is still empty or untouched.
+                if (!description.trim() || Object.values(TASK_TYPES).some((t) => t.template === description)) {
+                  setDescription(TASK_TYPES[next].template);
+                }
+              }}
+            >
               {Object.entries(TASK_TYPES).map(([value, t]) => (
                 <option key={value} value={value}>
                   {t.label}

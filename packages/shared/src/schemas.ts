@@ -36,6 +36,13 @@ export const criteriaInputSchema = z.preprocess(
   z.array(criterionInputSchema),
 );
 
+export const referenceSchema = z.object({
+  label: z.string().trim().min(1).max(200),
+  target: z.string().trim().min(1).max(1000).describe("URL, file path or issue id"),
+});
+
+const listOfLines = z.array(z.string().max(2000)).max(50);
+
 export const projectProfileSchema = z
   .object({
     commands: z
@@ -89,6 +96,8 @@ export const createTaskSchema = z.object({
   type: taskTypeSchema.optional(),
   risk: riskSchema.optional(),
   autonomy: autonomySchema.nullable().optional(),
+  nonGoals: listOfLines.optional(),
+  references: z.array(referenceSchema).max(30).optional(),
 });
 
 /**
@@ -111,6 +120,8 @@ export const updateTaskSchema = z
     type: taskTypeSchema.optional(),
     risk: riskSchema.optional(),
     autonomy: autonomySchema.nullable().optional(),
+    nonGoals: listOfLines.optional(),
+    references: z.array(referenceSchema).max(30).optional(),
   })
   .strict();
 

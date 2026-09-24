@@ -136,6 +136,27 @@ export interface Verification {
   at: string;
 }
 
+/** Notes one phase leaves for the next (what was decided, what is risky, what to do next). */
+export interface Handoff {
+  id: number;
+  taskId: string;
+  /** Phase that wrote it; "human" for a person's answer or change request, "legacy" for old contexts. */
+  phase: Phase | "human" | "claim" | "legacy";
+  round: number;
+  agentId: string;
+  summary: string;
+  decisions: string[];
+  risks: string[];
+  next: string[];
+  createdAt: string;
+}
+
+export interface TaskReference {
+  label: string;
+  /** URL, file path or issue id. */
+  target: string;
+}
+
 /** Why an agent (or the runner) stopped and what it needs from a person. */
 export interface Blocker {
   reason: string;
@@ -203,6 +224,12 @@ export interface Task {
   verification: Verification | null;
   /** Why the risk was raised (touched protected paths, a large diff, the plan). */
   riskReasons: string[];
+  /** What the task deliberately does not do. */
+  nonGoals: string[];
+  /** Files, issues and links to look at first. */
+  references: TaskReference[];
+  /** Definition-of-Ready problems found when the task was created or edited. */
+  dorIssues: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

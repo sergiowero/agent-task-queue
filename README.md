@@ -189,7 +189,7 @@ Any active task can also be **canceled**, and a stuck task can be **unblocked** 
 
 Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
 
-Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them.
+Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one.
 
 ### Roles
 

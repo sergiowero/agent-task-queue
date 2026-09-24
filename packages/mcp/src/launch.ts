@@ -12,6 +12,8 @@ export const MCP_ENTRY = resolve(import.meta.dir, "index.ts");
  */
 export const RUNNER_MCP_TOOLS = [
   "get_task",
+  "get_task_brief",
+  "get_skill",
   "post_comment",
   "submit_plan",
   "submit_code",

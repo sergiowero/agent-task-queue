@@ -446,12 +446,46 @@ export const RISKS: Record<Risk, { label: string; description: string }> = {
   high: { label: "High", description: "Migrations, auth, CI, public APIs: a person reviews the code too." },
 };
 
-export const TASK_TYPES: Record<TaskType, { label: string; defaultRisk: Risk }> = {
-  feature: { label: "Feature", defaultRisk: "medium" },
-  bug: { label: "Bug", defaultRisk: "medium" },
-  refactor: { label: "Refactor", defaultRisk: "medium" },
-  docs: { label: "Docs", defaultRisk: "low" },
-  chore: { label: "Chore", defaultRisk: "low" },
+export interface TaskTypeInfo {
+  label: string;
+  defaultRisk: Risk;
+  /** What agents should do differently for this kind of work. */
+  guidance: string;
+  /** Description skeleton the portal offers for a new task of this type. */
+  template: string;
+}
+
+export const TASK_TYPES: Record<TaskType, TaskTypeInfo> = {
+  feature: {
+    label: "Feature",
+    defaultRisk: "medium",
+    guidance: "New behaviour: write tests for each acceptance criterion; keep the change within the stated scope.",
+    template: "## Goal\n<what users can do after this change, and why>\n\n## Scope\n<what is included>\n",
+  },
+  bug: {
+    label: "Bug",
+    defaultRisk: "medium",
+    guidance: "First write a test that fails because of the bug, then fix it so the test passes; do not change unrelated behaviour.",
+    template: "## Steps to reproduce\n1. <step>\n\n## Expected\n<what should happen>\n\n## Actual\n<what happens instead>\n",
+  },
+  refactor: {
+    label: "Refactor",
+    defaultRisk: "medium",
+    guidance: "No behaviour change: the existing test suite is the oracle and must pass unchanged (do not edit tests to make them pass).",
+    template: "## Why\n<the problem with the current structure>\n\n## Target shape\n<what the code should look like>\n",
+  },
+  docs: {
+    label: "Docs",
+    defaultRisk: "low",
+    guidance: "Documentation only: do not change code; check that commands and paths you document exist.",
+    template: "## What to document\n<topic and audience>\n",
+  },
+  chore: {
+    label: "Chore",
+    defaultRisk: "low",
+    guidance: "Maintenance (dependencies, config, tooling): keep it mechanical and verify the build and tests still pass.",
+    template: "## Change\n<what to update and why>\n",
+  },
 };
 
 export const RISK_ORDER: Risk[] = ["low", "medium", "high"];
@@ -492,6 +526,7 @@ export const EVENT_TYPES: Record<string, string> = {
   verification_failed: "Verification failed",
   verification_skipped: "Verification skipped",
   risk_raised: "Risk raised",
+  dor_warning: "Not ready",
   task_reverted: "Reverted",
   task_archived: "Archived",
   comment_added: "Comment",

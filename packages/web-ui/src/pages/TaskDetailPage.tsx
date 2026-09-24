@@ -67,6 +67,8 @@ import {
   type TaskType,
 } from "@agentq/shared/catalog";
 import { FindingsList } from "../components/FindingsList";
+import { HandoffTimeline } from "../components/HandoffTimeline";
+import { Alert } from "../components/Alert";
 import { ApprovedPlanCard, CriteriaList, VerificationCard } from "../components/EvidencePanel";
 import { formatCriterionLine } from "@agentq/shared/criteria";
 import { Select } from "../components/Select";
@@ -109,7 +111,7 @@ const VERDICT_TONE = { approve: "success", request_changes: "warning", needs_hum
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"conversation" | "history">("conversation");
+  const [tab, setTab] = useState<"conversation" | "handoffs" | "history">("conversation");
   const [feedback, setFeedback] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -141,6 +143,7 @@ export function TaskDetailPage() {
   });
   const findings = details?.findings ?? [];
   const evidence = details?.evidence ?? [];
+  const handoffs = details?.handoffs ?? [];
 
   const mutation = useMutation({
     mutationFn: ({ action, data }: { action: TaskAction; data?: object }) => {
@@ -425,6 +428,16 @@ export function TaskDetailPage() {
               </section>
             )}
 
+            {task.dorIssues?.length > 0 && hasActions(task.status) && (
+              <Alert tone="warning" title="This task may not be ready for an agent">
+                <ul className="list-disc pl-4">
+                  {task.dorIssues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+
             <EditableField
               icon={DescriptionIcon}
               label="Description"
@@ -462,6 +475,71 @@ export function TaskDetailPage() {
                 await updateMutation.mutateAsync({ steerDetails: v.trim() ? v : null })
               }
             />
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <EditableField
+                icon={CancelTaskIcon}
+                label="Out of scope"
+                value={task.nonGoals?.join("\n") ?? ""}
+                placeholder="What this task deliberately does not do, one per line"
+                editable={canEdit}
+                display={
+                  task.nonGoals?.length > 0 ? (
+                    <ul className="list-disc space-y-1 pl-4 text-sm text-text-secondary">
+                      {task.nonGoals.map((g) => (
+                        <li key={g}>{g}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyValue>Nothing listed</EmptyValue>
+                  )
+                }
+                onSubmit={async (v) =>
+                  await updateMutation.mutateAsync({
+                    nonGoals: v
+                      .split("\n")
+                      .map((x) => x.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <EditableField
+                icon={BranchIcon}
+                label="References"
+                value={task.references?.map((r) => `${r.label} | ${r.target}`).join("\n") ?? ""}
+                placeholder="label | URL or path, one per line"
+                editable={canEdit}
+                display={
+                  task.references?.length > 0 ? (
+                    <ul className="space-y-1 text-sm">
+                      {task.references.map((r) => (
+                        <li key={r.target} className="truncate">
+                          <span className="text-text-secondary">{r.label}: </span>
+                          {/^https?:\/\//.test(r.target) ? (
+                            <a className="text-primary underline" href={r.target} target="_blank" rel="noreferrer">
+                              {r.target}
+                            </a>
+                          ) : (
+                            <code className="font-mono text-xs">{r.target}</code>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyValue>No references</EmptyValue>
+                  )
+                }
+                onSubmit={async (v) =>
+                  await updateMutation.mutateAsync({
+                    references: v
+                      .split("\n")
+                      .map((line) => line.split("|").map((x) => x.trim()))
+                      .filter(([label, target]) => label)
+                      .map(([label, target]) => ({ label, target: target || label })),
+                  })
+                }
+              />
+            </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <EditableField
@@ -722,17 +800,20 @@ export function TaskDetailPage() {
                   icon: ConversationIcon,
                   count: conversation.length,
                 },
+                { value: "handoffs", label: "Handoffs", icon: SteerIcon, count: handoffs.length },
                 { value: "history", label: "History", icon: HistoryIcon, count: history.length },
               ]}
             />
             <div
               key={tab}
               role="tabpanel"
-              aria-label={tab === "conversation" ? "Conversation" : "History"}
+              aria-label={tab === "conversation" ? "Conversation" : tab === "handoffs" ? "Handoffs" : "History"}
               className="pt-5 animate-fade-in"
             >
               {tab === "conversation" ? (
                 <ConversationTimeline entries={conversation} />
+              ) : tab === "handoffs" ? (
+                <HandoffTimeline handoffs={handoffs} />
               ) : (
                 <HistoryTimeline entries={history} />
               )}

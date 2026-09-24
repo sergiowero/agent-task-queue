@@ -121,6 +121,8 @@ Scripts for one-click setup:
 A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (objects: id `ACn`, text, how it is verified, status, evidence ids)
+- **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
+- **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
 - **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons; evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
@@ -156,6 +158,9 @@ An audit log entry recording system events. Contains:
 A message in a task's conversation thread. Contains:
 - authorName (format: `"agentName|tool|model"` for agents, `"user"` for humans)
 - timestamp, message body, messageType (user/agent/plan/code/review/merge/system)
+
+### TaskBrief
+What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, open findings, the latest handoff per phase, project commands, conventions and guardrails, round, and what people said since the last submission.
 
 ### StatusHistoryEntry
 A record of a task status transition. Contains:
