@@ -3,7 +3,7 @@ name: agentq-review
 description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
 allowed-tools: mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -42,10 +42,10 @@ Always `cd` into the worktree before starting work — never assume which one to
 ## Steps
 
 1. `cd` into the worktree (see Worktree Rules) and confirm `git branch --show-current` is `{task.recommendedBranch}`
-2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]`, `task.contexts[]` and `task.findings[]` (earlier findings, with ids like `R1-2`). The code submission (`messageType: "code"`) lists the commits and files
+2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria` (with their status), `task.approvedPlan` (the plan and its validation plan), `task.verification` and `task.evidence` (what the coder and the verifier ran), `task.conversation[]`, `task.contexts[]` and `task.findings[]` (earlier findings, with ids like `R1-2`). The code submission (`messageType: "code"`) lists the commits and files
 3. **Verify the previous round first.** For every finding of an earlier round that is not `verified`, check the new commits: pass it in `verifiedFindings` as `verified` (fixed) or `open` (still not fixed). Do not re-raise it as a new finding
 4. Inspect the submitted work read-only: `git log --oneline {task.mergeBranch}..HEAD`, `git diff {task.mergeBranch}...HEAD`, `git show <sha>`, and read the changed files. Run the project's tests or the commands the coder says they ran when you can (read-only: do not fix anything)
-5. Check every acceptance criterion and every guardrail; look for correctness bugs, missing or weakened tests, and deviations from `task.steerDetails`
+5. Check every acceptance criterion against the approved validation plan: the planned tests exist and test what the criterion says. Do not trust the evidence blindly: re-run at least the commands tied to the criteria. Check every guardrail; look for correctness bugs, missing or weakened tests, deviations from the plan and from `task.steerDetails`
 6. Record each new problem as a finding with a severity (see Severity Rubric) and pick the verdict (see Verdict Rules)
 7. Submit with `context` handoff notes (see Submit Review), then stop and wait for the next claim
 

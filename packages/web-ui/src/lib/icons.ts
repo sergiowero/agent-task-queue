@@ -51,6 +51,7 @@ export {
   LockOpen as UnblockIcon,
   Ban as CancelTaskIcon,
   Hand as NeedsHumanIcon,
+  FlaskConical as VerifyIcon,
   Send as SendIcon,
   GitBranch as BranchIcon,
   GitMerge as MergeIcon,

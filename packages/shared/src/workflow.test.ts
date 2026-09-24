@@ -15,7 +15,7 @@ import {
   getProjectById,
   updateProject,
 } from "./database.js";
-import { getFindings } from "./records.js";
+import { getEvidence, getFindings } from "./records.js";
 import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
 import {
@@ -26,6 +26,7 @@ import {
   claimNextTask,
   completeTask,
   createTaskForProject,
+  editTask,
   releaseTask,
   reportBlocker,
   requestAiReview,
@@ -589,7 +590,10 @@ describe("autonomy L2: reviews that decide", () => {
   function recode(taskId: string) {
     const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
     expect(c.task.id).toBe(taskId);
-    submitCode(taskId, { message: "fixed", worktree: "/w", claimToken: c.claimToken });
+    const findingResolutions = getFindings(taskId)
+      .filter((f) => f.status === "open")
+      .map((f) => ({ id: f.id, status: "fixed" as const, resolution: "done" }));
+    submitCode(taskId, { message: "fixed", worktree: "/w", claimToken: c.claimToken, findingResolutions });
   }
 
   it("submit_code asks for an AI review without a click, and the coder cannot take it", () => {
@@ -700,5 +704,130 @@ describe("autonomy L2: reviews that decide", () => {
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.WaitingCodeReview);
     expect(task.history.at(-1)!.actor).toBe("system:sweeper");
+  });
+});
+
+describe("evidence, validation plans and findings by id", () => {
+  const projectId = "evidence-project-" + Date.now();
+  const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "e-coder" };
+  const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "e-reviewer" };
+
+  beforeAll(() => {
+    createProject({ id: projectId, displayName: "Evidence", workingDirectory: "/tmp/evidence" });
+  });
+
+  afterAll(() => {
+    try { deleteProject(projectId); } catch {}
+  });
+
+  /** A project of its own, so a claim can only return this test's task. */
+  function fresh() {
+    const id = `evidence-${Math.random().toString(36).slice(2)}`;
+    createProject({ id, displayName: "Evidence", workingDirectory: "/tmp/evidence" });
+    return id;
+  }
+
+  function planned() {
+    const task = createTask({
+      title: "validated",
+      description: "d",
+      projectId,
+      requiresPlan: true,
+      acceptanceCriteria: ["persists", "fast"],
+    });
+    const c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    expect(c.task.id).toBe(task.id);
+    return { task, claimToken: c.claimToken };
+  }
+
+  it("a validation plan must name the task's criteria; approval freezes it", () => {
+    const { task, claimToken } = planned();
+    expect(() =>
+      submitPlan(task.id, {
+        message: "## Plan",
+        claimToken,
+        validationPlan: { items: [{ criterionId: "AC9", how: "?" }], regressionCommands: [] },
+      }),
+    ).toThrow("unknown criteria: AC9");
+    submitPlan(task.id, {
+      message: "## Plan v1",
+      claimToken,
+      validationPlan: {
+        items: [{ criterionId: "AC1", how: "reload test", command: "bun test persist" }],
+        regressionCommands: ["bun test", " "],
+      },
+    });
+    const approved = approvePlan(task.id);
+    expect(approved.approvedPlan).toMatchObject({
+      markdown: "## Plan v1",
+      approvedBy: "user",
+      validation: { items: [{ criterionId: "AC1", command: "bun test persist" }], regressionCommands: ["bun test"] },
+    });
+  });
+
+  it("submit_code records evidence per criterion, the branch and the head commit", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "evidence", description: "d", projectId, acceptanceCriteria: ["works"] });
+    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    expect(c.task.id).toBe(task.id);
+    expect(() =>
+      submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken, criteria: [{ id: "AC7", status: "met" }] }),
+    ).toThrow("Unknown criteria: AC7");
+    submitCode(task.id, {
+      message: "c",
+      worktree: "/w",
+      branch: "feat/works",
+      headSha: "abc123",
+      claimToken: c.claimToken,
+      evidence: [{ kind: "command", criterionId: "AC1", command: "bun test", exitCode: 0, summary: "3 pass" }],
+      criteria: [{ id: "AC1", status: "met" }],
+    });
+    const stored = getTaskById(task.id)!;
+    expect(stored).toMatchObject({ realBranch: "feat/works", headSha: "abc123" });
+    expect(stored.acceptanceCriteria[0]).toMatchObject({ status: "met", evidenceIds: ["E1"] });
+    expect(getEvidence(task.id)[0]).toMatchObject({ id: "E1", producedBy: "coder@1|sonnet", summary: "3 pass" });
+    // No commands on the project: verification is skipped and noted.
+    expect(stored.verification).toMatchObject({ skipped: true });
+  });
+
+  it("the coder must answer every open finding; a finding reopened twice goes to a person", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "dispute", description: "d", projectId });
+    let c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    let r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    submitReview(task.id, { verdict: "request_changes", message: "m", claimToken: r.claimToken, findings: [{ severity: "major", text: "add a test" }] });
+
+    for (let round = 1; round <= 2; round++) {
+      c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+      expect(() => submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken })).toThrow(
+        "Answer every open review finding",
+      );
+      submitCode(task.id, {
+        message: "c",
+        worktree: "/w",
+        claimToken: c.claimToken,
+        findingResolutions: [{ id: "R1-1", status: "wontfix", resolution: "Covered by an existing test" }],
+      });
+      expect(getFindings(task.id)[0]).toMatchObject({ status: "wontfix", resolution: "Covered by an existing test" });
+      r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+      const out = submitReview(task.id, {
+        verdict: "request_changes",
+        message: "still needed",
+        claimToken: r.claimToken,
+        verifiedFindings: [{ id: "R1-1", status: "open" }],
+      });
+      expect(out.newStatus).toBe(round === 1 ? TaskStatus.ChangesRequested : TaskStatus.NeedsHuman);
+    }
+    expect(getTaskById(task.id)!.blocker?.reason).toContain("disagree on R1-1");
+  });
+
+  it("a person's edit of the criteria keeps the ids of unchanged ones", () => {
+    const task = createTask({ title: "edit", description: "d", projectId, acceptanceCriteria: ["one", "two"] });
+    const edited = editTask(task.id, { acceptanceCriteria: ["two", "three $ bun test three"] });
+    expect(edited.acceptanceCriteria.map((c) => [c.id, c.text, c.verify.kind])).toEqual([
+      ["AC2", "two", "review"],
+      ["AC3", "three", "command"],
+    ]);
   });
 });

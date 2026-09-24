@@ -94,15 +94,31 @@ export function afterPlan(_task: RoutingTask, p: GatePolicy): TaskStatus {
   return p.plan === "none" ? TaskStatus.ReadyForCode : TaskStatus.WaitingPlanReview;
 }
 
-/** After submit_code (verification is added in a later phase). */
-export function afterCode(_task: RoutingTask, p: GatePolicy): TaskStatus {
+/** Where reviewed-for-correctness code goes next: a person (L0) or an AI reviewer. */
+export function reviewGate(p: GatePolicy): TaskStatus {
   return p.code === "human" ? TaskStatus.WaitingCodeReview : TaskStatus.CodeReviewRequested;
+}
+
+/**
+ * After submit_code. With commands to run and the verifier up, the code is
+ * verified first; otherwise it goes straight to review.
+ */
+export function afterCode(_task: RoutingTask, p: GatePolicy, opts: { verify?: boolean } = {}): TaskStatus {
+  return opts.verify ? TaskStatus.VerifyRequested : reviewGate(p);
+}
+
+/** After the verifier ran. `task.verifyFailures` already counts this run when it failed. */
+export function afterVerify(task: RoutingTask, p: GatePolicy, passed: boolean): TaskStatus {
+  if (!passed) {
+    return task.verifyFailures >= p.maxVerifyFailures ? TaskStatus.NeedsHuman : TaskStatus.ChangesRequested;
+  }
+  return reviewGate(p);
 }
 
 export interface ReviewRouting {
   status: TaskStatus;
   /** Why the task did not simply follow the verdict (shown in the conversation). */
-  reason?: "supervised" | "round_limit" | "high_risk" | "sampled" | "needs_human";
+  reason?: "supervised" | "round_limit" | "high_risk" | "sampled" | "needs_human" | "disagreement";
 }
 
 /**
@@ -113,11 +129,12 @@ export function afterReview(
   task: RoutingTask,
   p: GatePolicy,
   verdict: Verdict,
-  opts: { sampled?: boolean } = {},
+  opts: { sampled?: boolean; disagreement?: boolean } = {},
 ): ReviewRouting {
   if (p.code === "human") return { status: TaskStatus.WaitingCodeReview, reason: "supervised" };
   if (verdict === "needs_human") return { status: TaskStatus.NeedsHuman, reason: "needs_human" };
   if (verdict === "request_changes") {
+    if (opts.disagreement) return { status: TaskStatus.NeedsHuman, reason: "disagreement" };
     return reviewRoundsUsed(task) >= p.maxReviewRounds
       ? { status: TaskStatus.NeedsHuman, reason: "round_limit" }
       : { status: TaskStatus.ChangesRequested };

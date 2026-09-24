@@ -11,6 +11,7 @@ import {
 } from "./database.js";
 import { getFindings } from "./records.js";
 import type {
+  AcceptanceCriterion,
   ActivityEvent,
   Agent,
   ConversationEntry,
@@ -107,6 +108,13 @@ export interface ArchiveTaskResult {
   summaryPath: string;
   detailedPath: string;
   pullRequests: string[];
+}
+
+/** One criterion for the archive: status mark, id, text and how it was checked. */
+function criterionLine(c: AcceptanceCriterion): string {
+  const mark = { met: "✅", failed: "❌", waived: "➖", pending: "⬜" }[c.status] ?? "⬜";
+  const how = c.verify.command ? ` — \`${c.verify.command}\`` : c.verify.kind !== "review" ? ` — ${c.verify.kind}` : "";
+  return `${mark} **${c.id}** ${c.text}${how}`;
 }
 
 // ─── Labels ────────────────────────────────────────────────────────────
@@ -462,7 +470,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     "## Acceptance criteria",
     "",
     task.acceptanceCriteria.length
-      ? task.acceptanceCriteria.map((c) => `- ${c}`).join("\n")
+      ? task.acceptanceCriteria.map((c) => `- ${criterionLine(c)}`).join("\n")
       : "_None._",
     "",
     "## What was done",
@@ -578,7 +586,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     "## Acceptance criteria",
     "",
     task.acceptanceCriteria.length
-      ? task.acceptanceCriteria.map((c) => `- ${c}`).join("\n")
+      ? task.acceptanceCriteria.map((c) => `- ${criterionLine(c)}`).join("\n")
       : "_None._",
     "",
     "## Context notes",

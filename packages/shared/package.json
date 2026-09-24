@@ -15,6 +15,8 @@
     ".": "./src/index.ts",
     "./catalog": "./src/catalog.ts",
     "./skills": "./src/skills.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./criteria": "./src/criteria.ts",
+    "./profile": "./src/profile.ts"
   }
 }

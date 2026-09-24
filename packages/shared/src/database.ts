@@ -6,6 +6,8 @@ import { dirname, join } from "path";
 import type { AutonomyLevel, Risk, TaskType } from "./catalog.js";
 import { SEPARATION, TASK_TYPES } from "./catalog.js";
 import type { PolicySettings } from "./policy.js";
+import { criteriaFromStored, normalizeCriteria, type CriterionInput } from "./criteria.js";
+import { resolveProfile, type ProjectProfile } from "./profile.js";
 import type {
   Task,
   ConversationEntry,
@@ -420,6 +422,78 @@ const MIGRATIONS: Migration[] = [
     },
     down: (d) => d.exec("DROP TABLE IF EXISTS task_findings"),
   },
+  {
+    // Commands, conventions, protected paths and shared guardrails per project.
+    name: "014_project_profile",
+    up: (d) => addColumn(d, "projects", "profile TEXT DEFAULT '{}'"),
+    down: (d) => { try { d.exec("UPDATE projects SET profile = '{}'"); } catch {} },
+  },
+  {
+    // Acceptance criteria become objects: { id, text, verify, status, evidenceIds }.
+    name: "015_structured_criteria",
+    up: (d) => {
+      const rows = d.prepare("SELECT id, acceptance_criteria FROM tasks").all() as { id: string; acceptance_criteria: string }[];
+      const set = d.prepare("UPDATE tasks SET acceptance_criteria = ? WHERE id = ?");
+      for (const row of rows) {
+        const raw = parseJson<unknown[]>(row.acceptance_criteria, []);
+        if (raw.length && raw.every((c) => typeof c === "string")) {
+          set.run(JSON.stringify(normalizeCriteria(raw as string[])), row.id);
+        }
+      }
+    },
+    down: (d) => {
+      const rows = d.prepare("SELECT id, acceptance_criteria FROM tasks").all() as { id: string; acceptance_criteria: string }[];
+      const set = d.prepare("UPDATE tasks SET acceptance_criteria = ? WHERE id = ?");
+      for (const row of rows) {
+        const raw = parseJson<{ text?: string }[]>(row.acceptance_criteria, []);
+        if (raw.some((c) => c && typeof c === "object")) set.run(JSON.stringify(raw.map((c) => c.text ?? String(c))), row.id);
+      }
+    },
+  },
+  {
+    // Validation plan, approved plan, verification outcome and evidence.
+    name: "016_validation_and_evidence",
+    up: (d) => {
+      addColumn(d, "tasks", "validation_plan TEXT");
+      addColumn(d, "tasks", "approved_plan TEXT");
+      addColumn(d, "tasks", "head_sha TEXT");
+      addColumn(d, "tasks", "diff_stats TEXT");
+      addColumn(d, "tasks", "verification TEXT");
+      addColumn(d, "tasks", "risk_reasons TEXT DEFAULT '[]'");
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS task_evidence (
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          round INTEGER NOT NULL,
+          kind TEXT NOT NULL,
+          criterion_id TEXT,
+          command TEXT,
+          exit_code INTEGER,
+          summary TEXT NOT NULL,
+          log_path TEXT,
+          produced_by TEXT NOT NULL,
+          flaky INTEGER NOT NULL DEFAULT 0,
+          skipped INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (task_id, id)
+        );
+      `);
+    },
+    down: (d) => {
+      d.exec("DROP TABLE IF EXISTS task_evidence");
+      try {
+        d.exec(`UPDATE tasks SET validation_plan = NULL, approved_plan = NULL, head_sha = NULL, diff_stats = NULL,
+          verification = NULL, risk_reasons = '[]'`);
+      } catch {}
+    },
+  },
+  {
+    // Small key/value store for server state other processes read (verifier heartbeat).
+    name: "017_app_state",
+    up: (d) => d.exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT NOT NULL)"),
+    down: (d) => d.exec("DROP TABLE IF EXISTS app_state"),
+  },
 ];
 
 function runMigrations(): void {
@@ -506,7 +580,7 @@ function rowToTask(row: any): Task {
     description: row.description,
     steerDetails: row.steer_details ?? null,
     guardrails: JSON.parse(row.guardrails || "[]"),
-    acceptanceCriteria: JSON.parse(row.acceptance_criteria || "[]"),
+    acceptanceCriteria: criteriaFromStored(parseJson(row.acceptance_criteria, [])),
     priority: row.priority,
     recommendedBranch: row.recommended_branch,
     realBranch: row.real_branch,
@@ -532,6 +606,12 @@ function rowToTask(row: any): Task {
     producers: parseJson(row.producers, {}),
     leaseExpiresAt: row.lease_expires_at ?? null,
     lastReview: parseJson(row.last_review, null),
+    validationPlan: parseJson(row.validation_plan, null),
+    approvedPlan: parseJson(row.approved_plan, null),
+    headSha: row.head_sha ?? null,
+    diffStats: parseJson(row.diff_stats, null),
+    verification: parseJson(row.verification, null),
+    riskReasons: parseJson(row.risk_reasons, []),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -563,6 +643,7 @@ function rowToProject(row: any): Project {
     defaultMergeBranch: row.default_merge_branch ?? null,
     autonomy: row.autonomy ?? 2,
     policy: parseJson(row.policy, {}),
+    profile: resolveProfile(parseJson(row.profile, {})),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at ?? null,
@@ -624,7 +705,7 @@ export function createTask(data: {
   description: string;
   steerDetails?: string;
   guardrails?: string[];
-  acceptanceCriteria?: string[];
+  acceptanceCriteria?: CriterionInput[];
   priority?: number;
   recommendedBranch?: string;
   requiresPlan?: boolean;
@@ -643,7 +724,7 @@ export function createTask(data: {
     description: data.description,
     steerDetails: data.steerDetails ?? null,
     guardrails: data.guardrails ?? [],
-    acceptanceCriteria: data.acceptanceCriteria ?? [],
+    acceptanceCriteria: normalizeCriteria(data.acceptanceCriteria ?? []),
     priority: data.priority ?? 0,
     recommendedBranch: data.recommendedBranch?.trim() || defaultBranchName(id, data.title),
     realBranch: null,
@@ -669,6 +750,12 @@ export function createTask(data: {
     producers: {},
     leaseExpiresAt: null,
     lastReview: null,
+    validationPlan: null,
+    approvedPlan: null,
+    headSha: null,
+    diffStats: null,
+    verification: null,
+    riskReasons: [],
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -822,6 +909,12 @@ const TASK_COLUMNS = {
   producers: { column: "producers", json: true },
   leaseExpiresAt: { column: "lease_expires_at", json: false },
   lastReview: { column: "last_review", json: true },
+  validationPlan: { column: "validation_plan", json: true },
+  approvedPlan: { column: "approved_plan", json: true },
+  headSha: { column: "head_sha", json: false },
+  diffStats: { column: "diff_stats", json: true },
+  verification: { column: "verification", json: true },
+  riskReasons: { column: "risk_reasons", json: true },
 } as const;
 
 export type TaskPatch = {
@@ -1023,10 +1116,11 @@ export function createProject(data: {
   defaultMergeBranch?: string | null;
   autonomy?: AutonomyLevel;
   policy?: Partial<PolicySettings>;
+  profile?: Partial<ProjectProfile>;
 }): Project {
   const now = new Date().toISOString();
   const stmt = getDb().prepare(
-    "INSERT INTO projects (id, display_name, working_directory, default_merge_branch, autonomy, policy, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO projects (id, display_name, working_directory, default_merge_branch, autonomy, policy, profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   stmt.run(
     data.id,
@@ -1035,6 +1129,7 @@ export function createProject(data: {
     data.defaultMergeBranch?.trim() || null,
     data.autonomy ?? 2,
     JSON.stringify(data.policy ?? {}),
+    JSON.stringify(data.profile ?? {}),
     now,
     now,
   );
@@ -1081,6 +1176,7 @@ export function updateProject(
     defaultMergeBranch?: string | null;
     autonomy?: AutonomyLevel;
     policy?: Partial<PolicySettings>;
+    profile?: Partial<ProjectProfile>;
   },
 ): Project | null {
   const existing = getProjectById(id);
@@ -1096,10 +1192,13 @@ export function updateProject(
         : existing.defaultMergeBranch,
     autonomy: data.autonomy ?? existing.autonomy,
     policy: data.policy ? { ...existing.policy, ...data.policy } : existing.policy,
+    profile: data.profile
+      ? { ...existing.profile, ...data.profile, commands: { ...existing.profile.commands, ...(data.profile.commands ?? {}) } }
+      : existing.profile,
   };
 
   const stmt = getDb().prepare(
-    "UPDATE projects SET display_name = ?, working_directory = ?, default_merge_branch = ?, autonomy = ?, policy = ?, updated_at = ? WHERE id = ?",
+    "UPDATE projects SET display_name = ?, working_directory = ?, default_merge_branch = ?, autonomy = ?, policy = ?, profile = ?, updated_at = ? WHERE id = ?",
   );
   stmt.run(
     updated.displayName,
@@ -1107,11 +1206,27 @@ export function updateProject(
     updated.defaultMergeBranch,
     updated.autonomy,
     JSON.stringify(updated.policy),
+    JSON.stringify(updated.profile),
     now,
     id,
   );
 
   return getProjectById(id)!;
+}
+
+// ─── App state ────────────────────────────────────────────────────────
+
+export function setAppState(key: string, value: string): void {
+  getDb()
+    .prepare("INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+    .run(key, value, new Date().toISOString());
+}
+
+export function getAppState(key: string): { value: string; updatedAt: string } | null {
+  const row = getDb().prepare("SELECT value, updated_at FROM app_state WHERE key = ?").get(key) as
+    | { value: string; updated_at: string }
+    | undefined;
+  return row ? { value: row.value, updatedAt: row.updated_at } : null;
 }
 
 // ─── Activity ─────────────────────────────────────────────────────────

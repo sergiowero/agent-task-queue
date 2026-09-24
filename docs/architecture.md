@@ -120,7 +120,8 @@ Scripts for one-click setup:
 ### Task
 A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
-- **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (completion conditions)
+- **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (objects: id `ACn`, text, how it is verified, status, evidence ids)
+- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons; evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
 - **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
@@ -141,6 +142,7 @@ A coding agent that claims and works on tasks. Contains:
 A local repository that tasks belong to. Contains:
 - **Identity**: UUID, displayName
 - **Location**: workingDirectory (absolute path to repo)
+- **Profile**: commands (install/build/test/lint/typecheck), convention files, protected paths, shared guardrails, max diff size, verifier timeout and allowlist
 - **Autonomy**: level L0–L3 (default L2) and policy overrides (review rounds, spot checks, different reviewer model, lease, starvation); see [policy.md](policy.md)
 - **defaultMergeBranch**: branch new tasks target unless they name one; detected from `origin/HEAD` when the project is created (falls back to `main`/`master`), editable
 - **Lifecycle**: timestamps, soft delete support
@@ -163,7 +165,7 @@ A record of a task status transition. Contains:
 
 ## 4. Task Workflow
 
-### States (16 total)
+### States (18 total)
 
 The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee. The web UI reads the same catalog (`@agentq/shared/catalog`).
 
@@ -198,6 +200,10 @@ The task lifecycle moves through these states:
 **complete** → All work finished. Terminal state.
 
 **canceled** → Work stopped. Can be entered from any state.
+
+**verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier.
+
+**verifying** → The verifier is running the project's commands in the task's worktree.
 
 **needs_human** → An agent called `report_blocker` (push rejected, missing credentials, contradictory task), or a runner job ended three times in a row without submitting (`AGENTQ_MAX_REVERTS`). The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next.
 

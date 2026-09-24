@@ -268,7 +268,10 @@ describe("POST /api/tasks", () => {
     expect(task.status).toBe(TaskStatus.PlanRequested);
     expect(task.requiresPlan).toBe(true);
     expect(task.guardrails).toEqual(["g1"]);
-    expect(task.acceptanceCriteria).toEqual(["a", "b"]);
+    expect(task.acceptanceCriteria.map((c) => [c.id, c.text, c.status])).toEqual([
+      ["AC1", "a", "pending"],
+      ["AC2", "b", "pending"],
+    ]);
     expect(task.priority).toBe(5);
   });
 });
@@ -773,11 +776,46 @@ describe("autonomy, risk and findings", () => {
     expect(await raised.json()).toMatchObject({ risk: "high", autonomy: 0 });
   });
 
+  it("projects keep a profile; detect-commands reads the repository", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-api-profile-"));
+    try {
+      Bun.write(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test", lint: "eslint .", typecheck: "tsc" } }));
+      Bun.write(join(repo, "bun.lock"), "");
+      await Bun.sleep(10);
+      const projectId = randomUUID();
+      await json("/api/projects", "POST", { id: projectId, displayName: "Profile", workingDirectory: repo });
+      const detected = await (await api(`/api/projects/${projectId}/detect-commands`)).json();
+      expect(detected.commands).toMatchObject({ install: "bun install", test: "bun run test", lint: "bun run lint", typecheck: "bun run typecheck" });
+
+      const edited = await json(`/api/projects/${projectId}`, "PUT", {
+        profile: { commands: { test: "bun test" }, protectedPaths: ["migrations/**"], maxDiffLines: 200 },
+      });
+      expect((await edited.json()).profile).toMatchObject({
+        commands: { test: "bun test" },
+        protectedPaths: ["migrations/**"],
+        maxDiffLines: 200,
+        verifyTimeoutSec: 600,
+      });
+      const bad = await json(`/api/projects/${projectId}`, "PUT", { profile: { maxDiffLines: "big" } });
+      expect(bad.status).toBe(400);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("PUT edits criteria as one-line strings and keeps the ids of unchanged ones", async () => {
+    const task = await createTaskViaApi({ title: "Criteria", acceptanceCriteria: ["one", "two $ bun test two"] });
+    expect(task.acceptanceCriteria[1]).toMatchObject({ id: "AC2", verify: { kind: "command", command: "bun test two" } });
+    const res = await json(`/api/tasks/${task.id}`, "PUT", { acceptanceCriteria: ["two $ bun test two", "three"] });
+    const edited = (await res.json()) as Task;
+    expect(edited.acceptanceCriteria.map((c) => c.id)).toEqual(["AC2", "AC3"]);
+  });
+
   it("GET /api/tasks/:id/details returns the review findings", async () => {
     const task = await createTaskViaApi({ title: "Findings" });
     const res = await api(`/api/tasks/${task.id}/details`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ findings: [] });
+    expect(await res.json()).toEqual({ findings: [], evidence: [] });
     expect((await api(`/api/tasks/${randomUUID()}/details`)).status).toBe(404);
   });
 });

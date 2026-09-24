@@ -21,6 +21,8 @@ export enum TaskStatus {
   Complete = "complete",
   Canceled = "canceled",
   NeedsHuman = "needs_human",
+  VerifyRequested = "verify_requested",
+  Verifying = "verifying",
 }
 
 export function normalizeStatus(status: string): TaskStatus {
@@ -29,7 +31,7 @@ export function normalizeStatus(status: string): TaskStatus {
 }
 
 /** Work phases; each has a skill (`skills/agentq-<phase>`) and a submit tool. */
-export type Phase = "plan" | "code" | "review" | "merge";
+export type Phase = "plan" | "code" | "verify" | "review" | "merge";
 
 /**
  * queued: waiting for an agent to claim it · active: an agent holds it ·
@@ -190,6 +192,24 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     editable: false,
     hint: "Canceled.",
   },
+  [TaskStatus.VerifyRequested]: {
+    label: "Verify requested",
+    kind: "queued",
+    phase: "verify",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for the verifier to run the project's commands on the submitted code.",
+  },
+  [TaskStatus.Verifying]: {
+    label: "Verifying",
+    kind: "active",
+    phase: "verify",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "The verifier is running the project's commands in the task's worktree.",
+  },
   [TaskStatus.NeedsHuman]: {
     label: "Needs you",
     kind: "human",
@@ -233,6 +253,8 @@ export const CLAIM_RULES: ClaimRule[] = [
   },
   { role: "reviewer", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
   { role: "implementer", from: [TaskStatus.Approved], to: TaskStatus.Merging },
+  // The server's built-in verifier (no LLM) runs the project's commands.
+  { role: "verifier", from: [TaskStatus.VerifyRequested], to: TaskStatus.Verifying },
 ];
 
 export const BASE_ROLES = ["planner", "implementer", "reviewer"] as const;
@@ -267,6 +289,7 @@ export const REVERT_FALLBACK: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Coding]: TaskStatus.ReadyForCode,
   [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
   [TaskStatus.Merging]: TaskStatus.Approved,
+  [TaskStatus.Verifying]: TaskStatus.VerifyRequested,
 };
 
 /** Where a person's "Unblock" sends an active task (the agent is dropped). */
@@ -275,6 +298,7 @@ export const UNBLOCK_TARGET: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Coding]: TaskStatus.ChangesRequested,
   [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
   [TaskStatus.Merging]: TaskStatus.Approved,
+  [TaskStatus.Verifying]: TaskStatus.VerifyRequested,
 };
 
 /** Statuses a person may send a `needs_human` task to, by the phase it was blocked in. */
@@ -290,6 +314,13 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.ChangesRequested,
     TaskStatus.ReadyForCode,
     TaskStatus.WaitingCodeReview,
+    TaskStatus.Canceled,
+  ],
+  verify: [
+    TaskStatus.VerifyRequested,
+    TaskStatus.ChangesRequested,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.CodeReviewRequested,
     TaskStatus.Canceled,
   ],
   review: [
@@ -321,7 +352,20 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
   for (const [active, target] of Object.entries(UNBLOCK_TARGET)) add(active as TaskStatus, target!);
   // Submissions (where each one lands is decided by the autonomy policy).
   add(TaskStatus.Planning, TaskStatus.WaitingPlanReview);
-  add(TaskStatus.Coding, TaskStatus.WaitingCodeReview, TaskStatus.CodeReviewRequested);
+  add(
+    TaskStatus.Coding,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.CodeReviewRequested,
+    TaskStatus.VerifyRequested,
+  );
+  add(
+    TaskStatus.Verifying,
+    TaskStatus.CodeReviewRequested,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.ChangesRequested,
+  );
+  // The verifier went away: the review goes ahead without verification.
+  add(TaskStatus.VerifyRequested, TaskStatus.CodeReviewRequested, TaskStatus.WaitingCodeReview);
   add(
     TaskStatus.Reviewing,
     TaskStatus.WaitingCodeReview,
@@ -372,6 +416,8 @@ export type TaskType = "feature" | "bug" | "refactor" | "docs" | "chore";
 export type Verdict = "approve" | "request_changes" | "needs_human";
 export type Severity = "blocker" | "major" | "minor" | "nit";
 export type FindingStatus = "open" | "fixed" | "wontfix" | "verified";
+export type CriterionStatus = "pending" | "met" | "failed" | "waived";
+export type VerifyKind = "command" | "test" | "manual" | "review";
 
 export const DEFAULT_AUTONOMY: AutonomyLevel = 2;
 
@@ -442,6 +488,10 @@ export const EVENT_TYPES: Record<string, string> = {
   review_sampled: "Sampled for human review",
   review_starved: "No reviewer picked it up",
   lease_expired: "Claim expired",
+  verification_passed: "Verification passed",
+  verification_failed: "Verification failed",
+  verification_skipped: "Verification skipped",
+  risk_raised: "Risk raised",
   task_reverted: "Reverted",
   task_archived: "Archived",
   comment_added: "Comment",

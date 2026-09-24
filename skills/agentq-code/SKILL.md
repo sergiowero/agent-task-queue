@@ -3,7 +3,7 @@ name: agentq-code
 description: Coding phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
 allowed-tools: mcp__agentq__submit_code, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -57,14 +57,19 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
 ### Initial implementation (claimed from `ready_for_code`)
 
 1. Go to the worktree (create it if needed — see Worktree Rules)
-2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` (an approved plan, if any, is there) and `task.contexts[]`
-3. Implement the code, verify it (run the project's tests/build where available)
-4. Commit it:
+2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria` (each has an id like `AC1` and a `verify` method), `task.approvedPlan` (the approved plan and its **validation plan**), `task.conversation[]` and `task.contexts[]`
+3. **Tests first.** Write the tests the validation plan names (`approvedPlan.validation.items[].newTests`). For a bug, first write a test that fails without the fix
+4. Implement the code until those tests pass
+5. Run the validation plan's commands and its `regressionCommands` (or the project's test/typecheck/lint commands when there is no plan) and keep the output: it is your evidence
+6. Go through the Self-review checklist below
+7. Commit it:
    ```bash
    git add -A
    git commit -m "{task.title} (#{task.id})"
    ```
-5. Submit with `submit_code` (see Submit Code)
+8. Submit with `submit_code` (see Submit Code)
+
+The validation plan is frozen once approved. If it cannot be followed (a command cannot work, a criterion cannot be tested as planned), do **not** change it or work around it: call `report_blocker` and say why.
 
 ### Review fixes (claimed from `changes_requested`)
 
@@ -72,7 +77,7 @@ When a review requests changes, the feedback is in `task.findings[]` (each findi
 
 1. Go to the existing worktree (never create a new one)
 2. Read the open findings (`task.findings[]` with `status: "open"`) and the latest review message
-3. Fix every `blocker` and `major` finding; fix `minor`/`nit` ones when cheap. In your `submit_code` message, answer each open finding by id: fixed (and how) or not fixed (and why)
+3. Fix every `blocker` and `major` finding; fix `minor`/`nit` ones when cheap. Answer **every** open finding in `findingResolutions`: `fixed` (and how) or `wontfix` (and why). The tool refuses a submit that leaves an open finding unanswered. When the verifier sent the task back, its failing commands are in `task.evidence` and the latest `verify` message
 4. Commit again:
    ```bash
    git add -A
@@ -87,12 +92,24 @@ Repeat steps 1–5 for every round of review changes. Each round adds a NEW comm
 Commit your changes in the worktree BEFORE calling `submit_code` — it only records the submission, it does NOT run git. `worktree` is mandatory and must be the absolute worktree path (`task.worktreePath` or the path you created). Call the `submit_code` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown message>", "worktree": "<absolute worktree path>", "context": "<handoff notes>" }
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown message>",
+  "worktree": "<absolute worktree path>", "branch": "<task.recommendedBranch>", "headSha": "<git rev-parse HEAD>",
+  "evidence": [
+    { "kind": "command", "criterionId": "AC1", "command": "bun test theme", "exitCode": 0, "summary": "4 pass, 0 fail" },
+    { "kind": "manual", "criterionId": "AC2", "summary": "Checked the header at 375px: toggle visible" }
+  ],
+  "criteria": [{ "id": "AC1", "status": "met" }, { "id": "AC2", "status": "met" }],
+  "findingResolutions": [{ "id": "R1-1", "status": "fixed", "resolution": "Added the empty-list test in src/a.test.ts" }],
+  "context": "<handoff notes>" }
 ```
+
+- `evidence.summary` holds the relevant output lines, not the whole log.
+- `criteria` is your view; the verifier and the reviewer check it.
+- `findingResolutions` is required for every open finding (none on the first round).
 
 `context` is required too (see Context Handoff in `agentq-claim`). For the reviewer, include: what to look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
 
-It stores the worktree path, releases the task and sends it to review: to an AI reviewer (`code_review_requested`) under autonomy L1 and higher, to a person (`waiting_code_review`) under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It stores the worktree path and the evidence and releases the task. When the project has commands, the AgentQ verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output, and deleted, skipped or weakened tests count as a failure. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Code Template
 
@@ -107,15 +124,32 @@ The `message` MUST be Markdown.
 ### Files Modified
 - `path/to/file` - [what changed]
 
-### Testing
-- [how to verify]
+### Evidence
+| Criterion | How | Result |
+|-----------|-----|--------|
+| AC1 | `bun test theme` | pass |
+
+### Findings
+- R1-1 fixed — [how] (review rounds only)
 
 ### Notes
 - [any notes]
 ```
 
+## Self-review checklist
+
+Before `submit_code`:
+
+- [ ] I read my whole diff (`git diff {task.mergeBranch}...HEAD`)
+- [ ] Every acceptance criterion has a status and evidence
+- [ ] Every open finding has a resolution (fixed, or wontfix with a reason)
+- [ ] I ran the validation plan's regression commands and summarised their output
+- [ ] I did not delete, skip (`.skip`, `.only`, `xit`) or weaken tests, nor lower coverage thresholds
+- [ ] No debug logs, stray TODOs or files outside the task's scope
+
 ## Guardrails
 
+- **DO NOT** change the approved validation plan or weaken tests to make them pass - call `report_blocker` instead
 - **DO** call `report_blocker` (see Blocked in `agentq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** review code during coding phase - only implement
 - **DO NOT** modify files outside the assigned worktree

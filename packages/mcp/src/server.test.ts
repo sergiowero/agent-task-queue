@@ -43,6 +43,7 @@ const TOOL_NAMES = [
   "archive_task",
   "report_blocker",
   "heartbeat",
+  "submit_verification",
 ];
 
 const senior = {
@@ -157,7 +158,9 @@ describe("AgentQ MCP server", () => {
     expect(created.task.status).toBe(TaskStatus.PlanRequested);
     expect(created.task.project.id).toBe(projectId);
     expect(created.task.guardrails).toEqual(["no force push"]);
-    expect(created.task.acceptanceCriteria).toEqual(["tests pass"]);
+    expect(created.task.acceptanceCriteria).toEqual([
+      { id: "AC1", text: "tests pass", verify: { kind: "review" }, status: "pending", evidenceIds: [] },
+    ]);
     expect(created.task.contexts).toEqual(["initial context"]);
     const taskId: string = created.task.id;
 
@@ -736,7 +739,10 @@ describe("AgentQ MCP create, list and archive", () => {
       steerDetails: "Use the existing helpers",
       recommendedBranch: "feat/plan-me",
       mergeBranch: "main",
-      acceptanceCriteria: ["a", "b"],
+      acceptanceCriteria: [
+        { id: "AC1", text: "a", verify: { kind: "review" }, status: "pending", evidenceIds: [] },
+        { id: "AC2", text: "b", verify: { kind: "review" }, status: "pending", evidenceIds: [] },
+      ],
       guardrails: ["no force push", "keep it small"],
       contexts: ["initial context"],
     });
@@ -956,6 +962,53 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(beat.leaseExpiresAt > before).toBe(true);
     const stranger = await connect();
     expect(parse(await call(stranger, "heartbeat", { taskId: task.id })).extended).toBe(false);
+  });
+
+  it("create_task takes criteria objects; submit_plan a validation plan; submit_code evidence", async () => {
+    const created = parse(
+      await call(await connect(), "create_task", {
+        title: "evidence",
+        projectId,
+        description: "d",
+        requiresPlan: true,
+        priority: 50,
+        type: "bug",
+        acceptanceCriteria: ["old style", { text: "new style", verify: { kind: "command", command: "bun test x" } }],
+      }),
+    );
+    expect(created.task.type).toBe("bug");
+    expect(created.task.acceptanceCriteria.map((c: any) => [c.id, c.verify.kind])).toEqual([
+      ["AC1", "review"],
+      ["AC2", "command"],
+    ]);
+    const agentClient = await connect();
+    const claimed = parse(await call(agentClient, "claim_task", { ...agent, role: "planner", sessionId: "p9", projectId }));
+    expect(claimed.task.id).toBe(created.task.id);
+    const bad = parse(
+      await call(agentClient, "submit_plan", {
+        taskId: created.task.id,
+        message: "p",
+        context: "c",
+        validationPlan: { items: [{ criterionId: "AC3", how: "?" }], regressionCommands: [] },
+      }),
+    );
+    expect(bad.error).toContain("unknown criteria: AC3");
+    parse(
+      await call(agentClient, "submit_plan", {
+        taskId: created.task.id,
+        message: "p",
+        context: "c",
+        validationPlan: { items: [{ criterionId: "AC2", how: "test", command: "bun test x" }], regressionCommands: ["bun test"] },
+      }),
+    );
+    expect(getTaskById(created.task.id)!.validationPlan?.regressionCommands).toEqual(["bun test"]);
+  });
+
+  it("submit_verification is exposed for verifier agents", async () => {
+    const { tools } = await (await connect()).listTools();
+    const tool = tools.find((t) => t.name === "submit_verification")!;
+    expect(tool.inputSchema.required).toEqual(expect.arrayContaining(["taskId", "passed", "evidence"]));
+    expect(RUNNER_MCP_TOOLS).toContain("submit_verification");
   });
 
   it("refuses agents whose skills are older than the server supports", async () => {

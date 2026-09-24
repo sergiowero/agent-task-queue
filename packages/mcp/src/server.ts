@@ -15,6 +15,11 @@ import {
   claimNextTask,
   reportBlocker,
   getFindings,
+  getEvidence,
+  submitVerification,
+  criteriaInputSchema,
+  riskSchema,
+  taskTypeSchema,
   policyFor,
   reviewRoundsUsed,
   severitySchema,
@@ -94,8 +99,16 @@ function withProject(task: Task): PublicTask & { project: Project | null } {
 
 /** A task with its project and its review findings (what an agent needs to continue it). */
 function taskDetails(task: Task) {
-  return { ...withProject(task), findings: getFindings(task.id) };
+  return { ...withProject(task), findings: getFindings(task.id), evidence: getEvidence(task.id) };
 }
+
+const evidenceSchema = z.object({
+  kind: z.enum(["command", "manual"]),
+  criterionId: z.string().optional().describe("Acceptance criterion this checks (e.g. AC1)"),
+  command: z.string().optional().describe("The command you ran"),
+  exitCode: z.number().int().optional(),
+  summary: z.string().min(1).describe("The relevant output lines, not the whole log"),
+});
 
 /** Trims each entry and drops the empty ones; undefined stays undefined. */
 function cleanList(items: string[] | undefined): string[] | undefined {
@@ -259,10 +272,27 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status. Moves it to `waiting_plan_review` and releases it.",
+        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan: how each acceptance criterion will be verified. Moves it to `waiting_plan_review` and releases it; once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
+        validationPlan: z
+          .object({
+            items: z
+              .array(
+                z.object({
+                  criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
+                  how: z.string().min(1).describe("How it is verified"),
+                  command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
+                  newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
+                }),
+              )
+              .describe("One item per acceptance criterion"),
+            regressionCommands: z
+              .array(z.string())
+              .describe("Commands that must keep passing (e.g. bun test, bun run typecheck)"),
+          })
+          .optional(),
         author: authorSchema,
         context: submitContextSchema,
         claimToken: claimTokenSchema,
@@ -274,6 +304,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         submitResponse(
           submitPlan(input.taskId, {
             message: input.message,
+            validationPlan: input.validationPlan,
             author: input.author,
             context: input.context,
             ...auth(input),
@@ -287,7 +318,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status. Stores the worktree path, moves it to `waiting_code_review` and releases it.",
+        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Summary of the changes (markdown)"),
@@ -295,6 +326,23 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           .string()
           .min(1)
           .describe("Absolute path of the git worktree containing the changes"),
+        branch: z.string().optional().describe("Feature branch the commits are on"),
+        headSha: z.string().optional().describe("Head commit (git rev-parse HEAD)"),
+        evidence: z.array(evidenceSchema).max(50).default([]).describe("Commands you ran and manual checks"),
+        criteria: z
+          .array(z.object({ id: z.string().min(1), status: z.enum(["met", "failed", "pending"]) }))
+          .default([])
+          .describe("Your view of each acceptance criterion"),
+        findingResolutions: z
+          .array(
+            z.object({
+              id: z.string().min(1).describe("Finding id, e.g. R1-2"),
+              status: z.enum(["fixed", "wontfix"]),
+              resolution: z.string().min(1).describe("How you fixed it, or why not"),
+            }),
+          )
+          .default([])
+          .describe("Required: an answer for every open review finding"),
         author: authorSchema,
         context: submitContextSchema,
         claimToken: claimTokenSchema,
@@ -307,6 +355,11 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           submitCode(input.taskId, {
             message: input.message,
             worktree: input.worktree,
+            branch: input.branch,
+            headSha: input.headSha,
+            evidence: input.evidence,
+            criteria: input.criteria,
+            findingResolutions: input.findingResolutions,
             author: input.author,
             context: input.context,
             ...auth(input),
@@ -362,6 +415,38 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             message: input.message,
             author: input.author,
             context: input.context,
+            ...auth(input),
+          }),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "submit_verification",
+    {
+      title: "Submit verification",
+      description:
+        "For verifier agents: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
+      inputSchema: {
+        taskId: taskIdSchema,
+        passed: z.boolean().describe("Every command passed and no tests were weakened"),
+        evidence: z.array(evidenceSchema).max(100).describe("One entry per command run"),
+        tampering: z.array(z.string()).default([]).describe("Tests deleted, skipped or weakened"),
+        verifiedSha: z.string().optional().describe("Commit that was verified"),
+        author: authorSchema,
+        claimToken: claimTokenSchema,
+        agentId: agentIdSchema,
+      },
+    },
+    (input) =>
+      run(() =>
+        submitResponse(
+          submitVerification(input.taskId, {
+            passed: input.passed,
+            evidence: input.evidence,
+            tampering: input.tampering,
+            verifiedSha: input.verifiedSha,
+            author: input.author,
             ...auth(input),
           }),
         ),
@@ -527,10 +612,13 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           .array(z.string())
           .optional()
           .describe("Behavioral constraints the agent must respect"),
-        acceptanceCriteria: z
-          .array(z.string())
+        acceptanceCriteria: criteriaInputSchema
           .optional()
-          .describe("Conditions that must hold for the task to be done"),
+          .describe(
+            "Conditions that must hold for the task to be done: strings, or { text, verify: { kind: command|test|manual|review, command? } }",
+          ),
+        type: taskTypeSchema.optional().describe("feature, bug, refactor, docs or chore (default feature)"),
+        risk: riskSchema.optional().describe("low, medium or high (default from the type)"),
         priority: z
           .number()
           .int()
@@ -563,7 +651,9 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             mergeBranch: input.mergeBranch,
             projectId: input.projectId,
             contexts: input.context ? [input.context] : [],
-            acceptanceCriteria: cleanList(input.acceptanceCriteria),
+            acceptanceCriteria: input.acceptanceCriteria,
+            type: input.type,
+            risk: input.risk,
           },
           input.author ?? "agent",
         );

@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "4.0.0"
+  version: "4.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -29,7 +29,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "4.0.0",
+  "skillsVersion": "4.1.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -39,14 +39,16 @@ Call `claim_task`:
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."],
-    "acceptanceCriteria": ["..."], "status": "coding", "recommendedBranch": "feat/...", "mergeBranch": "main",
+    "acceptanceCriteria": [{ "id": "AC1", "text": "...", "verify": { "kind": "command", "command": "bun test x" }, "status": "pending" }], "status": "coding", "recommendedBranch": "feat/...", "mergeBranch": "main",
     "worktreePath": null | "{project}/.agentq/worktrees/{taskId}",
     "history": [{ "pre_status": "ready_for_code", "new_status": "coding", "timestamp": "..." }],
     "conversation": [{ "authorName": "...", "timestamp": "...", "message": "...", "messageType": "review" }], "contexts": ["..."],
     "findings": [{ "id": "R1-1", "severity": "major", "file": "src/a.ts", "line": 12, "text": "...", "status": "open" }],
+    "evidence": [{ "id": "E1", "criterionId": "AC1", "command": "bun test", "exitCode": 0, "summary": "..." }],
+    "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "4.0.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "4.1.0" }
 ```
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`

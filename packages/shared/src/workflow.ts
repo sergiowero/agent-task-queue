@@ -4,6 +4,7 @@ import {
   appendJson,
   createAgent,
   createTask,
+  getAppState,
   getClaimableTasks,
   getDbHandle,
   getProjectById,
@@ -14,8 +15,18 @@ import {
   withTransaction,
   type TaskPatch,
 } from "./database.js";
-import { afterCode, afterPlan, afterReview, resolvePolicy, type GatePolicy } from "./policy.js";
-import { addFindings, getFinding, getOpenFindings, updateFinding, type NewFinding } from "./records.js";
+import { afterCode, afterPlan, afterReview, afterVerify, resolvePolicy, type GatePolicy } from "./policy.js";
+import {
+  addEvidence,
+  addFindings,
+  getFinding,
+  getOpenFindings,
+  updateFinding,
+  type NewEvidence,
+  type NewFinding,
+} from "./records.js";
+import { normalizeCriteria, type CriterionInput } from "./criteria.js";
+import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
 import {
   ALL_STATUSES,
   BLOCKING_SEVERITIES,
@@ -29,11 +40,25 @@ import {
   canTransition,
   resolveTargets,
   statusLabel,
+  maxRisk,
+  type CriterionStatus,
   type Phase,
+  type Risk,
   type Verdict,
 } from "./catalog.js";
 import { detectDefaultBranch } from "./git.js";
-import type { AgentReference, Agent, Blocker, ConversationEntry, Producer, Task } from "./types.js";
+import type {
+  AgentReference,
+  Agent,
+  ApprovedPlan,
+  Blocker,
+  ConversationEntry,
+  DiffStats,
+  Producer,
+  Task,
+  ValidationPlan,
+  Verification,
+} from "./types.js";
 import { TaskStatus } from "./types.js";
 
 export { COMPOUND_ROLES, REVERT_FALLBACK };
@@ -530,8 +555,32 @@ function humanTransition(
   });
 }
 
+/** The latest submitted plan and its validation plan, frozen as the approved plan. */
+function freezePlan(task: Task, approvedBy: string): ApprovedPlan {
+  const plan = [...task.conversation].reverse().find((e) => e.messageType === "plan");
+  return {
+    markdown: plan?.message ?? "",
+    validation: task.validationPlan,
+    approvedBy,
+    at: new Date().toISOString(),
+  };
+}
+
 export function approvePlan(taskId: string, input: HumanActionInput = {}): Task {
-  return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.ReadyForCode, "plan_approved", input.message?.trim() || "Plan approved.", input);
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.WaitingPlanReview) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingPlanReview)} status`);
+    }
+    const actor = input.actor ?? "user";
+    return transitionTask(task, TaskStatus.ReadyForCode, {
+      actor,
+      message: input.message?.trim() || "Plan approved.",
+      messageType: "user",
+      event: "plan_approved",
+      patch: { revertStreak: 0, approvedPlan: freezePlan(task, actor) },
+    });
+  });
 }
 
 export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
@@ -593,6 +642,17 @@ export function unblockTask(taskId: string, input: HumanActionInput = {}): Task 
   });
 }
 
+export type TaskEdit = Omit<TaskPatch, "acceptanceCriteria"> & { acceptanceCriteria?: CriterionInput[] };
+
+/** A person edits a task's fields (never its status, claim or history). */
+export function editTask(taskId: string, edit: TaskEdit): Task {
+  const task = requireTask(taskId);
+  const { acceptanceCriteria, ...rest } = edit;
+  const patch: TaskPatch = { ...rest };
+  if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
+  return patchTask(taskId, patch)!;
+}
+
 export function addUserComment(taskId: string, input: { message: string; author?: string }): Task {
   const task = requireTask(taskId);
   const author = input.author ?? "user";
@@ -630,10 +690,6 @@ export interface SubmitInput extends ClaimAuth {
   message?: string;
   author?: string;
   context?: string;
-}
-
-export interface SubmitCodeInput extends SubmitInput {
-  worktree?: string;
 }
 
 export interface SubmitMergeInput extends SubmitInput {
@@ -718,12 +774,71 @@ function submit(
   });
 }
 
-export function submitPlan(taskId: string, input: SubmitInput = {}): SubmitResult {
+export interface SubmitPlanInput extends SubmitInput {
+  /** How each acceptance criterion will be verified, and the commands that must keep passing. */
+  validationPlan?: ValidationPlan;
+}
+
+function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
+  const ids = new Set(task.acceptanceCriteria.map((c) => c.id));
+  const unknown = plan.items.map((i) => i.criterionId).filter((id) => !ids.has(id));
+  if (unknown.length) {
+    throw new WorkflowError(
+      `validationPlan names unknown criteria: ${unknown.join(", ")}. The task's criteria are ${[...ids].join(", ") || "none"}.`,
+    );
+  }
+  return {
+    items: plan.items.map((i) => ({ ...i, how: i.how.trim(), command: i.command?.trim() || undefined })),
+    regressionCommands: plan.regressionCommands.map((c) => c.trim()).filter(Boolean),
+  };
+}
+
+export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitResult {
   return submit(
     taskId,
     { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
-    (task, policy) => ({ to: afterPlan(task, policy), message: input.message }),
+    (task, policy) => ({
+      to: afterPlan(task, policy),
+      message: input.message,
+      patch: input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {},
+    }),
+  );
+}
+
+export interface SubmitCodeInput extends SubmitInput {
+  worktree?: string;
+  /** Feature branch the commits are on (recorded as the task's real branch). */
+  branch?: string;
+  /** Head commit of the submission. */
+  headSha?: string;
+  /** Commands the coder ran (and manual checks), optionally tied to a criterion. */
+  evidence?: NewEvidence[];
+  /** The coder's view of each criterion: met, failed or still pending. */
+  criteria?: { id: string; status: CriterionStatus }[];
+  /** An answer for every open review finding: fixed, or wontfix with the reason. */
+  findingResolutions?: { id: string; status: "fixed" | "wontfix"; resolution: string }[];
+}
+
+/** Minutes after which the verifier's heartbeat counts as gone. */
+const VERIFIER_STALE_MS = 2 * 60_000;
+
+export function verifierOnline(now = Date.now()): boolean {
+  const beat = getAppState("verifier_heartbeat");
+  if (!beat) return false;
+  const at = new Date(beat.value).getTime();
+  return now - (Number.isFinite(at) ? at : new Date(beat.updatedAt).getTime()) < VERIFIER_STALE_MS;
+}
+
+/** Whether the task has anything the verifier can run. */
+export function hasVerificationCommands(task: Task): boolean {
+  const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
+  const plan = task.approvedPlan?.validation;
+  return (
+    profileCommands(profile).length > 0 ||
+    !!plan?.regressionCommands.length ||
+    !!plan?.items.some((i) => i.command) ||
+    task.acceptanceCriteria.some((c) => c.verify.command)
   );
 }
 
@@ -732,12 +847,215 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
     taskId,
     { from: TaskStatus.Coding, phase: "code", messageType: "code", event: "code_submitted", done: "Code submitted" },
     input,
-    (task, policy) => ({
-      to: afterCode(task, policy),
-      message: input.message,
-      patch: { worktreePath: input.worktree ?? null },
-    }),
+    (task, policy) => {
+      const author = task.assignedAgent?.agentId ?? input.author ?? "agent";
+      const round = task.codeRound + 1;
+
+      // Every open review finding needs an answer.
+      const open = getOpenFindings(taskId, "code");
+      const resolutions = new Map((input.findingResolutions ?? []).map((r) => [r.id, r]));
+      const missing = open.filter((f) => !resolutions.has(f.id)).map((f) => f.id);
+      if (missing.length) {
+        throw new WorkflowError(
+          `Answer every open review finding in findingResolutions (fixed, or wontfix with a reason): ${missing.join(", ")}.`,
+        );
+      }
+      for (const r of resolutions.values()) {
+        if (!getFinding(taskId, r.id)) throw new WorkflowError(`Unknown finding ${r.id}.`);
+        updateFinding(taskId, r.id, { status: r.status, resolution: r.resolution.trim() });
+      }
+
+      const ids = new Set(task.acceptanceCriteria.map((c) => c.id));
+      const badCriterion = [...(input.criteria ?? []).map((c) => c.id), ...(input.evidence ?? []).map((e) => e.criterionId)]
+        .filter((id): id is string => !!id && !ids.has(id));
+      if (badCriterion.length) throw new WorkflowError(`Unknown criteria: ${[...new Set(badCriterion)].join(", ")}.`);
+
+      const evidence = addEvidence(taskId, round, input.evidence ?? [], author);
+      const statuses = new Map((input.criteria ?? []).map((c) => [c.id, c.status]));
+      const criteria = task.acceptanceCriteria.map((c) => ({
+        ...c,
+        status: statuses.get(c.id) ?? c.status,
+        evidenceIds: [...c.evidenceIds, ...evidence.filter((e) => e.criterionId === c.id).map((e) => e.id)],
+      }));
+
+      const verifyNow = hasVerificationCommands(task) && verifierOnline();
+      const verification: Verification | null = verifyNow
+        ? task.verification
+        : {
+            round,
+            passed: false,
+            skipped: true,
+            note: hasVerificationCommands(task)
+              ? "Not verified: the AgentQ web server (which runs the verifier) is not running."
+              : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
+            tampering: [],
+            tamperStrikes: task.verification?.tamperStrikes ?? 0,
+            verifiedSha: null,
+            at: new Date().toISOString(),
+          };
+
+      return {
+        to: afterCode(task, policy, { verify: verifyNow }),
+        message: input.message,
+        patch: {
+          worktreePath: input.worktree ?? null,
+          realBranch: input.branch?.trim() || task.realBranch,
+          headSha: input.headSha?.trim() || null,
+          acceptanceCriteria: criteria,
+          verification,
+        },
+      };
+    },
   );
+}
+
+export interface SubmitVerificationInput extends ClaimAuth {
+  passed: boolean;
+  evidence: NewEvidence[];
+  /** Test tampering the verifier found (deleted tests, .skip/.only, lowered thresholds). */
+  tampering?: string[];
+  diffStats?: DiffStats | null;
+  /** Changed files that match the project's protected paths. */
+  touchedProtected?: string[];
+  verifiedSha?: string | null;
+  /** The verifier could not run at all (worktree missing, ...): a person looks, no retry counted. */
+  infraError?: string;
+  author?: string;
+}
+
+/** The verifier reports: evidence per command, criteria met/failed, and where the task goes. */
+export function submitVerification(taskId: string, input: SubmitVerificationInput): SubmitResult {
+  return withTransaction(() => {
+    const task = requireClaim(taskId, TaskStatus.Verifying, input);
+    const policy = policyFor(task);
+    const actor = input.author ?? task.assignedAgent?.agentId ?? "runner:verify";
+    const round = task.codeRound + 1;
+    const now = new Date().toISOString();
+
+    if (input.infraError) {
+      const blocker: Blocker = {
+        reason: input.infraError,
+        question: "Fix the problem (e.g. restore the worktree), then send the task back to verification or to review.",
+        phase: "verify",
+        fromStatus: task.status,
+        raisedBy: actor,
+        at: now,
+      };
+      const blocked = transitionTask(task, TaskStatus.NeedsHuman, {
+        actor,
+        author: "verifier",
+        message: `**Verification could not run:** ${input.infraError}`,
+        messageType: "verify",
+        event: "task_blocked",
+        details: input.infraError,
+        release: true,
+        patch: { blocker },
+      });
+      return { task: blocked, previousStatus: task.status, newStatus: blocked.status, message: "Verification blocked." };
+    }
+
+    const evidence = addEvidence(taskId, round, input.evidence, "runner:verify");
+    const results = new Map<string, boolean>();
+    for (const e of evidence) {
+      if (!e.criterionId || e.skipped) continue;
+      results.set(e.criterionId, (results.get(e.criterionId) ?? true) && e.exitCode === 0);
+    }
+    const criteria = task.acceptanceCriteria.map((c) => ({
+      ...c,
+      status: results.has(c.id) ? ((results.get(c.id) ? "met" : "failed") as CriterionStatus) : c.status,
+      evidenceIds: [...c.evidenceIds, ...evidence.filter((e) => e.criterionId === c.id).map((e) => e.id)],
+    }));
+
+    // Risk only goes up: protected paths or a diff larger than the project allows.
+    const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
+    const reasons: string[] = [];
+    if (input.touchedProtected?.length) reasons.push(`Touches protected paths: ${input.touchedProtected.join(", ")}`);
+    const size = input.diffStats ? input.diffStats.insertions + input.diffStats.deletions : 0;
+    if (size > profile.maxDiffLines) reasons.push(`Diff of ${size} lines exceeds the project's ${profile.maxDiffLines}`);
+    const newReasons = reasons.filter((r) => !task.riskReasons.includes(r));
+    const risk: Risk = reasons.length ? maxRisk(task.risk, "high") : task.risk;
+
+    const tampering = input.tampering ?? [];
+    const strikes = (task.verification?.tamperStrikes ?? 0) + (tampering.length ? 1 : 0);
+    const passed = input.passed && tampering.length === 0;
+    const failures = passed ? 0 : task.verifyFailures + 1;
+    let to = afterVerify({ ...task, risk, verifyFailures: failures }, policy, passed);
+    let blocker: Blocker | null = null;
+    if (tampering.length && strikes >= 2) {
+      to = TaskStatus.NeedsHuman;
+      blocker = {
+        reason: `Tests were weakened again: ${tampering.join("; ")}.`,
+        question: "Decide whether the test changes are legitimate; if so, send the task to review, otherwise back to the coder.",
+        phase: "verify",
+        fromStatus: task.status,
+        raisedBy: actor,
+        at: now,
+      };
+    } else if (to === TaskStatus.NeedsHuman) {
+      blocker = {
+        reason: `Verification failed ${failures} times in a row.`,
+        question: "Look at the failing commands: fix the environment, adjust the plan, or send the task back to the coder.",
+        phase: "verify",
+        fromStatus: task.status,
+        raisedBy: actor,
+        at: now,
+      };
+    }
+
+    const lines = evidence.map(
+      (e) =>
+        `- ${e.skipped ? "⏭" : e.exitCode === 0 ? "✅" : "❌"} \`${e.command ?? e.summary}\`${e.criterionId ? ` (${e.criterionId})` : ""}${e.flaky ? " — flaky, passed on retry" : ""}${e.skipped ? ` — ${e.summary}` : ""}`,
+    );
+    const message = [
+      `## Verification ${passed ? "passed" : "failed"}`,
+      "",
+      ...lines,
+      ...(tampering.length ? ["", "**Test tampering:**", ...tampering.map((t) => `- ${t}`)] : []),
+      ...(input.diffStats ? ["", `Diff: ${input.diffStats.files} files, +${input.diffStats.insertions} −${input.diffStats.deletions}`] : []),
+      ...(input.verifiedSha && task.headSha && !input.verifiedSha.startsWith(task.headSha) && !task.headSha.startsWith(input.verifiedSha)
+        ? ["", `⚠ Verified commit ${input.verifiedSha.slice(0, 12)} differs from the submitted ${task.headSha.slice(0, 12)}.`]
+        : []),
+      ...(newReasons.length ? ["", `Risk raised to high: ${newReasons.join("; ")}.`] : []),
+      ...(!passed && failures ? ["", "Evidence of the failing commands is on the task; the coder fixes them next."] : []),
+    ].join("\n");
+
+    const verification: Verification = {
+      round,
+      passed,
+      skipped: false,
+      note: null,
+      tampering,
+      tamperStrikes: strikes,
+      verifiedSha: input.verifiedSha ?? null,
+      at: now,
+    };
+    const updated = transitionTask(task, to, {
+      actor,
+      author: "verifier",
+      message,
+      messageType: "verify",
+      event: passed ? "verification_passed" : "verification_failed",
+      details: passed ? undefined : lines.filter((l) => l.includes("❌")).join("\n") || tampering.join("; "),
+      release: true,
+      patch: {
+        acceptanceCriteria: criteria,
+        verifyFailures: failures,
+        verification,
+        diffStats: input.diffStats ?? task.diffStats,
+        risk,
+        riskReasons: [...task.riskReasons, ...newReasons],
+        producers: { ...task.producers, verify: producerOf(task) },
+        ...(blocker ? { blocker } : {}),
+      },
+    });
+    if (newReasons.length) addActivity(taskId, "risk_raised", actor, newReasons.join("; "));
+    return {
+      task: updated,
+      previousStatus: task.status,
+      newStatus: updated.status,
+      message: `Verification ${passed ? "passed" : "failed"}. Task moved to ${statusLabel(updated.status)}.`,
+    };
+  });
 }
 
 export interface ReviewFindingInput extends NewFinding {}
@@ -799,11 +1117,16 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
         throw new WorkflowError("needs_human needs a question for the person who decides.");
       }
 
+      // The coder said fixed/wontfix and the reviewer reopened it twice: people arbitrate.
+      const disputed = getOpenFindings(taskId, "code").filter((f) => f.reopenCount >= 2);
       const sampled =
         input.verdict === "approve" &&
         policy.humanSampleEvery > 0 &&
         approvalsInProject(task.projectId) % policy.humanSampleEvery === 0;
-      const routing = afterReview({ ...task, codeRound: round }, policy, input.verdict, { sampled });
+      const routing = afterReview({ ...task, codeRound: round }, policy, input.verdict, {
+        sampled,
+        disagreement: disputed.length > 0,
+      });
       const openIds = open.map((f) => `${f.id} (${f.severity})`).join(", ") || "none";
 
       let blocker: Blocker | null = null;
@@ -817,6 +1140,16 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
           raisedBy: reviewer,
           at: new Date().toISOString(),
         };
+      } else if (routing.reason === "disagreement") {
+        blocker = {
+          reason: `The reviewer and the coder disagree on ${disputed.map((f) => f.id).join(", ")}: it was reopened ${Math.max(...disputed.map((f) => f.reopenCount))} times after the coder marked it fixed or wontfix.`,
+          question: "Read the finding and both sides, then decide: send it back to the coder, or accept the coder's answer and approve.",
+          phase: "review",
+          fromStatus: task.status,
+          raisedBy: "system",
+          at: new Date().toISOString(),
+        };
+        note = { message: `Reviewer and coder disagree; a person arbitrates. ${blocker.reason}`, event: "review_escalated" };
       } else if (routing.reason === "round_limit") {
         blocker = {
           reason: `The reviewer asked for changes ${round - (task.roundBaseline.code ?? 0)} times (limit ${policy.maxReviewRounds}). Open findings: ${openIds}.`,

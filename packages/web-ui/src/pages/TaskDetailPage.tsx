@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import { api } from "../lib/api";
-import type { Task } from "../lib/api";
+import type { Task, TaskWrite } from "../lib/api";
 import {
   AgentsIcon,
   AiReviewIcon,
@@ -67,6 +67,8 @@ import {
   type TaskType,
 } from "@agentq/shared/catalog";
 import { FindingsList } from "../components/FindingsList";
+import { ApprovedPlanCard, CriteriaList, VerificationCard } from "../components/EvidencePanel";
+import { formatCriterionLine } from "@agentq/shared/criteria";
 import { Select } from "../components/Select";
 
 const info = (status: string) => STATUS_INFO[status as TaskStatus];
@@ -138,6 +140,7 @@ export function TaskDetailPage() {
     refetchInterval: 5000,
   });
   const findings = details?.findings ?? [];
+  const evidence = details?.evidence ?? [];
 
   const mutation = useMutation({
     mutationFn: ({ action, data }: { action: TaskAction; data?: object }) => {
@@ -157,7 +160,7 @@ export function TaskDetailPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<Task>) => api.updateTask(id!, data),
+    mutationFn: (data: TaskWrite) => api.updateTask(id!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["task", id] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -503,26 +506,12 @@ export function TaskDetailPage() {
               <EditableField
                 icon={CriteriaIcon}
                 label="Acceptance criteria"
-                value={task.acceptanceCriteria?.join("\n") ?? ""}
-                placeholder="One criterion per line"
+                value={task.acceptanceCriteria?.map(formatCriterionLine).join("\n") ?? ""}
+                placeholder="One criterion per line; end with “$ command” to verify it by running a command"
                 editable={canEdit}
                 display={
                   task.acceptanceCriteria?.length > 0 ? (
-                    <ul className="space-y-2">
-                      {task.acceptanceCriteria.map((c, i) => (
-                        <li
-                          key={i}
-                          className="flex items-start gap-2.5 text-sm text-text-secondary"
-                        >
-                          <CheckIcon
-                            aria-hidden
-                            className="mt-0.5 h-4 w-4 shrink-0 text-success"
-                            strokeWidth={2.5}
-                          />
-                          <span className="pt-px leading-snug">{c}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <CriteriaList criteria={task.acceptanceCriteria} evidence={evidence} />
                   ) : (
                     <EmptyValue>No acceptance criteria</EmptyValue>
                   )
@@ -713,6 +702,8 @@ export function TaskDetailPage() {
           </aside>
 
           <section className="min-w-0 xl:col-start-1 xl:row-start-2">
+            {task.verification && <VerificationCard task={task} evidence={evidence} />}
+            {task.approvedPlan && <ApprovedPlanCard plan={task.approvedPlan} criteria={task.acceptanceCriteria} />}
             {findings.length > 0 && (
               <div className="card mb-4 p-4">
                 <h2 className="eyebrow mb-3">Review findings</h2>

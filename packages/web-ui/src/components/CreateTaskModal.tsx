@@ -276,8 +276,8 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
                 </Field>
                 <Field
                   label="Acceptance criteria"
+                  hint="One per line. End a line with “$ command” to have the verifier run it, e.g. “Dark mode persists $ bun test theme”."
                   icon={CriteriaIcon}
-                  hint="One criterion per line."
                 >
                   <Textarea
                     placeholder="All existing tests pass"

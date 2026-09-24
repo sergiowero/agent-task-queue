@@ -30,6 +30,10 @@ import {
   installedSkillVersions,
   reportBlocker,
   getFindings,
+  getEvidence,
+  editTask,
+  detectProjectCommands,
+  verifierOnline,
   sweepQueue,
   requestAiReview,
   requestCodeChanges,
@@ -59,6 +63,7 @@ import {
   validateEnv,
 } from "@agentq/shared";
 import { getRunnerEngine, listTools } from "./runner/runner.js";
+import { VerifyWorker } from "./runner/verify.js";
 import { discoverModels } from "./runner/models.js";
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
@@ -255,6 +260,7 @@ function stopDbWatcher() {
 }
 
 const runnerEngine = getRunnerEngine({ broadcast: broadcastSSE });
+const verifyWorker = new VerifyWorker({ broadcast: broadcastSSE });
 
 function corsHeaders(): HeadersInit {
   if (isDev) {
@@ -394,6 +400,7 @@ async function main() {
     shuttingDown = true;
     stopVite();
     stopKeepAlive();
+    verifyWorker.stop();
     await runnerEngine.shutdown();
     process.exit(0);
   };
@@ -404,6 +411,8 @@ async function main() {
   // Runner jobs do not survive a restart: give their tasks back before runners claim again.
   runnerEngine.recoverOrphans();
   runnerEngine.startEnabledRunners();
+  // The deterministic verifier runs the projects' commands on submitted code.
+  if (process.env.AGENTQ_VERIFY_WORKER !== "0") verifyWorker.start();
   // Expired claims of silent sessions and reviews nobody eligible picked up.
   const sweep = () => {
     try {
@@ -497,6 +506,11 @@ const handleProjects = wrapHandler(async (req, url) => {
 const handleProjectById = wrapHandler(async (req, url) => {
   const id = getProjectIdFromUrl(url.pathname);
   if (!id) throw null;
+  if (url.pathname.endsWith("/detect-commands") && req.method === "GET") {
+    const project = getProjectById(id);
+    if (!project) return errorResponse("not found", 404);
+    return jsonResponse({ commands: detectProjectCommands(project.workingDirectory) });
+  }
   if (req.method === "PUT") {
     const body = await parseBody(req);
     const parsed = updateProjectSchema.safeParse(body);
@@ -675,7 +689,12 @@ const handleMeta = wrapHandler(async (req, url) => {
   const outdated = Object.entries(installed)
     .filter(([, v]) => v !== null && v !== skillsVersion)
     .map(([tool]) => tool);
-  return jsonResponse({ skillsVersion, installedSkills: installed, outdatedSkills: outdated });
+  return jsonResponse({
+    skillsVersion,
+    installedSkills: installed,
+    outdatedSkills: outdated,
+    verifier: { online: verifierOnline(), ...verifyWorker.state() },
+  });
 });
 
 const handleTasksList = wrapHandler(async (req, url) => {
@@ -737,13 +756,24 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   // Each action is one shared workflow call; the workflow checks the status.
   const actions: Record<string, () => Task | Response> = {
     submit_plan: () =>
-      submitPlan(taskId, { message: data.message, author, context: data.context, ...auth }).task,
+      submitPlan(taskId, {
+        message: data.message,
+        author,
+        context: data.context,
+        validationPlan: body?.validationPlan,
+        ...auth,
+      }).task,
     submit_code: () =>
       submitCode(taskId, {
         message: data.message,
         author,
         context: data.context,
         worktree: typeof body?.worktree === "string" ? body.worktree : undefined,
+        branch: body?.branch,
+        headSha: body?.headSha,
+        evidence: Array.isArray(body?.evidence) ? body.evidence : [],
+        criteria: Array.isArray(body?.criteria) ? body.criteria : [],
+        findingResolutions: Array.isArray(body?.findingResolutions) ? body.findingResolutions : [],
         ...auth,
       }).task,
     submit_review: () => {
@@ -837,7 +867,7 @@ const handleTaskDetails = wrapHandler(async (req, url) => {
   if (!match || req.method !== "GET") throw null;
   const task = getTaskById(match[1]);
   if (!task) return errorResponse("not found", 404);
-  return jsonResponse({ findings: getFindings(task.id) });
+  return jsonResponse({ findings: getFindings(task.id), evidence: getEvidence(task.id) });
 });
 
 const handleTaskById = wrapHandler(async (req, url) => {
@@ -856,8 +886,8 @@ const handleTaskById = wrapHandler(async (req, url) => {
     if (!parsed.success) {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
-    const task = updateTask(taskId, parsed.data);
-    if (!task) return errorResponse("not found", 404);
+    if (!getTaskById(taskId)) return errorResponse("not found", 404);
+    const task = editTask(taskId, parsed.data);
     broadcastSSE("task_updated", task);
     return jsonResponse(task);
   }

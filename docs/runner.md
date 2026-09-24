@@ -199,6 +199,38 @@ also writes it into the prompt's submit arguments for tools that end up using an
 `agentq` server. The runner claims with `runnerId`, which becomes the claim's stable
 `sessionKey` (`runner:<id>`).
 
+## Verification
+
+The web server also runs a **built-in verifier** (no LLM; `packages/web/src/runner/verify.ts`).
+When a coder submits and the project has commands (**Projects → Edit → Commands**, or
+**Detect from the repository**), the task goes to `verify_requested`; the verifier claims
+it, runs the commands in the task's worktree and routes it:
+
+- **Commands**, each once and in order: `install`, then the approved plan's
+  `regressionCommands` (or the project's build, typecheck, lint and test commands when
+  there is no approved plan), then the command of each acceptance criterion (from the
+  validation plan or the criterion's `verify.command`). Each runs with `CI=1` and the
+  project's `verifyTimeoutSec` (600 s); a failing command is retried once and marked
+  **flaky** when the retry passes. Logs go to `<AGENTQ_HOME>/runs/<taskId>/verify-R<n>-<i>.log`;
+  the evidence keeps the last 40 lines.
+- **Trust**: the project's own commands always run. Commands an agent wrote (plan items,
+  criteria) run only when a person approved the plan, or when they start with an
+  allowlisted prefix (common test runners plus the project's `verifyAllowlist`);
+  otherwise the evidence says "skipped".
+- **Tampering**: the diff against the merge branch is checked for deleted test files,
+  added `.skip`/`.only`/`xit`/`@pytest.mark.skip`/`t.Skip`/`@Disabled`, and lowered
+  coverage thresholds. Tampering counts as a failure; a second time goes to a person.
+- **Risk**: touching `protectedPaths` or a diff larger than `maxDiffLines` raises the
+  task's risk to high (an AI approval then still goes to a person).
+- **Routing**: green → review (AI reviewer under L1+, a person under L0); red →
+  `changes_requested` with the evidence; red `maxVerifyFailures` (2) times in a row →
+  `needs_human`. A missing worktree goes to `needs_human` without counting a failure.
+
+Without commands, or when the verifier is not running (it writes a heartbeat; MCP-only
+setups have no web server), the code goes straight to review and the task notes that it
+was not verified. `AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows
+its status.
+
 ## Environment variables
 
 | Variable | Default | Meaning |
@@ -206,6 +238,7 @@ also writes it into the prompt's submit arguments for tools that end up using an
 | `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
 | `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
+| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 
 ## Live updates

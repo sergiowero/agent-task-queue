@@ -632,6 +632,7 @@ export function RunnersPage() {
             }
           />
         )}
+        <VerifierStatus />
         {runners.length > 0 && (
           <div className="space-y-5">
             {runners.filter((r) => ["reviewer", "senior", "architect"].includes(r.role)).length === 1 && (
@@ -675,6 +676,24 @@ export function RunnersPage() {
       )}
       {deleting && <DeleteRunnerModal runner={deleting} onClose={() => setDeleting(null)} />}
       {open && <JobsDrawer runner={open} onClose={() => setOpenId(null)} />}
+    </div>
+  );
+}
+
+/** The server's built-in verifier: runs each project's commands on submitted code. */
+function VerifierStatus() {
+  const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: api.getMeta, refetchInterval: 15_000 });
+  const v = meta?.verifier;
+  if (!v) return null;
+  return (
+    <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-border-light px-4 py-3 text-sm">
+      <Badge tone={v.online ? "success" : "neutral"}>{v.online ? "verifier online" : "verifier offline"}</Badge>
+      <span className="text-text-secondary">
+        {v.busy && v.currentTaskId
+          ? "Verifying a task now."
+          : "Runs each project's commands (Projects → Edit → Commands) on submitted code, then routes it to review."}
+      </span>
+      {v.lastRunAt && <span className="ml-auto text-xs text-text-muted">last run {formatRelative(v.lastRunAt)}</span>}
     </div>
   );
 }

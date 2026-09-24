@@ -7,6 +7,10 @@ import type {
   TaskType,
   Verdict,
 } from "@agentq/shared/catalog";
+import type { AcceptanceCriterion } from "@agentq/shared/criteria";
+import type { ProjectProfile } from "@agentq/shared/profile";
+
+export type { AcceptanceCriterion, ProjectProfile };
 
 export interface Task {
   id: string;
@@ -14,7 +18,7 @@ export interface Task {
   description: string | null;
   steerDetails: string | null;
   guardrails: string[];
-  acceptanceCriteria: string[];
+  acceptanceCriteria: AcceptanceCriterion[];
   priority: number;
   recommendedBranch: string;
   realBranch: string | null;
@@ -40,6 +44,21 @@ export interface Task {
   codeRound: number;
   verifyFailures: number;
   lastReview: { round: number; verdict: Verdict; by: string; at: string } | null;
+  validationPlan: ValidationPlan | null;
+  approvedPlan: { markdown: string; validation: ValidationPlan | null; approvedBy: string; at: string } | null;
+  headSha: string | null;
+  diffStats: { files: number; insertions: number; deletions: number } | null;
+  verification: {
+    round: number;
+    passed: boolean;
+    skipped: boolean;
+    note: string | null;
+    tampering: string[];
+    tamperStrikes: number;
+    verifiedSha: string | null;
+    at: string;
+  } | null;
+  riskReasons: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -84,9 +103,30 @@ export interface Finding {
   createdAt: string;
 }
 
+export interface ValidationPlan {
+  items: { criterionId: string; how: string; command?: string; newTests?: string[] }[];
+  regressionCommands: string[];
+}
+
+export interface Evidence {
+  id: string;
+  round: number;
+  kind: "command" | "manual";
+  criterionId: string | null;
+  command: string | null;
+  exitCode: number | null;
+  summary: string;
+  logPath: string | null;
+  producedBy: string;
+  flaky: boolean;
+  skipped: boolean;
+  createdAt: string;
+}
+
 /** Response of `GET /tasks/:id/details`: records kept beside the task. */
 export interface TaskDetails {
   findings: Finding[];
+  evidence: Evidence[];
 }
 
 /** Response of `GET /meta`. */
@@ -94,7 +134,14 @@ export interface Meta {
   skillsVersion: string | null;
   installedSkills: Record<string, string | null>;
   outdatedSkills: string[];
+  verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
 }
+
+/** What the portal sends when it edits a project: partial profile and policy. */
+export type ProjectWrite = Omit<Partial<Project>, "profile"> & { profile?: Partial<ProjectProfile> };
+
+/** What the portal sends when it creates or edits a task: criteria as one-line strings. */
+export type TaskWrite = Omit<Partial<Task>, "acceptanceCriteria"> & { acceptanceCriteria?: string[] };
 
 /** Response of `POST /tasks/:id/archive`. */
 export interface ArchiveResult {
@@ -140,6 +187,7 @@ export interface Project {
   defaultMergeBranch: string | null;
   autonomy: AutonomyLevel;
   policy: Partial<PolicySettings>;
+  profile: ProjectProfile;
   createdAt: string;
   updatedAt: string;
 }
@@ -269,8 +317,8 @@ export const api = {
   getTasks: (projectId?: string) =>
     request<PaginatedResponse<Task>>(projectId ? `/tasks?projectId=${projectId}` : "/tasks"),
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
-  createTask: (data: Partial<Task>) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
-  updateTask: (id: string, data: Partial<Task>) =>
+  createTask: (data: TaskWrite) => request<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
+  updateTask: (id: string, data: TaskWrite) =>
     request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteTask: (id: string) => request<void>(`/tasks/${id}?hard=true`, { method: "DELETE" }),
 
@@ -306,6 +354,8 @@ export const api = {
     request<Task>(`/tasks/${id}/resolve-blocker`, { method: "POST", body: JSON.stringify(data) }),
   getMeta: () => request<Meta>("/meta"),
   getTaskDetails: (id: string) => request<TaskDetails>(`/tasks/${id}/details`),
+  detectCommands: (projectId: string) =>
+    request<{ commands: ProjectProfile["commands"] }>(`/projects/${projectId}/detect-commands`),
   addComment: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/add-comment`, { method: "POST", body: JSON.stringify(data) }),
 
@@ -320,7 +370,7 @@ export const api = {
   getProjects: () => request<Project[]>("/projects"),
   createProject: (data: Partial<Project>) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(data) }),
-  updateProject: (id: string, data: Partial<Project>) =>
+  updateProject: (id: string, data: ProjectWrite) =>
     request<Project>(`/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
 
