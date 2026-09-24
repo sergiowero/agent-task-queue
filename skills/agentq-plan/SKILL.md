@@ -1,9 +1,9 @@
 ---
 name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
-allowed-tools: mcp__agentq__submit_plan, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
+allowed-tools: mcp__agentq__submit_plan, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "3.1.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -50,12 +50,12 @@ The feedback is in the task conversation (`task.conversation[]`). Read it, revis
 Call the `submit_plan` MCP tool:
 
 ```json
-{ "taskId": "<task.id>", "message": "<markdown plan>", "context": "<handoff notes>" }
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "message": "<markdown plan>", "context": "<handoff notes>" }
 ```
 
 `context` is required (see Context Handoff in `agentq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 
-It moves the task to `waiting_plan_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It moves the task to `waiting_plan_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Plan Template
 
@@ -77,6 +77,7 @@ The `message` MUST be Markdown.
 
 ## Guardrails
 
+- **DO** call `report_blocker` (see Blocked in `agentq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** write code during planning phase - only produce a plan document
 - **DO NOT** modify files in the project - planning is read-only
 - **DO NOT** create or use a worktree - planning works in `task.project.workingDirectory`

@@ -23,9 +23,12 @@ import type { ConversationEntry, Task } from "./types.js";
 import { TaskStatus } from "./types.js";
 import {
   WorkflowError,
-  addConversation,
+  approveCode,
+  approvePlan,
   claimNextTask,
-  recordHistory,
+  completeTask as confirmCompletion,
+  requestAiReview,
+  requestCodeChanges,
   submitCode,
   submitMerge,
   submitPlan,
@@ -188,40 +191,35 @@ describe("archiveTask", () => {
       projectId,
       contexts: ["created by test"],
     });
-    const claim = () => claimNextTask({ role: "senior", agent, projectId })!;
-    let t = claim().task;
+    const codex = { ...agent, toolName: "codex", model: "gpt" };
+    const claim = (who = agent) => claimNextTask({ role: "senior", agent: who, projectId })!;
+    let claimed = claim();
+    const t = claimed.task;
     submitPlan(t.id, {
       message: "## Plan\n1. Add a toggle",
       author: "claude@2.1.0|opus",
       context: "plan ready",
+      claimToken: claimed.claimToken,
     });
-    t = recordHistory(getTaskById(t.id)!, TaskStatus.ReadyForCode);
-    claimNextTask({
-      role: "senior",
-      agent: { ...agent, toolName: "codex", model: "gpt" },
-      projectId,
-    });
-    submitCode(t.id, { message: "## Changes\n- Toggle in header", worktree: "/w/t" });
-    t = recordHistory(getTaskById(t.id)!, TaskStatus.CodeReviewRequested);
-    claim();
-    submitReview(t.id, { message: "Looks good. **Verdict:** approve" });
-    t = recordHistory(getTaskById(t.id)!, TaskStatus.ChangesRequested);
-    addConversation(t, "user", "Please fix contrast.", "user");
-    claimNextTask({
-      role: "senior",
-      agent: { ...agent, toolName: "codex", model: "gpt" },
-      projectId,
-    });
-    submitCode(t.id, { message: "## Changes\n- Fixed contrast", worktree: "/w/t" });
-    t = recordHistory(getTaskById(t.id)!, TaskStatus.Approved);
-    claim();
+    approvePlan(t.id);
+    claimed = claim(codex);
+    submitCode(t.id, { message: "## Changes\n- Toggle in header", worktree: "/w/t", claimToken: claimed.claimToken });
+    requestAiReview(t.id);
+    claimed = claim();
+    submitReview(t.id, { message: "Looks good. **Verdict:** approve", claimToken: claimed.claimToken });
+    requestCodeChanges(t.id, { message: "Please fix contrast." });
+    claimed = claim(codex);
+    submitCode(t.id, { message: "## Changes\n- Fixed contrast", worktree: "/w/t", claimToken: claimed.claimToken });
+    approveCode(t.id);
+    claimed = claim();
     submitMerge(t.id, {
       branch: "develop",
       commit: "abc1234",
       authors: "codex@0.9|gpt,sergio",
       message: "## PR Created\n- **PR**: https://github.com/org/repo/pull/42",
+      claimToken: claimed.claimToken,
     });
-    return recordHistory(getTaskById(t.id)!, TaskStatus.Complete);
+    return confirmCompletion(t.id);
   }
 
   beforeAll(() => {

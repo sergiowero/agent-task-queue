@@ -6,7 +6,6 @@ import type {
 import {
   archiveTask,
   WorkflowError,
-  createTask,
   getTasks,
   getTasksUpdatedSince,
   getTaskById,
@@ -20,13 +19,26 @@ import {
   updateProject,
   deleteProject,
   softDeleteProject,
-  addActivityEvent,
   getActivityEvents,
-  TaskStatus,
-  recordHistory,
-  addConversation,
-  addActivity,
-  CANCELED_CANT_CANCEL,
+  addUserComment,
+  approveCode,
+  approvePlan,
+  cancelTask,
+  completeTask,
+  createTaskForProject,
+  detectDefaultBranch,
+  installedSkillVersions,
+  reportBlocker,
+  requestAiReview,
+  requestCodeChanges,
+  requestPlanChanges,
+  resolveBlocker,
+  skillsBundleVersion,
+  submitCode,
+  submitMerge,
+  submitPlan,
+  submitReview,
+  unblockTask,
   createTaskSchema,
   updateTaskSchema,
   createProjectSchema,
@@ -345,6 +357,7 @@ export function startServer(opts: StartServerOptions = {}) {
         handleRunnerToolModels,
         handleRunners,
         handleRunnerById,
+        handleMeta,
         handleTasksList,
         handleCreateTask,
         handleTaskSubActions,
@@ -452,7 +465,11 @@ const handleProjects = wrapHandler(async (req, url) => {
     if (!parsed.success) {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
-    const project = createProject(parsed.data);
+    const project = createProject({
+      ...parsed.data,
+      defaultMergeBranch:
+        parsed.data.defaultMergeBranch || detectDefaultBranch(parsed.data.workingDirectory),
+    });
     return jsonResponse(project, 201);
   }
   return null;
@@ -631,6 +648,17 @@ const handleRunnerById = wrapHandler(async (req, url) => {
   return null;
 });
 
+/** Server facts the portal shows: skills bundle vs. installed skills, and so on. */
+const handleMeta = wrapHandler(async (req, url) => {
+  if (url.pathname !== "/api/meta" || req.method !== "GET") throw null;
+  const skillsVersion = skillsBundleVersion();
+  const installed = installedSkillVersions();
+  const outdated = Object.entries(installed)
+    .filter(([, v]) => v !== null && v !== skillsVersion)
+    .map(([tool]) => tool);
+  return jsonResponse({ skillsVersion, installedSkills: installed, outdatedSkills: outdated });
+});
+
 const handleTasksList = wrapHandler(async (req, url) => {
   if (url.pathname !== "/api/tasks" || req.method !== "GET") throw null;
   const pagination = paginationSchema.safeParse({
@@ -652,8 +680,13 @@ const handleCreateTask = wrapHandler(async (req, url) => {
   if (!parsed.success) {
     return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
   }
-  const task = createTask(parsed.data);
-  addActivity(task.id, "task_created", "user");
+  let task: Task;
+  try {
+    task = createTaskForProject(parsed.data, "user");
+  } catch (e) {
+    if (e instanceof WorkflowError) return errorResponse(e.message);
+    throw e;
+  }
   broadcastSSE("task_created", task);
   return jsonResponse(task, 201);
 });
@@ -678,234 +711,94 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
   }
 
-  let updated: Task | null = null;
+  const data = parsed.data;
+  const auth = { claimToken: data.claimToken };
+  const author = data.authorName;
 
-  switch (action) {
-    case "submit_plan": {
-      if (task.status === TaskStatus.Canceled) {
-        return errorResponse("Task is canceled and cannot accept submissions.");
-      }
-      if (task.status !== TaskStatus.Planning) {
-        return errorResponse("task must be in Planning status");
-      }
-      updated = recordHistory(task, TaskStatus.WaitingPlanReview);
-      if (body?.message) {
-        updated = addConversation(updated!, body.authorName ?? "agent", body.message, "plan");
-      }
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addActivity(taskId, "plan_submitted", body?.authorName ?? "agent");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "submit_code": {
-      if (task.status === TaskStatus.Canceled) {
-        return errorResponse("Task is canceled and cannot accept submissions.");
-      }
-      if (task.status !== TaskStatus.Coding) {
-        return errorResponse("task must be in Coding status");
-      }
-      updated = recordHistory(task, TaskStatus.WaitingCodeReview);
-      if (body?.message) {
-        updated = addConversation(updated!, body.authorName ?? "agent", body.message, "code");
-      }
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addActivity(taskId, "code_submitted", body?.authorName ?? "agent");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "submit_review": {
-      if (task.status === TaskStatus.Canceled) {
-        return errorResponse("Task is canceled and cannot accept submissions.");
-      }
-      if (task.status !== TaskStatus.Reviewing) {
-        return errorResponse("task must be in Reviewing status");
-      }
-      updated = recordHistory(task, TaskStatus.WaitingCodeReview);
-      if (body?.message) {
-        updated = addConversation(
-          updated!,
-          body.authorName ?? "agent",
-          body.message,
-          "review",
-        );
-      }
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addActivity(taskId, "review_submitted", body?.authorName ?? "agent");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "submit_merge": {
-      if (task.status === TaskStatus.Canceled) {
-        return errorResponse("Task is canceled and cannot accept submissions.");
-      }
-      if (task.status !== TaskStatus.Merging) {
-        return errorResponse("task must be in Merging status");
-      }
+  // Each action is one shared workflow call; the workflow checks the status.
+  const actions: Record<string, () => Task | Response> = {
+    submit_plan: () =>
+      submitPlan(taskId, { message: data.message, author, context: data.context, ...auth }).task,
+    submit_code: () =>
+      submitCode(taskId, {
+        message: data.message,
+        author,
+        context: data.context,
+        worktree: typeof body?.worktree === "string" ? body.worktree : undefined,
+        ...auth,
+      }).task,
+    submit_review: () =>
+      submitReview(taskId, { message: data.message, author, context: data.context, ...auth }).task,
+    submit_merge: () => {
       if (!body?.branch || !body?.commit || !body?.authors) {
         return errorResponse("branch, commit, and authors are required");
       }
-      const mergeDetails = [
-        `Branch: ${body.branch}`,
-        `Commit: ${body.commit}`,
-        `Authors: ${body.authors}`,
-        body.worktree ? `Worktree: ${body.worktree}` : null,
-        body.message ? `Message: ${body.message}` : null,
-      ]
-        .filter(Boolean)
-        .join(", ");
-      updated = recordHistory(task, TaskStatus.Merged);
-      updated = addConversation(
-        updated!,
-        body.authorName ?? "agent",
-        `Merge submitted. ${mergeDetails}`,
-        "merge",
-      );
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addActivity(taskId, "merge_submitted", body.authorName ?? "agent");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
+      return submitMerge(taskId, {
+        branch: String(body.branch),
+        commit: String(body.commit),
+        authors: String(body.authors),
+        worktree: typeof body.worktree === "string" ? body.worktree : undefined,
+        message: data.message,
+        author,
+        context: data.context,
+        ...auth,
+      }).task;
+    },
+    report_blocker: () => {
+      if (!body?.reason || !body?.question) return errorResponse("reason and question are required");
+      return reportBlocker(taskId, {
+        reason: String(body.reason),
+        question: String(body.question),
+        author,
+        context: data.context,
+        ...auth,
+      }).task;
+    },
+    approve_plan: () => approvePlan(taskId, { message: data.message }),
+    request_plan_changes: () => requestPlanChanges(taskId, { message: data.message }),
+    approve_code: () => approveCode(taskId, { message: data.message }),
+    request_code_changes: () => requestCodeChanges(taskId, { message: data.message }),
+    request_ai_review: () => requestAiReview(taskId),
+    complete: () => completeTask(taskId),
+    cancel: () => cancelTask(taskId, { message: data.message }),
+    unblock: () => unblockTask(taskId),
+    resolve_blocker: () => {
+      if (!data.targetStatus) return errorResponse("targetStatus is required");
+      return resolveBlocker(taskId, { answer: data.answer ?? data.message ?? "", targetStatus: data.targetStatus });
+    },
+    comment: () => {
+      if (!data.message) return errorResponse("message is required");
+      return addUserComment(taskId, { message: data.message, author: author ?? "user" });
+    },
+    archive: () => {
+      const result = archiveTask(taskId, {
+        force: data.force,
+        pullRequests: data.pullRequests,
+        overview: data.overview,
+        actor: author ?? "user",
+        runnerJobs: runnerJobsForTask(taskId),
+      });
+      broadcastSSE("task_updated", result.task);
+      return jsonResponse(result);
+    },
+  };
 
-    case "approve_plan": {
-      if (task.status !== TaskStatus.WaitingPlanReview) {
-        return errorResponse("task must be in Waiting Plan Review status");
-      }
-      updated = recordHistory(task, TaskStatus.ReadyForCode);
-      updated = addConversation(updated!, "user", "Plan approved.", "user");
-      addActivity(taskId, "plan_approved", "user");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "request_plan_changes": {
-      if (task.status !== TaskStatus.WaitingPlanReview) {
-        return errorResponse("task must be in Waiting Plan Review status");
-      }
-      updated = recordHistory(task, TaskStatus.PlanChangesRequested);
-      if (body?.message) {
-        updated = addConversation(updated!, "user", body.message, "user");
-      } else {
-        updated = addConversation(updated!, "user", "Plan changes requested.", "user");
-      }
-      addActivity(taskId, "plan_changes_requested", "user", body?.message);
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "approve_code": {
-      if (task.status !== TaskStatus.WaitingCodeReview) {
-        return errorResponse("task must be in Waiting Code Review status");
-      }
-      updated = recordHistory(task, TaskStatus.Approved);
-      updated = addConversation(updated!, "user", "Code approved.", "user");
-      addActivity(taskId, "code_approved", "user");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "request_code_changes": {
-      if (task.status !== TaskStatus.WaitingCodeReview) {
-        return errorResponse("task must be in Waiting Code Review status");
-      }
-      updated = recordHistory(task, TaskStatus.ChangesRequested);
-      if (body?.message) {
-        updated = addConversation(updated!, "user", body.message, "user");
-      } else {
-        updated = addConversation(updated!, "user", "Code changes requested.", "user");
-      }
-      addActivity(taskId, "code_changes_requested", "user", body?.message);
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "request_ai_review": {
-      if (task.status !== TaskStatus.WaitingCodeReview) {
-        return errorResponse("task must be in Waiting Code Review status");
-      }
-      updated = recordHistory(task, TaskStatus.CodeReviewRequested);
-      updated = addConversation(updated!, "user", "AI code review requested.", "user");
-      addActivity(taskId, "ai_review_requested", "user");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "complete": {
-      if (task.status !== TaskStatus.Merged) {
-        return errorResponse("task must be in Merged status");
-      }
-      updated = recordHistory(task, TaskStatus.Complete);
-      updated = addConversation(updated!, "user", "Task completed.", "user");
-      addActivity(taskId, "task_completed", "user");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "cancel": {
-      if (CANCELED_CANT_CANCEL.has(task.status)) {
-        return errorResponse("task cannot be canceled in its current status");
-      }
-      updated = recordHistory(task, TaskStatus.Canceled);
-      addConversation(updated!, "user", "Task canceled.", "user");
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addActivity(taskId, "task_canceled", "user");
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "comment": {
-      if (!body?.message) {
-        return errorResponse("message is required");
-      }
-      updated = addConversation(task, body.authorName ?? "user", body.message, "user");
-      addActivity(taskId, "comment_added", body.authorName ?? "user", body.message);
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "unblock": {
-      const unblockMap: Partial<Record<TaskStatus, TaskStatus>> = {
-        [TaskStatus.Planning]: TaskStatus.PlanChangesRequested,
-        [TaskStatus.Coding]: TaskStatus.ChangesRequested,
-        [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
-      };
-      const target = unblockMap[task.status];
-      if (!target) {
-        return errorResponse("task cannot be unblocked in its current status");
-      }
-      updated = recordHistory(task, target);
-      updated = updateTask(updated!.id, { assignedAgent: null });
-      addConversation(updated!, "user", `Task unblocked. Reverted to ${target}.`, "user");
-      addActivity(taskId, "task_unblocked", "user", `Reverted to ${target}`);
-      broadcastSSE("task_updated", updated);
-      break;
-    }
-
-    case "archive": {
-      try {
-        const result = archiveTask(taskId, {
-          force: parsed.data.force,
-          pullRequests: parsed.data.pullRequests,
-          overview: parsed.data.overview,
-          actor: parsed.data.authorName ?? "user",
-          runnerJobs: runnerJobsForTask(taskId),
-        });
-        broadcastSSE("task_updated", result.task);
-        return jsonResponse(result);
-      } catch (e) {
-        if (e instanceof WorkflowError) return errorResponse(e.message);
-        throw e;
-      }
-    }
-
-    default:
-      return errorResponse("unknown action", 404);
+  const run = actions[action];
+  if (!run) return errorResponse("unknown action", 404);
+  let result: Task | Response;
+  try {
+    result = run();
+  } catch (e) {
+    if (e instanceof WorkflowError) return errorResponse(e.message);
+    throw e;
   }
-
-  if (updated) return jsonResponse(updated);
-  return null;
+  if (result instanceof Response) return result;
+  // A person took the task away from its agent: stop the job still working on it.
+  if (["cancel", "unblock", "resolve_blocker"].includes(action)) {
+    runnerEngine.abandonTask(taskId, `task ${action.replace("_", " ")} from the portal`);
+  }
+  broadcastSSE("task_updated", result);
+  return jsonResponse(result);
 });
 
 const handleTaskById = wrapHandler(async (req, url) => {

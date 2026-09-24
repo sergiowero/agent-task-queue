@@ -21,6 +21,7 @@ import {
   ReviewIcon,
   SearchIcon,
 } from "../lib/icons";
+import { ALL_STATUSES, STATUS_INFO, type BoardColumn } from "@agentq/shared/catalog";
 import type { Tone } from "../lib/status";
 import { TASK_STATUS, TONE_SOFT, taskStatusMeta } from "../lib/status";
 import { cn } from "../lib/cn";
@@ -45,43 +46,19 @@ interface Column {
   statuses: string[];
 }
 
-const COLUMNS: Column[] = [
-  {
-    key: "pending",
-    label: "Pending",
-    icon: PendingIcon,
-    tone: "neutral",
-    statuses: [
-      "plan_requested",
-      "ready_for_code",
-      "plan_changes_requested",
-      "code_review_requested",
-      "changes_requested",
-      "approved",
-    ],
-  },
-  {
-    key: "in-progress",
-    label: "In progress",
-    icon: InProgressIcon,
-    tone: "info",
-    statuses: ["planning", "coding", "reviewing", "merging"],
-  },
-  {
-    key: "need-review",
-    label: "Needs review",
-    icon: ReviewIcon,
-    tone: "warning",
-    statuses: ["waiting_plan_review", "waiting_code_review"],
-  },
-  {
-    key: "done",
-    label: "Done",
-    icon: CompleteIcon,
-    tone: "success",
-    statuses: ["complete", "merged"],
-  },
-];
+const COLUMN_LOOK: Record<BoardColumn, Omit<Column, "key" | "statuses">> = {
+  pending: { label: "Pending", icon: PendingIcon, tone: "neutral" },
+  "in-progress": { label: "In progress", icon: InProgressIcon, tone: "info" },
+  "need-review": { label: "Needs you", icon: ReviewIcon, tone: "warning" },
+  done: { label: "Done", icon: CompleteIcon, tone: "success" },
+};
+
+/** Columns and the statuses in each come from the shared status catalog. */
+const COLUMNS: Column[] = (Object.keys(COLUMN_LOOK) as BoardColumn[]).map((key) => ({
+  key,
+  ...COLUMN_LOOK[key],
+  statuses: ALL_STATUSES.filter((s) => STATUS_INFO[s].boardColumn === key),
+}));
 
 /** Workflow order for the status filter. */
 const STATUS_ORDER = Object.keys(TASK_STATUS);

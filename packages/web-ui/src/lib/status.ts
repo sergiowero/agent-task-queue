@@ -1,3 +1,4 @@
+import { STATUS_INFO, TaskStatus } from "@agentq/shared/catalog";
 import type { LucideIcon } from "./icons";
 import {
   ApproveIcon,
@@ -6,6 +7,7 @@ import {
   FailedIcon,
   InProgressIcon,
   MergeIcon,
+  NeedsHumanIcon,
   PendingIcon,
   PlanIcon,
   RequestChangesIcon,
@@ -28,27 +30,32 @@ export interface StatusMeta {
   live?: boolean;
 }
 
-export const TASK_STATUS: Record<string, StatusMeta> = {
-  plan_requested: { label: "Plan requested", tone: "neutral", icon: PendingIcon },
-  planning: { label: "Planning", tone: "accent", icon: PlanIcon, live: true },
-  waiting_plan_review: { label: "Plan review", tone: "warning", icon: ReviewIcon },
-  plan_changes_requested: {
-    label: "Plan changes requested",
-    tone: "danger",
-    icon: RequestChangesIcon,
-  },
-  ready_for_code: { label: "Ready for code", tone: "info", icon: PendingIcon },
-  coding: { label: "Coding", tone: "info", icon: TerminalIcon, live: true },
-  waiting_code_review: { label: "Code review", tone: "warning", icon: ReviewIcon },
-  code_review_requested: { label: "AI review requested", tone: "warning", icon: ReviewIcon },
-  reviewing: { label: "Reviewing", tone: "warning", icon: ReviewIcon, live: true },
-  changes_requested: { label: "Changes requested", tone: "danger", icon: RequestChangesIcon },
-  approved: { label: "Approved", tone: "success", icon: ApproveIcon },
-  merging: { label: "Merging", tone: "warning", icon: MergeIcon, live: true },
-  merged: { label: "Merged", tone: "success", icon: MergeIcon },
-  complete: { label: "Complete", tone: "success", icon: CompleteIcon },
-  canceled: { label: "Canceled", tone: "danger", icon: CancelTaskIcon },
+/** Look of each status (labels come from the shared catalog; a new status fails typecheck here). */
+const STATUS_LOOK: Record<TaskStatus, Omit<StatusMeta, "label">> = {
+  [TaskStatus.PlanRequested]: { tone: "neutral", icon: PendingIcon },
+  [TaskStatus.Planning]: { tone: "accent", icon: PlanIcon, live: true },
+  [TaskStatus.WaitingPlanReview]: { tone: "warning", icon: ReviewIcon },
+  [TaskStatus.PlanChangesRequested]: { tone: "danger", icon: RequestChangesIcon },
+  [TaskStatus.ReadyForCode]: { tone: "info", icon: PendingIcon },
+  [TaskStatus.Coding]: { tone: "info", icon: TerminalIcon, live: true },
+  [TaskStatus.WaitingCodeReview]: { tone: "warning", icon: ReviewIcon },
+  [TaskStatus.CodeReviewRequested]: { tone: "warning", icon: ReviewIcon },
+  [TaskStatus.Reviewing]: { tone: "warning", icon: ReviewIcon, live: true },
+  [TaskStatus.ChangesRequested]: { tone: "danger", icon: RequestChangesIcon },
+  [TaskStatus.Approved]: { tone: "success", icon: ApproveIcon },
+  [TaskStatus.Merging]: { tone: "warning", icon: MergeIcon, live: true },
+  [TaskStatus.Merged]: { tone: "success", icon: MergeIcon },
+  [TaskStatus.Complete]: { tone: "success", icon: CompleteIcon },
+  [TaskStatus.Canceled]: { tone: "danger", icon: CancelTaskIcon },
+  [TaskStatus.NeedsHuman]: { tone: "danger", icon: NeedsHumanIcon },
 };
+
+export const TASK_STATUS: Record<string, StatusMeta> = Object.fromEntries(
+  Object.entries(STATUS_LOOK).map(([status, look]) => [
+    status,
+    { label: STATUS_INFO[status as TaskStatus].label, ...look },
+  ]),
+);
 
 export function taskStatusMeta(status: string): StatusMeta {
   return (
@@ -65,6 +72,7 @@ export const JOB_STATUS: Record<RunnerJobStatus, StatusMeta> = {
   succeeded: { label: "Succeeded", tone: "success", icon: SuccessIcon },
   failed: { label: "Failed", tone: "danger", icon: FailedIcon },
   reverted: { label: "Reverted", tone: "warning", icon: RevertedIcon },
+  blocked: { label: "Blocked", tone: "danger", icon: NeedsHumanIcon },
 };
 
 export const TOOL_TONE: Record<RunnerTool | string, Tone> = {

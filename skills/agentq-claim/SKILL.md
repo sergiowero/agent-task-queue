@@ -1,9 +1,9 @@
 ---
 name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
-allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment
+allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment, mcp__agentq__report_blocker
 metadata:
-  version: "3.1.0"
+  version: "3.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -11,7 +11,7 @@ metadata:
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit tool) live in the phase skills.
 
-**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task` and the `submit_*` tools; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tool rejects a submit without it) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
+**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task`, the `submit_*` tools and `report_blocker`; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tool rejects a submit without it) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
 
 If the `agentq` tools are missing, the server is not registered: tell the user to run `bun run install:mcp` from the AgentQ checkout, then restart the tool. Do not work around it.
 
@@ -29,22 +29,28 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
+  "skillsVersion": "3.2.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
-**Result (success)**: the full task plus `project` and your `agent` identity. Keep `task.id`: the phase skills need it for the `submit_*` tools.
+`skillsVersion` is the `metadata.version` of this skill. The server refuses outdated skills with `reason: "skills_outdated"`.
+
+**Result (success)**: the full task plus `project`, your `agent` identity and a `claimToken`. Keep `task.id` and `claimToken`: pass both to every `submit_*` and `report_blocker` call for this task (the server rejects submits from anyone else, e.g. a stale session after a person unblocked the task).
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."],
-    "acceptanceCriteria": ["..."], "status": "coding", "recommendedBranch": "feat/...", "mergeBranch": "develop",
+    "acceptanceCriteria": ["..."], "status": "coding", "recommendedBranch": "feat/...", "mergeBranch": "main",
     "worktreePath": null | "{project}/.agentq/worktrees/{taskId}",
     "history": [{ "pre_status": "ready_for_code", "new_status": "coding", "timestamp": "..." }],
     "conversation": [{ "authorName": "...", "timestamp": "...", "message": "...", "messageType": "review" }], "contexts": ["..."],
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
-  "agent": { "id": "opencode@1.0|model", "role": "implementer" } }
+  "agent": { "id": "opencode@1.0|model", "role": "implementer" },
+  "claimToken": "<secret for this claim>", "skillsVersion": "3.2.0" }
 ```
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
+
+**Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", ... }` — stop and tell the user to run `bun run install:skills` in the AgentQ checkout. Do the same if the server's instructions name a newer skills bundle than this skill's version.
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
@@ -54,7 +60,7 @@ Call `claim_task`:
 2. **Read** the task status from the result
 3. **Determine phase** from the status (see Phase Routing) and read that phase skill
 4. **Work** on the task according to the phase skill
-5. **Submit** with the `submit_*` tool given by the phase skill
+5. **Submit** with the `submit_*` tool given by the phase skill — or, if something outside your control blocks the phase, call `report_blocker` (see Blocked)
 6. **Repeat** until no tasks available
 
 If an AgentQ runner started you, the task was **already claimed by the runner**: skip steps 1–2 and 6, do not call `claim_task`, work on the task you were given and submit once.
@@ -89,13 +95,24 @@ Agents MUST respect guardrails — they define hard constraints that must not be
 - Each phase skill says what its handoff should contain.
 - `context` on `claim_task` is optional — pass it only if you already know something worth recording.
 
+## Blocked
+
+When you cannot finish the phase for a reason you cannot fix yourself — a push or `gh` call rejected, missing credentials or tools, a task whose requirements contradict each other or the guardrails — call `report_blocker`:
+
+```json
+{ "taskId": "<task.id>", "claimToken": "<claimToken>", "reason": "<what blocks you, with the error output>",
+  "question": "<the one question or action a person must answer or take>", "context": "<what you tried, optional>" }
+```
+
+The task moves to `needs_human`, your claim is released and no agent retries it until a person answers. Never submit partial or placeholder work to move a task forward, and never "stop and tell the user" without calling `report_blocker`: a runner has no user watching.
+
 ## Autonomy
 
-Agents MUST NOT ask the user for permission or confirmation during task execution — no "should I start working on this task?", no "is this plan correct?" before submitting, no "should I proceed?" / "do you want me to continue?", no asking for approval before implementing changes. The workflow is: claim → work → submit → repeat. The agent decides based on the task description and acceptance criteria. If the task is unclear, use reasonable judgment and submit with notes explaining assumptions. The user reviews the result via AgentQ's review flow, not during execution.
+Agents MUST NOT ask the user for permission or confirmation during task execution — no "should I start working on this task?", no "is this plan correct?" before submitting, no "should I proceed?" / "do you want me to continue?", no asking for approval before implementing changes. The workflow is: claim → work → submit → repeat. The agent decides based on the task description and acceptance criteria. If the task is unclear, use reasonable judgment and submit with notes explaining assumptions; only when no reasonable reading exists, use `report_blocker`. The user reviews the result via AgentQ's review flow, not during execution.
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`claim_task`, `submit_*`)
+- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`claim_task`, `submit_*`, `report_blocker`)
 - **DO NOT** use `list_tasks`, `create_task` or `archive_task` in this loop — agents claim, work on the claimed task and submit
 - **DO NOT** manage state or generate session IDs
 - **DO NOT** retry indefinitely on empty queue — **STOP** and inform user when no tasks available

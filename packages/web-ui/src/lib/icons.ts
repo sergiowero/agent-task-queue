@@ -50,6 +50,7 @@ export {
   Archive as ArchiveIcon,
   LockOpen as UnblockIcon,
   Ban as CancelTaskIcon,
+  Hand as NeedsHumanIcon,
   Send as SendIcon,
   GitBranch as BranchIcon,
   GitMerge as MergeIcon,

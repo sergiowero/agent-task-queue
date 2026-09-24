@@ -29,7 +29,7 @@ Five roles with distinct permissions:
 SSE-powered live updates propagate changes to the web UI instantly, including the claims and submissions agents make through the MCP server. Task creation and status changes appear without manual refresh.
 
 ### Web Dashboard
-Kanban-style board with four columns (Pending, In Progress, Need Review, Done), task detail drawer, agent monitoring, activity feed, project management, and install tools.
+Kanban-style board with four columns (Pending, In Progress, Needs you, Done), task detail drawer, agent monitoring, activity feed, project management, and install tools.
 
 ### MCP Server for Agents
 Stdio MCP server (`packages/mcp`) that operates directly on the local database — no running server required. It is the only agent channel: claiming, submitting, reading, listing, creating and archiving tasks are typed tools with JSON results. `bun run install:mcp` registers it with every installed coding tool, and runner jobs get it automatically.
@@ -58,10 +58,10 @@ Code changes are isolated in git worktrees — one per task — avoiding cross-t
 
 ### Web Portal
 React SPA dashboard for human supervision. Features:
-- **Kanban board** — 4 columns (Pending, In Progress, Need Review, Done) with color-coded headers; complete cards have an **Archive** button
+- **Kanban board** — 4 columns (Pending, In Progress, Needs you, Done) with color-coded headers; complete cards have an **Archive** button
 - **Search & filters** — Search by title/branch, filter by status, agent, project
 - **Task creation modal** — Full form with description, steer details, guardrails, acceptance criteria, priority, branch, project assignment, and plan requirement toggle
-- **Task detail page** — Full task view with metadata grid, markdown description, steer details, guardrails, acceptance criteria checklist, action buttons (approve/request changes/cancel/unblock/request AI review/confirm completion), conversation thread, and status history timeline
+- **Task detail page** — Full task view with metadata grid, markdown description, steer details, guardrails, acceptance criteria checklist, action buttons (approve/request changes/cancel/unblock/request AI review/confirm completion), the blocker panel for `needs_human` tasks (the agent's question, an answer box and where to send the task), conversation thread, and status history timeline
 - **Agents view** — Table with agent ID, tool, model, role, last seen, session; filterable by role and tool
 - **Activity feed** — Global timeline of all task lifecycle events with filters for task, agent, and date range
 - **Projects management** — CRUD for projects
@@ -111,7 +111,7 @@ Agent instruction files that define the exact protocol for interacting with Agen
 ### Installer
 Scripts for one-click setup:
 - **MCP setup** — `bun run install:mcp` registers the AgentQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) on macOS, Linux and Windows; safe to run again
-- **Skills installer** — Copies the workflow skill to all supported agent config directories
+- **Skills installer** — Syncs the `agentq-*` skills into every supported agent config directory: copies the repo's skills and removes `agentq-*` folders the repo no longer ships
 
 ---
 
@@ -122,8 +122,8 @@ A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (completion conditions)
 - **Priority**: Numeric value, higher = more urgent
-- **Branching**: recommendedBranch, realBranch, mergeBranch (default: develop), worktreePath
-- **Workflow**: requiresPlan flag (immutable), status (15 lifecycle states), assignedAgent reference
+- **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
+- **Workflow**: requiresPlan flag (immutable), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
 - **Archive**: archivedAt, archivePath (the summary file; the detailed record sits next to it)
@@ -140,6 +140,7 @@ A coding agent that claims and works on tasks. Contains:
 A local repository that tasks belong to. Contains:
 - **Identity**: UUID, displayName
 - **Location**: workingDirectory (absolute path to repo)
+- **defaultMergeBranch**: branch new tasks target unless they name one; detected from `origin/HEAD` when the project is created (falls back to `main`/`master`), editable
 - **Lifecycle**: timestamps, soft delete support
 
 ### ActivityEvent
@@ -154,13 +155,15 @@ A message in a task's conversation thread. Contains:
 
 ### StatusHistoryEntry
 A record of a task status transition. Contains:
-- pre_status, new_status, timestamp
+- pre_status, new_status, timestamp, actor (`user`, an agent id, `runner` or `system`)
 
 ---
 
 ## 4. Task Workflow
 
-### States (15 total)
+### States (16 total)
+
+The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee. The web UI reads the same catalog (`@agentq/shared/catalog`).
 
 The task lifecycle moves through these states:
 
@@ -194,17 +197,21 @@ The task lifecycle moves through these states:
 
 **canceled** → Work stopped. Can be entered from any state.
 
+**needs_human** → An agent called `report_blocker` (push rejected, missing credentials, contradictory task), or a runner job ended three times in a row without submitting (`AGENTQ_MAX_REVERTS`). The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next.
+
 ### User Actions
 - Approve plan, request plan changes
 - Approve code, request code changes
 - Request AI review
-- Cancel task, unblock stuck task
+- Cancel task, unblock stuck task (planning, coding, reviewing or merging; the runner job still working on it is stopped)
+- Answer a blocked task (`resolve_blocker`): the answer goes to the conversation and the task moves to a status allowed for the phase it was blocked in
 - Confirm completion
 - Archive a complete task
 
 ### Agent Actions
-- Claim task (based on role eligibility)
+- Claim task (based on role eligibility); the claim returns a `claimToken` every submit must present
 - Submit plan, submit code, submit review, submit merge
+- Report a blocker (`report_blocker`) instead of submitting partial work
 
 ---
 
@@ -214,7 +221,7 @@ The task lifecycle moves through these states:
 |---|---|
 | **Pending** | plan_requested, ready_for_code, plan_changes_requested, code_review_requested, changes_requested, approved |
 | **In Progress** | planning, coding, reviewing, merging |
-| **Need Review** | waiting_plan_review, waiting_code_review |
+| **Needs you** | waiting_plan_review, waiting_code_review, needs_human |
 | **Done** | complete, merged |
 
 Archived tasks are not shown on the board.

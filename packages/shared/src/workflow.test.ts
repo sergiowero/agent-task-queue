@@ -11,9 +11,32 @@ import {
   createProject,
   deleteProject,
   getAgentById,
+  getActivityEvents,
+  getProjectById,
 } from "./database.js";
 import { TaskStatus } from "./types.js";
-import { claimNextTask, releaseTask, buildAgentRef } from "./workflow.js";
+import {
+  approveCode,
+  approvePlan,
+  buildAgentRef,
+  cancelTask,
+  claimNextTask,
+  completeTask,
+  createTaskForProject,
+  releaseTask,
+  reportBlocker,
+  requestAiReview,
+  requestCodeChanges,
+  requestPlanChanges,
+  resolveBlocker,
+  revertClaim,
+  submitCode,
+  submitMerge,
+  submitPlan,
+  submitReview,
+  transitionTask,
+  unblockTask,
+} from "./workflow.js";
 
 // Set test DB before any imports
 process.env.AGENTQ_DB_PATH = ":memory:";
@@ -91,8 +114,15 @@ describe("claimNextTask", () => {
     const b = claimNextTask({ role: "implementer", agent: agentB, projectId });
     expect(a!.task.id).toBe(first.id);
     expect(b!.task.id).toBe(second.id);
-    expect(a!.task.assignedAgent).toEqual(buildAgentRef(agentA.toolName, agentA.model));
-    expect(b!.task.assignedAgent).toEqual(buildAgentRef(agentB.toolName, agentB.model));
+    expect(a!.task.assignedAgent).toMatchObject({
+      ...buildAgentRef(agentA.toolName, agentA.model),
+      agentId: a!.agent.id,
+      sessionKey: "session:session-a",
+    });
+    expect(b!.task.assignedAgent).toMatchObject(buildAgentRef(agentB.toolName, agentB.model));
+    expect(a!.claimToken).toBeTruthy();
+    expect(a!.task.claimToken).toBe(a!.claimToken);
+    expect(b!.claimToken).not.toBe(a!.claimToken);
 
     expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
   });
@@ -178,8 +208,9 @@ describe("claimNextTask", () => {
 
     const stored = getTaskById(task.id)!;
     expect(stored.status).toBe(TaskStatus.Planning);
-    expect(stored.assignedAgent).toEqual(buildAgentRef(agentA.toolName, agentA.model));
+    expect(stored.assignedAgent).toMatchObject(buildAgentRef(agentA.toolName, agentA.model));
     expect(stored.history).toHaveLength(1);
+    expect(stored.history[0].actor).toBe(result!.agent.id);
     expect(stored.history[0].pre_status).toBe(TaskStatus.PlanChangesRequested);
     expect(stored.history[0].new_status).toBe(TaskStatus.Planning);
     expect(stored.conversation).toHaveLength(1);
@@ -345,5 +376,167 @@ describe("concurrent claims from separate processes", () => {
 
     const hit = await claimFor("p1");
     expect(JSON.parse(hit.stdout).task.id).toBe(id);
+  });
+});
+
+describe("workflow actions", () => {
+  const projectId = "actions-project-" + Date.now();
+  const createdTaskIds: string[] = [];
+  const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "s-planner" };
+
+  beforeAll(() => {
+    createProject({ id: projectId, displayName: "Actions", workingDirectory: "/tmp/actions" });
+  });
+
+  afterEach(() => {
+    for (const id of createdTaskIds) {
+      try { deleteTask(id); } catch { softDeleteTask(id); }
+    }
+    createdTaskIds.length = 0;
+  });
+
+  afterAll(() => {
+    try { deleteProject(projectId); } catch {}
+  });
+
+  function newTask(requiresPlan = true) {
+    const task = createTask({ title: "actions", description: "d", projectId, requiresPlan });
+    createdTaskIds.push(task.id);
+    return task;
+  }
+
+  function claimPlan() {
+    const task = newTask();
+    const claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    expect(claimed.task.id).toBe(task.id);
+    return claimed;
+  }
+
+  it("a submit needs the claim's token; the right token moves the task and clears it", () => {
+    const { task, claimToken } = claimPlan();
+    expect(() => submitPlan(task.id, { message: "p" })).toThrow("claimToken");
+    expect(() => submitPlan(task.id, { message: "p", claimToken: "stale" })).toThrow("claimed by another agent session");
+    expect(() => submitPlan(task.id, { message: "p", claimToken, agentId: "someone@1|else" })).toThrow("assigned to");
+    const result = submitPlan(task.id, { message: "p", claimToken, context: "notes" });
+    expect(result.newStatus).toBe(TaskStatus.WaitingPlanReview);
+    expect(result.task.claimToken).toBeNull();
+    expect(result.task.assignedAgent).toBeNull();
+    expect(result.task.history.at(-1)!.actor).toBe("planner@1|p");
+  });
+
+  it("tasks forced into a status without a token (legacy claims) still accept submits", () => {
+    const task = newTask();
+    updateTask(task.id, { status: TaskStatus.Planning, assignedAgent: buildAgentRef("x", "y") });
+    expect(submitPlan(task.id, { message: "p" }).newStatus).toBe(TaskStatus.WaitingPlanReview);
+  });
+
+  it("human actions check the status, write history with the actor, conversation and activity", () => {
+    const { task, claimToken } = claimPlan();
+    expect(() => approvePlan(task.id)).toThrow("Plan review");
+    submitPlan(task.id, { message: "p", claimToken });
+    const changes = requestPlanChanges(task.id, { message: "narrower scope" });
+    expect(changes.status).toBe(TaskStatus.PlanChangesRequested);
+    expect(changes.conversation.at(-1)).toMatchObject({ authorName: "user", message: "narrower scope", messageType: "user" });
+    expect(changes.history.at(-1)).toMatchObject({ new_status: TaskStatus.PlanChangesRequested, actor: "user" });
+    const events = getActivityEvents({ taskId: task.id }).map((e) => e.eventType);
+    expect(events).toContain("plan_changes_requested");
+  });
+
+  it("the full human path: approve plan, request AI review, approve code, complete", () => {
+    const { task, claimToken } = claimPlan();
+    submitPlan(task.id, { message: "p", claimToken });
+    expect(approvePlan(task.id).status).toBe(TaskStatus.ReadyForCode);
+    const coder = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: coder.claimToken });
+    expect(requestAiReview(task.id).status).toBe(TaskStatus.CodeReviewRequested);
+    const reviewer = claimNextTask({ role: "reviewer", agent: planner, projectId })!;
+    submitReview(task.id, { message: "ok", claimToken: reviewer.claimToken });
+    expect(requestCodeChanges(task.id, { message: "fix" }).status).toBe(TaskStatus.ChangesRequested);
+    const again = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken });
+    expect(approveCode(task.id).status).toBe(TaskStatus.Approved);
+    const merger = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    submitMerge(task.id, { branch: "main", commit: "abc", authors: "a", claimToken: merger.claimToken });
+    expect(completeTask(task.id).status).toBe(TaskStatus.Complete);
+    expect(() => cancelTask(task.id)).toThrow("cannot be canceled");
+  });
+
+  it("an illegal edge is refused by the state machine", () => {
+    const task = newTask();
+    expect(() => transitionTask(getTaskById(task.id)!, TaskStatus.Complete, { actor: "user" })).toThrow(
+      "cannot move from Plan requested to Complete",
+    );
+  });
+
+  it("unblock frees every active status, merging included, and drops the claim", () => {
+    const task = newTask(false);
+    for (const [active, target] of [
+      [TaskStatus.Planning, TaskStatus.PlanChangesRequested],
+      [TaskStatus.Coding, TaskStatus.ChangesRequested],
+      [TaskStatus.Reviewing, TaskStatus.CodeReviewRequested],
+      [TaskStatus.Merging, TaskStatus.Approved],
+    ] as const) {
+      updateTask(task.id, { status: active, assignedAgent: buildAgentRef("a", "m"), claimToken: "t" });
+      const unblocked = unblockTask(task.id);
+      expect(unblocked.status).toBe(target);
+      expect(unblocked.assignedAgent).toBeNull();
+      expect(unblocked.claimToken).toBeNull();
+    }
+    expect(() => unblockTask(task.id)).toThrow("cannot be unblocked");
+  });
+
+  it("report_blocker parks the task in needs_human; resolve sends it to an allowed status", () => {
+    const { task, claimToken } = claimPlan();
+    const blocked = reportBlocker(task.id, {
+      reason: "The description contradicts the guardrails",
+      question: "Which one wins?",
+      claimToken,
+    });
+    expect(blocked.newStatus).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.task.blocker).toMatchObject({ phase: "plan", fromStatus: TaskStatus.Planning, question: "Which one wins?" });
+    expect(claimNextTask({ role: "senior", agent: planner, projectId })).toBeNull();
+
+    expect(() => resolveBlocker(task.id, { answer: "x", targetStatus: TaskStatus.Approved })).toThrow("can be resolved to");
+    const resolved = resolveBlocker(task.id, { answer: "The guardrails win.", targetStatus: TaskStatus.PlanChangesRequested });
+    expect(resolved.status).toBe(TaskStatus.PlanChangesRequested);
+    expect(resolved.blocker).toBeNull();
+    expect(resolved.conversation.at(-1)!.message).toContain("The guardrails win.");
+    expect(() => resolveBlocker(task.id, { answer: "", targetStatus: TaskStatus.PlanRequested })).toThrow("Needs human");
+  });
+
+  it("stops retrying after AGENTQ_MAX_REVERTS runs without a submit", () => {
+    const task = newTask();
+    for (let i = 1; i <= 2; i++) {
+      claimNextTask({ role: "planner", agent: planner, projectId });
+      expect(revertClaim(task.id, `crash ${i}`)!.status).toBe(TaskStatus.PlanRequested);
+    }
+    claimNextTask({ role: "planner", agent: planner, projectId });
+    const blocked = revertClaim(task.id, "crash 3")!;
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.revertStreak).toBe(3);
+    expect(blocked.blocker?.reason).toContain("3 times in a row");
+
+    // A person's answer resets the streak.
+    expect(resolveBlocker(task.id, { answer: "fixed the tool", targetStatus: TaskStatus.PlanRequested }).revertStreak).toBe(0);
+  });
+
+  it("a submit resets the revert streak", () => {
+    newTask();
+    let claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    revertClaim(claimed.task.id, "crash");
+    claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    expect(getTaskById(claimed.task.id)!.revertStreak).toBe(1);
+    expect(submitPlan(claimed.task.id, { message: "p", claimToken: claimed.claimToken }).task.revertStreak).toBe(0);
+  });
+
+  it("createTaskForProject uses the project's default branch and records task_created", () => {
+    const task = createTaskForProject({ title: "defaults", description: "d", projectId }, "agent");
+    createdTaskIds.push(task.id);
+    expect(task.mergeBranch).toBe("main");
+    expect(getProjectById(projectId)!.defaultMergeBranch).toBe("main");
+    expect(getActivityEvents({ taskId: task.id }).map((e) => [e.eventType, e.actor])).toEqual([["task_created", "agent"]]);
+    const explicit = createTaskForProject({ title: "explicit", description: "d", projectId, mergeBranch: "release" });
+    createdTaskIds.push(explicit.id);
+    expect(explicit.mergeBranch).toBe("release");
   });
 });

@@ -1,0 +1,378 @@
+/**
+ * The task state machine as data: statuses, what each one means, which role
+ * claims which status, and the edges a task may take. Pure module (no Bun, Node
+ * or database imports) so the web UI can import it as `@agentq/shared/catalog`.
+ */
+
+export enum TaskStatus {
+  PlanRequested = "plan_requested",
+  Planning = "planning",
+  WaitingPlanReview = "waiting_plan_review",
+  PlanChangesRequested = "plan_changes_requested",
+  ReadyForCode = "ready_for_code",
+  Coding = "coding",
+  WaitingCodeReview = "waiting_code_review",
+  CodeReviewRequested = "code_review_requested",
+  Reviewing = "reviewing",
+  ChangesRequested = "changes_requested",
+  Approved = "approved",
+  Merging = "merging",
+  Merged = "merged",
+  Complete = "complete",
+  Canceled = "canceled",
+  NeedsHuman = "needs_human",
+}
+
+export function normalizeStatus(status: string): TaskStatus {
+  if (status === "ready for code") return TaskStatus.ReadyForCode;
+  return status as TaskStatus;
+}
+
+/** Work phases; each has a skill (`skills/agentq-<phase>`) and a submit tool. */
+export type Phase = "plan" | "code" | "review" | "merge";
+
+/**
+ * queued: waiting for an agent to claim it · active: an agent holds it ·
+ * human: waiting for a person · done / terminal: finished.
+ */
+export type StatusKind = "queued" | "active" | "human" | "done" | "terminal";
+
+export type BoardColumn = "pending" | "in-progress" | "need-review" | "done";
+
+export interface StatusInfo {
+  label: string;
+  kind: StatusKind;
+  /** Phase the status belongs to (null for done/terminal statuses). */
+  phase: Phase | null;
+  /** Board column; null keeps the task off the board (canceled). */
+  boardColumn: BoardColumn | null;
+  /** A person may cancel the task from here. */
+  cancelable: boolean;
+  /** A person may edit the task's text fields from here. */
+  editable: boolean;
+  /** One line telling a person what the status waits for. */
+  hint: string;
+}
+
+export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
+  [TaskStatus.PlanRequested]: {
+    label: "Plan requested",
+    kind: "queued",
+    phase: "plan",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for a planner agent to pick it up.",
+  },
+  [TaskStatus.Planning]: {
+    label: "Planning",
+    kind: "active",
+    phase: "plan",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "A planner agent is writing the plan.",
+  },
+  [TaskStatus.WaitingPlanReview]: {
+    label: "Plan review",
+    kind: "human",
+    phase: "plan",
+    boardColumn: "need-review",
+    cancelable: true,
+    editable: true,
+    hint: "Read the plan, then approve it or ask for changes.",
+  },
+  [TaskStatus.PlanChangesRequested]: {
+    label: "Plan changes requested",
+    kind: "queued",
+    phase: "plan",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for a planner agent to revise the plan.",
+  },
+  [TaskStatus.ReadyForCode]: {
+    label: "Ready for code",
+    kind: "queued",
+    phase: "code",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for an implementer agent to pick it up.",
+  },
+  [TaskStatus.Coding]: {
+    label: "Coding",
+    kind: "active",
+    phase: "code",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "An implementer agent is writing the code.",
+  },
+  [TaskStatus.WaitingCodeReview]: {
+    label: "Code review",
+    kind: "human",
+    phase: "code",
+    boardColumn: "need-review",
+    cancelable: true,
+    editable: true,
+    hint: "Review the code, then approve it, ask for changes or request an AI review.",
+  },
+  [TaskStatus.CodeReviewRequested]: {
+    label: "AI review requested",
+    kind: "queued",
+    phase: "review",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for a reviewer agent to pick it up.",
+  },
+  [TaskStatus.Reviewing]: {
+    label: "Reviewing",
+    kind: "active",
+    phase: "review",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "A reviewer agent is reviewing the code.",
+  },
+  [TaskStatus.ChangesRequested]: {
+    label: "Changes requested",
+    kind: "queued",
+    phase: "code",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for an implementer agent to address the feedback.",
+  },
+  [TaskStatus.Approved]: {
+    label: "Approved",
+    kind: "queued",
+    phase: "merge",
+    boardColumn: "pending",
+    cancelable: true,
+    editable: true,
+    hint: "Waiting for an agent to push the branch and open the pull request.",
+  },
+  [TaskStatus.Merging]: {
+    label: "Merging",
+    kind: "active",
+    phase: "merge",
+    boardColumn: "in-progress",
+    cancelable: true,
+    editable: false,
+    hint: "An agent is pushing the branch and opening the pull request.",
+  },
+  [TaskStatus.Merged]: {
+    label: "Merged",
+    kind: "human",
+    phase: "merge",
+    boardColumn: "done",
+    cancelable: false,
+    editable: false,
+    hint: "The pull request is open. Confirm completion once it is merged.",
+  },
+  [TaskStatus.Complete]: {
+    label: "Complete",
+    kind: "done",
+    phase: null,
+    boardColumn: "done",
+    cancelable: false,
+    editable: false,
+    hint: "Done.",
+  },
+  [TaskStatus.Canceled]: {
+    label: "Canceled",
+    kind: "terminal",
+    phase: null,
+    boardColumn: null,
+    cancelable: false,
+    editable: false,
+    hint: "Canceled.",
+  },
+  [TaskStatus.NeedsHuman]: {
+    label: "Needs you",
+    kind: "human",
+    phase: null,
+    boardColumn: "need-review",
+    cancelable: true,
+    editable: true,
+    hint: "An agent is blocked. Answer its question and choose where the task goes next.",
+  },
+};
+
+export const ALL_STATUSES = Object.values(TaskStatus) as TaskStatus[];
+
+export function statusLabel(status: string): string {
+  return STATUS_INFO[status as TaskStatus]?.label ?? status.replace(/_/g, " ");
+}
+
+export function isActiveStatus(status: string): boolean {
+  return STATUS_INFO[status as TaskStatus]?.kind === "active";
+}
+
+// ─── Roles and claims ─────────────────────────────────────────────────
+
+export interface ClaimRule {
+  role: string;
+  from: TaskStatus[];
+  to: TaskStatus;
+}
+
+/** What each base role claims, and the active status the claim moves the task to. */
+export const CLAIM_RULES: ClaimRule[] = [
+  {
+    role: "planner",
+    from: [TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested],
+    to: TaskStatus.Planning,
+  },
+  {
+    role: "implementer",
+    from: [TaskStatus.ReadyForCode, TaskStatus.ChangesRequested],
+    to: TaskStatus.Coding,
+  },
+  { role: "reviewer", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
+  { role: "implementer", from: [TaskStatus.Approved], to: TaskStatus.Merging },
+];
+
+export const BASE_ROLES = ["planner", "implementer", "reviewer"] as const;
+
+export const COMPOUND_ROLES: Record<string, string[]> = {
+  senior: ["planner", "implementer", "reviewer"],
+  architect: ["planner", "reviewer"],
+};
+
+/** Every role an agent or runner may use. */
+export const ROLES = ["planner", "implementer", "reviewer", "senior", "architect"] as const;
+export type Role = (typeof ROLES)[number];
+
+/** Base roles a (possibly compound) role stands for. */
+export function baseRolesOf(role: string): string[] {
+  if (COMPOUND_ROLES[role]) return COMPOUND_ROLES[role];
+  return CLAIM_RULES.some((r) => r.role === role) ? [role] : [];
+}
+
+/** Active status → the statuses a claim into it may come from. */
+export const CLAIMABLE_FROM: Partial<Record<TaskStatus, TaskStatus[]>> = CLAIM_RULES.reduce(
+  (acc, rule) => {
+    acc[rule.to] = [...(acc[rule.to] ?? []), ...rule.from];
+    return acc;
+  },
+  {} as Partial<Record<TaskStatus, TaskStatus[]>>,
+);
+
+/** Where a revert lands when history does not name a valid origin. */
+export const REVERT_FALLBACK: Partial<Record<TaskStatus, TaskStatus>> = {
+  [TaskStatus.Planning]: TaskStatus.PlanRequested,
+  [TaskStatus.Coding]: TaskStatus.ReadyForCode,
+  [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
+  [TaskStatus.Merging]: TaskStatus.Approved,
+};
+
+/** Where a person's "Unblock" sends an active task (the agent is dropped). */
+export const UNBLOCK_TARGET: Partial<Record<TaskStatus, TaskStatus>> = {
+  [TaskStatus.Planning]: TaskStatus.PlanChangesRequested,
+  [TaskStatus.Coding]: TaskStatus.ChangesRequested,
+  [TaskStatus.Reviewing]: TaskStatus.CodeReviewRequested,
+  [TaskStatus.Merging]: TaskStatus.Approved,
+};
+
+/** Statuses a person may send a `needs_human` task to, by the phase it was blocked in. */
+export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
+  plan: [
+    TaskStatus.PlanChangesRequested,
+    TaskStatus.PlanRequested,
+    TaskStatus.WaitingPlanReview,
+    TaskStatus.ReadyForCode,
+    TaskStatus.Canceled,
+  ],
+  code: [
+    TaskStatus.ChangesRequested,
+    TaskStatus.ReadyForCode,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.Canceled,
+  ],
+  review: [
+    TaskStatus.CodeReviewRequested,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.ChangesRequested,
+    TaskStatus.Approved,
+    TaskStatus.Canceled,
+  ],
+  merge: [TaskStatus.Approved, TaskStatus.Merged, TaskStatus.Complete, TaskStatus.Canceled],
+};
+
+export function resolveTargets(phase: Phase | null | undefined): TaskStatus[] {
+  if (phase) return RESOLVE_TARGETS[phase];
+  return [...new Set(Object.values(RESOLVE_TARGETS).flat())];
+}
+
+/** Every edge a task may take (claims, submits, human actions, reverts, escalations). */
+export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
+  const t: Record<TaskStatus, Set<TaskStatus>> = Object.fromEntries(
+    ALL_STATUSES.map((s) => [s, new Set<TaskStatus>()]),
+  ) as Record<TaskStatus, Set<TaskStatus>>;
+  const add = (from: TaskStatus, ...to: TaskStatus[]) => to.forEach((s) => t[from].add(s));
+
+  for (const rule of CLAIM_RULES) for (const from of rule.from) add(from, rule.to);
+  for (const [active, origins] of Object.entries(CLAIMABLE_FROM)) {
+    add(active as TaskStatus, ...(origins ?? []), REVERT_FALLBACK[active as TaskStatus]!);
+  }
+  for (const [active, target] of Object.entries(UNBLOCK_TARGET)) add(active as TaskStatus, target!);
+  // Submissions.
+  add(TaskStatus.Planning, TaskStatus.WaitingPlanReview);
+  add(TaskStatus.Coding, TaskStatus.WaitingCodeReview);
+  add(TaskStatus.Reviewing, TaskStatus.WaitingCodeReview);
+  add(TaskStatus.Merging, TaskStatus.Merged);
+  // Human decisions.
+  add(TaskStatus.WaitingPlanReview, TaskStatus.ReadyForCode, TaskStatus.PlanChangesRequested);
+  add(
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.Approved,
+    TaskStatus.ChangesRequested,
+    TaskStatus.CodeReviewRequested,
+  );
+  add(TaskStatus.Merged, TaskStatus.Complete);
+  add(TaskStatus.NeedsHuman, ...resolveTargets(null));
+  // Escalation and cancellation.
+  for (const s of ALL_STATUSES) {
+    if (STATUS_INFO[s].kind === "active") add(s, TaskStatus.NeedsHuman);
+    if (STATUS_INFO[s].cancelable) add(s, TaskStatus.Canceled);
+  }
+  return Object.fromEntries(ALL_STATUSES.map((s) => [s, [...t[s]]])) as Record<
+    TaskStatus,
+    TaskStatus[]
+  >;
+})();
+
+export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
+  return TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+// ─── Activity ─────────────────────────────────────────────────────────
+
+/** Activity event types written by the workflow, with a short human label. */
+export const EVENT_TYPES: Record<string, string> = {
+  task_created: "Task created",
+  task_claimed: "Claimed",
+  plan_submitted: "Plan submitted",
+  code_submitted: "Code submitted",
+  review_submitted: "Review submitted",
+  merge_submitted: "Merge submitted",
+  plan_approved: "Plan approved",
+  plan_changes_requested: "Plan changes requested",
+  code_approved: "Code approved",
+  code_changes_requested: "Code changes requested",
+  ai_review_requested: "AI review requested",
+  task_completed: "Completed",
+  task_canceled: "Canceled",
+  task_unblocked: "Unblocked",
+  task_blocked: "Blocked (needs human)",
+  blocker_resolved: "Blocker resolved",
+  task_reverted: "Reverted",
+  task_archived: "Archived",
+  comment_added: "Comment",
+};
+
+/** Actors whose events count as human decisions. */
+export const HUMAN_ACTOR = "user";

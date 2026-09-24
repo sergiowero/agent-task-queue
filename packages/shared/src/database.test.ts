@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterEach } from "bun:test";
-import { homedir } from "os";
+import { mkdtempSync, rmSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import {
+  appendJson,
+  getProjectById,
+  getTaskById,
+  patchTask,
+  updateProject,
   createTask,
   getNextClaimableTask,
   updateTask,
@@ -13,10 +19,6 @@ import {
   getTasks,
   getProjects,
   withTransaction,
-  getConversationEntries,
-  addConversationEntry,
-  getStatusHistory,
-  addStatusHistoryEntry,
   getMigrationStatus,
   getDbPath,
 } from "./database.js";
@@ -25,7 +27,6 @@ import {
   getClaimableStatuses,
   getClaimTransition,
   getEffectiveRole,
-  recordHistory,
   addConversation,
   addActivity,
   normalizeStatusInput,
@@ -39,13 +40,13 @@ import {
 } from "./schemas.js";
 import { paginate, buildPaginationSql } from "./pagination.js";
 import { validateEnv } from "./env.js";
+import { detectDefaultBranch } from "./git.js";
 
 // Set test DB before any imports
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 const testProjectId = "test-project-isolation";
 const softDeleteProjectId = "soft-delete-project-" + Date.now();
-const normalizedTablesProjectId = "normalized-project-" + Date.now();
 
 describe("Database Isolation (8.1)", () => {
   it("uses in-memory database for tests", () => {
@@ -378,6 +379,72 @@ describe("Transaction Wrapping (8.6)", () => {
       });
     }).toThrow("test error");
   });
+
+  it("nests with savepoints: an inner failure rolls back only the inner work", () => {
+    const projectId = "tx-nest-" + Date.now();
+    withTransaction(() => {
+      createProject({ id: projectId, displayName: "outer", workingDirectory: "/tmp/tx" });
+      expect(() =>
+        withTransaction(() => {
+          updateProject(projectId, { displayName: "inner" });
+          throw new Error("inner failure");
+        }),
+      ).toThrow("inner failure");
+    });
+    expect(getProjectById(projectId)!.displayName).toBe("outer");
+    deleteProject(projectId);
+  });
+});
+
+describe("patchTask / appendJson", () => {
+  const projectId = "patch-project-" + Date.now();
+
+  beforeAll(() => {
+    createProject({ id: projectId, displayName: "Patch", workingDirectory: "/tmp/patch" });
+  });
+
+  it("patches only the given columns, so a concurrent append is kept", () => {
+    const task = createTask({ title: "patch", description: "d", projectId });
+    const stale = getTaskById(task.id)!;
+    appendJson(task.id, "conversation", { authorName: "mcp", timestamp: "t", message: "from another process" });
+    patchTask(stale.id, { title: "renamed" });
+    const fresh = getTaskById(task.id)!;
+    expect(fresh.title).toBe("renamed");
+    expect(fresh.conversation.map((c) => c.message)).toEqual(["from another process"]);
+    expect(fresh.updatedAt >= stale.updatedAt).toBe(true);
+    deleteTask(task.id);
+  });
+
+  it("stores JSON columns and nulls", () => {
+    const task = createTask({ title: "json", description: "d", projectId });
+    const blocker = { reason: "r", question: "q", phase: "code" as const, fromStatus: TaskStatus.Coding, raisedBy: "a", at: "t" };
+    expect(patchTask(task.id, { blocker, revertStreak: 2 })!.blocker).toEqual(blocker);
+    const cleared = patchTask(task.id, { blocker: null, description: null })!;
+    expect(cleared.blocker).toBeNull();
+    expect(cleared.description).toBeNull();
+    expect(cleared.revertStreak).toBe(2);
+    expect(patchTask("missing", { title: "x" })).toBeNull();
+    deleteTask(task.id);
+  });
+});
+
+describe("default merge branch detection", () => {
+  it("reads origin/HEAD, then a local main/master, else main", () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-branch-"));
+    try {
+      const git = (...args: string[]) => Bun.spawnSync(["git", "-C", repo, ...args]);
+      expect(detectDefaultBranch(repo)).toBe("main");
+      git("init", "-q", "-b", "master");
+      git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+      expect(detectDefaultBranch(repo)).toBe("master");
+      git("update-ref", "refs/remotes/origin/develop", "HEAD");
+      git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop");
+      expect(detectDefaultBranch(repo)).toBe("develop");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+    expect(detectDefaultBranch(join(tmpdir(), "does-not-exist-" + Date.now()))).toBe("main");
+  });
 });
 
 describe("Env Validation", () => {
@@ -405,6 +472,15 @@ describe("Migration Status", () => {
     expect(status.length).toBeGreaterThan(0);
     expect(status[0]).toHaveProperty("name");
     expect(status[0]).toHaveProperty("applied");
+  });
+
+  it("lists every migration in order, all applied", () => {
+    const status = getMigrationStatus();
+    const names = status.map((m) => m.name);
+    expect(names).toEqual([...names].sort());
+    expect(names).toContain("010_project_default_merge_branch");
+    expect(names).toContain("011_task_claim_and_blocker");
+    expect(status.every((m) => m.applied)).toBe(true);
   });
 });
 
@@ -542,54 +618,5 @@ describe("Schema Validation — SteerDetails & Guardrails", () => {
       guardrails: ["Updated"],
     });
     expect(result.success).toBe(true);
-  });
-});
-
-describe("Normalized Tables (8.4 continuation)", () => {
-  const createdTaskIds: string[] = [];
-
-  beforeAll(() => {
-    createProject({
-      id: normalizedTablesProjectId,
-      displayName: "Normalized Tables",
-      workingDirectory: "/tmp/norm",
-    });
-  });
-
-  function createTestTask() {
-    const task = createTask({ title: "norm-test", description: "test", projectId: normalizedTablesProjectId });
-    createdTaskIds.push(task.id);
-    return task;
-  }
-
-  afterEach(() => {
-    for (const id of createdTaskIds) {
-      try { deleteTask(id); } catch {}
-    }
-    createdTaskIds.length = 0;
-  });
-
-  it("adds and reads conversation entries", () => {
-    const task = createTestTask();
-    addConversationEntry({ taskId: task.id, authorName: "test-user", message: "Hello", messageType: "user" });
-    const entries = getConversationEntries(task.id);
-    expect(entries.length).toBe(1);
-    expect(entries[0].authorName).toBe("test-user");
-    expect(entries[0].message).toBe("Hello");
-  });
-
-  it("adds and reads status history entries", () => {
-    const task = createTestTask();
-    addStatusHistoryEntry({ taskId: task.id, preStatus: "plan_requested", newStatus: "planning" });
-    const entries = getStatusHistory(task.id);
-    expect(entries.length).toBe(1);
-    expect(entries[0].pre_status).toBe("plan_requested");
-    expect(entries[0].new_status).toBe("planning");
-  });
-
-  it("returns empty arrays for tasks with no entries", () => {
-    const task = createTestTask();
-    expect(getConversationEntries(task.id)).toEqual([]);
-    expect(getStatusHistory(task.id)).toEqual([]);
   });
 });

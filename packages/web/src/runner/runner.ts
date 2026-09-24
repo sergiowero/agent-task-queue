@@ -2,10 +2,10 @@ import { randomUUID } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir, hostname } from "os";
 import { join } from "path";
-import { mcpServerLaunch, mcpServersConfig } from "@agentq/mcp";
-import type { Agent, Runner, RunnerTool, Task, TaskStatus } from "@agentq/shared";
+import { claimEnv, mcpServerLaunch, mcpServersConfig } from "@agentq/mcp";
+import type { Agent, Runner, RunnerTool, Task } from "@agentq/shared";
 import {
-  buildAgentRef,
+  TaskStatus,
   claimNextTask,
   getDbPath,
   getProjectById,
@@ -18,7 +18,8 @@ import type { BuiltCommand, CommandBuilder } from "./commands.js";
 import { buildCommand as defaultBuildCommand, runsDir, toolBinary } from "./commands.js";
 import { buildPrompt, phaseForStatus, type Phase } from "./prompt.js";
 
-export type JobStatus = "running" | "succeeded" | "failed" | "reverted";
+/** reverted: released for a retry · blocked: the task went to needs_human (no retry). */
+export type JobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
 
 export interface RunnerJob {
   id: string;
@@ -73,8 +74,9 @@ interface ActiveJob {
   job: RunnerJob;
   proc: ReturnType<typeof Bun.spawn>;
   activeStatus: TaskStatus;
+  /** The claim this job holds; the task is still ours while it carries this token. */
+  claimToken: string;
   agentTool: string;
-  agentModel: string;
   runnerName: string;
   killReason: string | null;
   readers: ReadableStreamDefaultReader<Uint8Array>[];
@@ -300,7 +302,7 @@ export class RunnerEngine {
       while (rt.running && rt.active.size < runner.concurrency) {
         const claimed = this.claim(runner, rt);
         if (!claimed) break;
-        await this.launch(runner, rt, claimed.task, claimed.effectiveRole, claimed.agent);
+        await this.launch(runner, rt, claimed.task, claimed.effectiveRole, claimed.agent, claimed.claimToken);
       }
       // A clean tick clears a stale error, but not one raised during this tick.
       if (rt.lastError && rt.lastError === errorBefore) {
@@ -333,7 +335,24 @@ export class RunnerEngine {
       },
       projectId: runner.projectId ?? undefined,
       context: `Claimed by runner ${runner.name}`,
+      runnerId: runner.id,
     });
+  }
+
+  /**
+   * A person took the task away (unblock, cancel, resolve): kill the job still
+   * working on it. Its late submits are refused because the claim is gone.
+   */
+  abandonTask(taskId: string, reason: string): boolean {
+    let found = false;
+    for (const rt of this.runtimes.values()) {
+      for (const active of rt.active.values()) {
+        if (active.job.taskId !== taskId) continue;
+        found = true;
+        this.kill(active, reason);
+      }
+    }
+    return found;
   }
 
   private async launch(
@@ -342,6 +361,7 @@ export class RunnerEngine {
     task: Task,
     effectiveRole: string,
     agent: Agent,
+    claimToken: string,
   ): Promise<void> {
     this.broadcast("task_updated", task);
     const jobId = randomUUID();
@@ -376,10 +396,11 @@ export class RunnerEngine {
     let built: BuiltCommand;
     try {
       mkdirSync(dir, { recursive: true });
-      const prompt = buildPrompt({ task, project, agent, effectiveRole });
+      const prompt = buildPrompt({ task, project, agent, effectiveRole, claimToken });
       writeFileSync(promptFile, prompt);
-      // Every job gets the AgentQ MCP server, bound to this server's database.
-      const mcp = mcpServerLaunch(getDbPath());
+      // Every job gets the AgentQ MCP server, bound to this server's database and
+      // holding the job's claim (so the agent's submits carry the claim token).
+      const mcp = mcpServerLaunch(getDbPath(), undefined, claimEnv(task.id, claimToken, agent.id));
       writeFileSync(mcpConfigFile, JSON.stringify(mcpServersConfig(mcp), null, 2));
       built = this.build(runner.tool, {
         cwd,
@@ -426,8 +447,8 @@ export class RunnerEngine {
       job,
       proc,
       activeStatus: task.status,
+      claimToken,
       agentTool: runner.tool,
-      agentModel: runner.model ?? "default",
       runnerName: runner.name,
       killReason: null,
       readers: [],
@@ -469,8 +490,8 @@ export class RunnerEngine {
     rt.lastError = reason;
     const reverted = revertClaim(taskId, reason);
     if (reverted) {
-      job.status = "reverted";
-      this.noteRevert(taskId);
+      job.status = reverted.status === TaskStatus.NeedsHuman ? "blocked" : "reverted";
+      if (job.status === "reverted") this.noteRevert(taskId);
       this.broadcast("task_updated", reverted);
     }
     this.emitJob("finished", job);
@@ -565,13 +586,8 @@ export class RunnerEngine {
     this.flushOutput(job.id);
 
     const task = getTaskById(job.taskId);
-    const ref = buildAgentRef(active.agentTool, active.agentModel);
     const stillOurs =
-      !!task &&
-      task.status === active.activeStatus &&
-      !!task.assignedAgent &&
-      task.assignedAgent.tool === ref.tool &&
-      task.assignedAgent.model === ref.model;
+      !!task && task.status === active.activeStatus && task.claimToken === active.claimToken;
 
     if (stillOurs) {
       const last30 = job.tail.filter((l, i, arr) => !(i === arr.length - 1 && l === "")).slice(-30);
@@ -580,9 +596,14 @@ export class RunnerEngine {
         : `Runner ${active.runnerName}: ${active.agentTool} exited with code ${code} without submitting.`;
       const reason = `${why} Last output:\n\`\`\`\n${last30.join("\n")}\n\`\`\``;
       const reverted = revertClaim(job.taskId, reason);
-      job.status = "reverted";
-      this.noteRevert(job.taskId);
+      job.status = reverted?.status === TaskStatus.NeedsHuman ? "blocked" : "reverted";
+      if (job.status === "reverted") this.noteRevert(job.taskId);
       if (reverted) this.broadcast("task_updated", reverted);
+    } else if (task?.status === TaskStatus.NeedsHuman && task.history.at(-1)?.pre_status === active.activeStatus) {
+      // The agent reported a blocker: a person must answer, no retry.
+      job.status = "blocked";
+      this.cooldowns.delete(job.taskId);
+      this.broadcast("task_updated", task);
     } else {
       job.status = code === 0 && !active.killReason ? "succeeded" : "failed";
       if (job.status === "succeeded") this.cooldowns.delete(job.taskId);

@@ -1,25 +1,7 @@
-export enum TaskStatus {
-  PlanRequested = "plan_requested",
-  Planning = "planning",
-  WaitingPlanReview = "waiting_plan_review",
-  PlanChangesRequested = "plan_changes_requested",
-  ReadyForCode = "ready_for_code",
-  Coding = "coding",
-  WaitingCodeReview = "waiting_code_review",
-  CodeReviewRequested = "code_review_requested",
-  Reviewing = "reviewing",
-  ChangesRequested = "changes_requested",
-  Approved = "approved",
-  Merging = "merging",
-  Merged = "merged",
-  Complete = "complete",
-  Canceled = "canceled",
-}
+import type { TaskStatus} from "./catalog.js";
+import { type Phase } from "./catalog.js";
 
-export function normalizeStatus(status: string): TaskStatus {
-  if (status === "ready for code") return TaskStatus.ReadyForCode;
-  return status as TaskStatus;
-}
+export { TaskStatus, normalizeStatus } from "./catalog.js";
 
 export interface ConversationEntry {
   authorName: string;
@@ -32,12 +14,35 @@ export interface StatusHistoryEntry {
   pre_status: string;
   new_status: string;
   timestamp: string;
+  /** Who made the change: "user", an agent id, "runner" or "system". Absent on old entries. */
+  actor?: string;
 }
 
 export interface AgentReference {
   name: string;
   tool: string;
   model: string;
+  /** Agent row id (`tool@version|model`) of the claim. */
+  agentId?: string;
+  /**
+   * Stable identity used for separation of duties: `runner:<runnerId>` for
+   * runner claims, `session:<sessionId>` for agents that claimed through MCP.
+   */
+  sessionKey?: string;
+  runnerId?: string;
+  claimedAt?: string;
+}
+
+/** Why an agent (or the runner) stopped and what it needs from a person. */
+export interface Blocker {
+  reason: string;
+  question: string;
+  /** Phase the task was blocked in; decides where a person may send it next. */
+  phase: Phase | null;
+  /** Status the task was in when it was blocked. */
+  fromStatus: TaskStatus;
+  raisedBy: string;
+  at: string;
 }
 
 export interface Task {
@@ -59,6 +64,15 @@ export interface Task {
   contexts: string[];
   projectId: string | null;
   worktreePath: string | null;
+  /**
+   * Secret handed to the agent that holds the claim; submits must present it.
+   * Null when nobody holds the task (and on claims made before it existed).
+   */
+  claimToken: string | null;
+  /** Set while the task is in `needs_human`. */
+  blocker: Blocker | null;
+  /** Consecutive runs that ended without a submit; reset by any submit or human action. */
+  revertStreak: number;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -85,6 +99,8 @@ export interface Project {
   id: string;
   displayName: string;
   workingDirectory: string;
+  /** Branch new tasks merge into (detected from origin/HEAD when the project is created). */
+  defaultMergeBranch: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
