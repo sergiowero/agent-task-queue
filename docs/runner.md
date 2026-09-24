@@ -129,19 +129,23 @@ that understand it; `gemini` and `custom` ignore it.
 
 `buildPrompt()` tells the tool it is an AgentQ `<role>` agent, that task `<id>` was
 **already claimed for it** (so it must not call `claim_task`), the current status, the
-AgentQ MCP tools it can use (`get_task`, `post_comment`, the phase's `submit_*` and
-`report_blocker`), the
-full task JSON (title, description, steerDetails, guardrails, acceptanceCriteria,
-conversation, contexts, branches, worktreePath, project working directory), the body of
+AgentQ MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
+`submit_*` and `report_blocker`), the task **brief** (see [mcp.md](mcp.md): plan,
+criteria, open findings, latest handoffs, human notes; not the whole conversation, so
+the prompt does not grow round after round), the
+body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the required `context` handoff notes,
 with a per-phase hint of what they should contain, and the job's `claimToken`), how to call
 `report_blocker` when something outside its control blocks the phase (never submit
 partial work), never to ask for permission, and to stop once the submit succeeds.
 
-Phase by status: `plan_requested` / `plan_changes_requested` → plan,
-`ready_for_code` / `changes_requested` → code, `code_review_requested` → review,
-`approved` → merge.
+Phase by status (each phase has its skill, `skills/agentq-<phase>`): `draft` → refine,
+`plan_requested` / `plan_changes_requested` → plan, `plan_review_requested` →
+plan-review, `ready_for_code` / `changes_requested` → code, `verify_requested` →
+verify, `code_review_requested` → review, `approved` → merge (integrator). Existing
+`implementer` runners were migrated to `builder` (implementer + integrator) so they
+keep opening PRs.
 
 ## What happens when the tool exits
 

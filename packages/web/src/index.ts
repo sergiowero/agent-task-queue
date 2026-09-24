@@ -31,6 +31,7 @@ import {
   reportBlocker,
   getFindings,
   getEvidence,
+  getHandoffs,
   editTask,
   detectProjectCommands,
   verifierOnline,
@@ -45,6 +46,8 @@ import {
   submitPlan,
   submitReview,
   unblockTask,
+  promoteDraft,
+  getSubtasks,
   createTaskSchema,
   updateTaskSchema,
   createProjectSchema,
@@ -750,7 +753,12 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   }
 
   const data = parsed.data;
-  const auth = { claimToken: data.claimToken };
+  const auth = {
+    claimToken: data.claimToken,
+    decisions: Array.isArray(body?.decisions) ? body.decisions : undefined,
+    risks: Array.isArray(body?.risks) ? body.risks : undefined,
+    next: Array.isArray(body?.next) ? body.next : undefined,
+  };
   const author = data.authorName;
 
   // Each action is one shared workflow call; the workflow checks the status.
@@ -822,6 +830,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     complete: () => completeTask(taskId),
     cancel: () => cancelTask(taskId, { message: data.message }),
     unblock: () => unblockTask(taskId),
+    promote_draft: () => promoteDraft(taskId, { message: data.message }),
     resolve_blocker: () => {
       if (!data.targetStatus) return errorResponse("targetStatus is required");
       return resolveBlocker(taskId, { answer: data.answer ?? data.message ?? "", targetStatus: data.targetStatus });
@@ -867,7 +876,12 @@ const handleTaskDetails = wrapHandler(async (req, url) => {
   if (!match || req.method !== "GET") throw null;
   const task = getTaskById(match[1]);
   if (!task) return errorResponse("not found", 404);
-  return jsonResponse({ findings: getFindings(task.id), evidence: getEvidence(task.id) });
+  return jsonResponse({
+    findings: getFindings(task.id),
+    evidence: getEvidence(task.id),
+    handoffs: getHandoffs(task.id),
+    subtasks: getSubtasks(task.id).map((t) => ({ id: t.id, title: t.title, status: t.status, held: t.held, blockedBy: t.blockedBy })),
+  });
 });
 
 const handleTaskById = wrapHandler(async (req, url) => {

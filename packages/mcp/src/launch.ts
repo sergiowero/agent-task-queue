@@ -12,6 +12,8 @@ export const MCP_ENTRY = resolve(import.meta.dir, "index.ts");
  */
 export const RUNNER_MCP_TOOLS = [
   "get_task",
+  "get_task_brief",
+  "get_skill",
   "post_comment",
   "submit_plan",
   "submit_code",
@@ -19,6 +21,9 @@ export const RUNNER_MCP_TOOLS = [
   "submit_merge",
   "report_blocker",
   "submit_verification",
+  "submit_plan_review",
+  "create_subtask",
+  "submit_refinement",
 ] as const;
 
 /** How to start the server over stdio: `command args...` with `env` set. */

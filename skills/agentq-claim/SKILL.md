@@ -1,9 +1,9 @@
 ---
 name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-plan, agentq-code, agentq-review, agentq-merge) that matches the task status.
-allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
+allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "4.1.0"
+  version: "4.3.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -21,7 +21,7 @@ If the `agentq` tools are missing, the server is not registered: tell the user t
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
 - **sessionId**: Current session ID from the invoking tool (do not generate)
-- **role**: Specified by user at skill invocation, default: `senior`
+- **role**: Specified by user at skill invocation, default: `senior`. Base roles: `refiner`, `planner`, `plan_reviewer`, `implementer`, `verifier`, `reviewer`, `integrator` (pushes and opens the PR). Compound: `senior` (all but verifier), `architect` (planner + plan_reviewer + reviewer), `qa` (verifier + reviewer), `builder` (implementer + integrator)
 
 ## Claim a Task
 
@@ -29,13 +29,13 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "4.1.0",
+  "skillsVersion": "4.3.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
 `skillsVersion` is the `metadata.version` of this skill. The server refuses outdated skills with `reason: "skills_outdated"`.
 
-**Result (success)**: the full task plus `project`, your `agent` identity and a `claimToken`. Keep `task.id` and `claimToken`: pass both to every `submit_*` and `report_blocker` call for this task (the server rejects submits from anyone else, e.g. a stale session after a person unblocked the task).
+**Result (success)**: the task (without its conversation and history), a `brief`, the `phaseSkill` to follow (name and version), your `agent` identity and a `claimToken`. Keep `task.id` and `claimToken`: pass both to every `submit_*` and `report_blocker` call for this task (the server rejects submits from anyone else, e.g. a stale session after a person unblocked the task).
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."],
@@ -48,7 +48,7 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "4.1.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "4.3.0" }
 ```
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
@@ -78,28 +78,41 @@ The claim moves the task to its in-progress status; route on the status it was c
 
 | Claimed from | In progress | Phase | Skill to read next |
 |--------------|-------------|-------|--------------------|
+| `draft` | `refining` | Refining | `agentq-refine` |
 | `plan_requested` | `planning` | Planning | `agentq-plan` |
 | `plan_changes_requested` | `planning` | Planning | `agentq-plan` |
+| `plan_review_requested` | `plan_reviewing` | Plan critique | `agentq-plan-review` |
 | `ready_for_code` | `coding` | Coding | `agentq-code` |
 | `changes_requested` | `coding` | Coding | `agentq-code` |
+| `verify_requested` | `verifying` | Verifying | `agentq-verify` |
 | `code_review_requested` | `reviewing` | Reviewing | `agentq-review` |
-| `approved` | `merging` | Merging | `agentq-merge` |
+| `approved` | `merging` | Merging (integrator) | `agentq-merge` |
+
+`claim_task` also returns `phaseSkill` with the name to follow.
 
 After claiming, read the skill for the phase and follow it. Do not read the other phase skills.
 
 ## Context Reading
 
-Before working on a task, read `task.description` (functional requirements only — what needs to be accomplished), `task.steerDetails` (technical recommendations, implementation hints, preferred approaches), `task.guardrails` (behavioral constraints, do's and don'ts for agents), `task.acceptanceCriteria` (specific, testable conditions that define completion), `task.conversation[]` (previous discussion) and `task.contexts[]` (additional context).
+Start from the **brief** (`brief` in the `claim_task` result, or `get_task_brief`). It holds, in a fixed size whatever the number of rounds:
+
+- `task`: description (what, functional only), steerDetails (how), nonGoals (what not to do), references (where to look first), type and risk
+- `typeGuidance`: what this kind of task needs (e.g. a bug starts with a failing test)
+- `guardrails`: the project's shared ones and the task's (hard constraints), `conventionFiles` to read, the project's `commands`
+- `criteria` with ids and status, the `approvedPlan` (or `latestPlan` while none is approved)
+- `openFindings`, the latest `handoffs` of each phase, `humanNotes` (what people wrote since the last submission), `round`, `verification` (with the failing commands), `lastAnswer` (a person's answer to a blocker)
+
+Call `get_task` only when you need the whole conversation or history. If your installed phase skill is older than `phaseSkill.version`, read the current text with `get_skill`.
 
 Agents MUST respect guardrails — they define hard constraints that must not be violated during implementation. If a guardrail conflicts with other requirements, the guardrail takes precedence.
 
 ## Context Handoff
 
-`task.contexts[]` is how agents pass knowledge to the agent of the next phase (planner → coder → reviewer → coder → merger). Each `submit_*` call appends its `context` to it; it is **required** on every submit and must not be blank.
+Handoffs are how agents pass knowledge to the agent of the next phase (planner → coder → verifier → reviewer → coder → merger). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase.
 
 - Write what the next agent needs and cannot get cheaply from the diff or the `message`: decisions and why, gotchas, where to look first, what is left or risky. Do not repeat the `message`.
 - Keep it short (1–5 sentences) and concrete: file paths, function names, commands.
-- Each phase skill says what its handoff should contain.
+- Each phase skill says what its handoff should contain. Put choices in `decisions`, doubts in `risks`, and what the next agent should do first in `next`.
 - `context` on `claim_task` is optional — pass it only if you already know something worth recording.
 
 ## Blocked

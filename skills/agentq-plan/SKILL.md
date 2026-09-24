@@ -1,15 +1,15 @@
 ---
 name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
-allowed-tools: mcp__agentq__submit_plan, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
+allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan, mcp__agentq__create_subtask, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "4.1.0"
+  version: "4.3.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Plan Skill
 
-Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
 
 ## Phase
 
@@ -40,7 +40,11 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
 5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). Add the regression commands that must keep passing (usually the project's test, typecheck and lint commands)
-6. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
+6. List **open questions** (mark one `blocking` only if you cannot plan without a person's answer: the task then goes to that person first), your **risk** estimate (`suggestedRisk`; migrations, auth, CI and public APIs are high) and the **paths** the plan touches (`touchedPaths`; protected ones raise the risk to high)
+7. **Size**: when the work is bigger than one reviewable PR (~400 changed lines or many criteria), split it: call `create_subtask` for each part (with `blockedBy` for order) while you still hold the task, and list them in the plan. Subtasks wait until this plan is approved; then they run and this task completes when they all do
+8. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
+
+Under autonomy L2 and higher an AI critic reviews the plan first (a different agent): a low-risk plan it approves goes straight to coding; otherwise a person approves it too. Critique findings have ids like `P1-2`; when revising, address each one.
 
 Once a person approves the plan, the validation plan is **frozen**: the coder cannot change it, and the AgentQ verifier runs its commands on every code submission. Commands from a plan a person approved always run; otherwise only those on the project's allowlist do. Prefer the project's own test runner.
 
@@ -61,6 +65,9 @@ Call the `submit_plan` MCP tool:
     ],
     "regressionCommands": ["bun test", "bun run typecheck"]
   },
+  "openQuestions": [{ "text": "Should archived rows be exported?", "blocking": false }],
+  "suggestedRisk": "medium",
+  "touchedPaths": ["src/export.ts", "src/export.test.ts"],
   "context": "<handoff notes>" }
 ```
 
@@ -68,7 +75,7 @@ Every `criterionId` must be one of the task's criteria; the tool rejects unknown
 
 `context` is required (see Context Handoff in `agentq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 
-It moves the task to `waiting_plan_review` and releases it. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It releases the task and sends it to the AI critic (`plan_review_requested`, autonomy L2+) or to a person (`waiting_plan_review`); a blocking question sends it to `needs_human`. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Plan Template
 

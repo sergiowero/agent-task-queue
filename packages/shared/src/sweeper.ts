@@ -41,37 +41,51 @@ export function sweepQueue(now: Date = new Date()): SweepResult {
     if (reverted) result.expired.push(id);
   }
 
-  const waiting = d
-    .prepare(
-      "SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL AND archived_at IS NULL",
-    )
-    .all(TaskStatus.CodeReviewRequested) as { id: string }[];
-  for (const { id } of waiting) {
-    const task = getTaskById(id);
-    if (!task) continue;
-    const limit = policyFor(task).reviewStarvationMin;
-    const since = task.history.at(-1);
-    if (limit <= 0 || !since || since.new_status !== TaskStatus.CodeReviewRequested) continue;
-    if (now.getTime() - new Date(since.timestamp).getTime() < limit * 60_000) continue;
-    transitionTask(task, TaskStatus.WaitingCodeReview, {
-      actor: "system:sweeper",
-      author: "system",
-      message: `No eligible reviewer agent picked this review up in ${limit} min (a runner never reviews its own code). A person reviews it instead; start a reviewer runner to avoid this.`,
-      messageType: "system",
-      event: "review_starved",
-    });
-    result.starved.push(id);
+  // Reviews (of code or of plans) nobody eligible picked up: a person takes them.
+  const starving: [TaskStatus, TaskStatus, string][] = [
+    [TaskStatus.CodeReviewRequested, TaskStatus.WaitingCodeReview, "review"],
+    [TaskStatus.PlanReviewRequested, TaskStatus.WaitingPlanReview, "plan critique"],
+  ];
+  for (const [from, to, what] of starving) {
+    const waiting = d
+      .prepare(
+        "SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL AND archived_at IS NULL",
+      )
+      .all(from) as { id: string }[];
+    for (const { id } of waiting) {
+      const task = getTaskById(id);
+      if (!task) continue;
+      const limit = policyFor(task).reviewStarvationMin;
+      const since = task.history.at(-1);
+      if (limit <= 0 || !since || since.new_status !== from) continue;
+      if (now.getTime() - new Date(since.timestamp).getTime() < limit * 60_000) continue;
+      transitionTask(task, to, {
+        actor: "system:sweeper",
+        author: "system",
+        message: `No eligible agent picked this ${what} up in ${limit} min (an agent never reviews its own work). A person does it instead; start a runner with a reviewing role to avoid this.`,
+        messageType: "system",
+        event: "review_starved",
+      });
+      result.starved.push(id);
+    }
   }
 
   // Verifications waiting for a verifier that is not running go on to review, unverified.
   if (!verifierOnline(now.getTime())) {
     const pending = d
-      .prepare("SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL")
+      .prepare(
+        "SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL",
+      )
       .all(TaskStatus.VerifyRequested) as { id: string }[];
     for (const { id } of pending) {
       const task = getTaskById(id);
       const since = task?.history.at(-1);
-      if (!task || !since || now.getTime() - new Date(since.timestamp).getTime() < VERIFY_WAIT_MIN * 60_000) continue;
+      if (
+        !task ||
+        !since ||
+        now.getTime() - new Date(since.timestamp).getTime() < VERIFY_WAIT_MIN * 60_000
+      )
+        continue;
       transitionTask(task, reviewGate(policyFor(task)), {
         actor: "system:sweeper",
         author: "system",

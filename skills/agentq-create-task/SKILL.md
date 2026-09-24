@@ -3,7 +3,7 @@ name: agentq-create-task
 description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
 metadata:
-  version: "4.1.0"
+  version: "4.3.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -38,6 +38,10 @@ Call `create_task`:
   "branch": "<branch-name>",
   "priority": 0,
   "requiresPlan": true,
+  "type": "feature | bug | refactor | docs | chore",
+  "risk": "low | medium | high (optional: defaults from the type)",
+  "nonGoals": ["<what the task deliberately does not do>"],
+  "references": [{ "label": "<what it is>", "target": "<URL, file path or issue id>" }],
   "mergeBranch": "<only when the user names one>",
   "context": "<initial context entry, optional>" }
 ```
@@ -70,6 +74,15 @@ Take what the user described and produce a complete, well-structured task.
 - **Priority**: If the user gives a priority, use it. Otherwise default to 0.
 - **Branch**: If the user gives a branch name, use it. Otherwise generate one.
 - **Merge branch**: Omit it (the project's default branch is used) unless the user names one.
+
+**Make it ready (Definition of Ready)** — agents start without asking, so the task must say:
+- What and why, with **non-goals** when the scope could be misread
+- How each criterion is verified: a command (`"text $ command"` or `verify.command`), a test, or a manual check
+- For a **bug**: steps to reproduce, expected and actual behaviour
+- **Type** and **risk**: high risk (migrations, auth, CI, public APIs) should set `requiresPlan: true`
+- **References**: files, issues or docs to look at first
+
+`create_task` returns `task.dorIssues` when something is missing; fix them with the user before handing the task over. Projects can enforce the check, and then `create_task` refuses a task that is not ready.
 
 **Auto-generate when not specified:**
 - **Branch name**: Derive from the title using kebab-case with conventional prefix:
@@ -105,9 +118,13 @@ When writing the description, use this structure:
 - [Behavioral constraint 1 — e.g., "DO NOT use external APIs"]
 - [Behavioral constraint 2 — e.g., "MUST support backward compatibility"]
 
+## Out of scope
+
+- [What this task deliberately does not do]
+
 ## Acceptance Criteria
 
-- [ ] [Criterion 1 — specific, testable]
+- [ ] [Criterion 1 — specific, testable; `$ command` when a command proves it]
 - [ ] [Criterion 2 — specific, testable]
 - [ ] [Criterion 3 — specific, testable]
 ```

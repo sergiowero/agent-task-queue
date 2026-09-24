@@ -815,7 +815,7 @@ describe("autonomy, risk and findings", () => {
     const task = await createTaskViaApi({ title: "Findings" });
     const res = await api(`/api/tasks/${task.id}/details`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ findings: [], evidence: [] });
+    expect(await res.json()).toEqual({ findings: [], evidence: [], handoffs: [], subtasks: [] });
     expect((await api(`/api/tasks/${randomUUID()}/details`)).status).toBe(404);
   });
 });

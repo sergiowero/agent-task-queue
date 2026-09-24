@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "os";
 import { join } from "path";
 import {
   appendJson,
+  getDbHandle,
   getProjectById,
   getTaskById,
   patchTask,
@@ -482,10 +483,30 @@ describe("Migration Status", () => {
     expect(names).toContain("011_task_claim_and_blocker");
     expect(names).toContain("012_autonomy_and_policy");
     expect(names).toContain("013_task_findings");
-    for (const n of ["014_project_profile", "015_structured_criteria", "016_validation_and_evidence", "017_app_state"]) {
+    for (const n of [
+      "014_project_profile",
+      "015_structured_criteria",
+      "016_validation_and_evidence",
+      "017_app_state",
+      "018_task_handoffs",
+      "019_task_info",
+      "020_drop_legacy_tables",
+      "021_subtasks_plan_submission",
+      "022_runner_roles_builder",
+    ]) {
       expect(names).toContain(n);
     }
     expect(status.every((m) => m.applied)).toBe(true);
+  });
+
+  it("the legacy copies of conversation and history are gone", () => {
+    const tables = getDbHandle()
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((r: any) => r.name);
+    expect(tables).not.toContain("conversation_entries");
+    expect(tables).not.toContain("status_history");
+    expect(tables).toContain("task_handoffs");
   });
 });
 

@@ -49,6 +49,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [branch, setBranch] = useState("");
   const [mergeBranch, setMergeBranch] = useState("");
   const [requiresPlan, setRequiresPlan] = useState(false);
+  const [draft, setDraft] = useState(false);
   const [type, setType] = useState<TaskType>("feature");
   const [risk, setRisk] = useState<Risk | "">("");
   const [autonomy, setAutonomy] = useState<string>("");
@@ -73,15 +74,20 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         recommendedBranch: branch || undefined,
         mergeBranch: mergeBranch.trim() || undefined,
         requiresPlan,
+        draft: draft || undefined,
         type,
         risk: risk || undefined,
         autonomy: autonomy === "" ? undefined : (Number(autonomy) as AutonomyLevel),
         acceptanceCriteria: criteria ? criteria.split("\n").filter(Boolean) : undefined,
         projectId: selectedProjectId,
       }),
-    onSuccess: () => {
+    onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      toast.success("Task created");
+      if (task.dorIssues?.length) {
+        toast(`Task created, but it may not be ready: ${task.dorIssues[0]}`, { icon: "⚠️", duration: 6000 });
+      } else {
+        toast.success("Task created");
+      }
       modal.close();
     },
     onError: (e: Error) => {
@@ -173,7 +179,17 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Type">
-            <Select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
+            <Select
+              value={type}
+              onChange={(e) => {
+                const next = e.target.value as TaskType;
+                setType(next);
+                // Offer the type's skeleton while the description is still empty or untouched.
+                if (!description.trim() || Object.values(TASK_TYPES).some((t) => t.template === description)) {
+                  setDescription(TASK_TYPES[next].template);
+                }
+              }}
+            >
               {Object.entries(TASK_TYPES).map(([value, t]) => (
                 <option key={value} value={value}>
                   {t.label}
@@ -209,8 +225,16 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
             onChange={setRequiresPlan}
             icon={PlanIcon}
             label="Requires planning"
-            description="An agent writes a plan for your review before coding."
+            description="An agent writes a plan (reviewed by an AI critic and/or you) before coding."
           />
+          <div className="mt-3">
+            <Toggle
+              checked={draft}
+              onChange={setDraft}
+              label="Save as draft"
+              description="Rough idea: a refiner agent turns it into a ready task (criteria, risk, scope), or you promote it later."
+            />
+          </div>
         </div>
 
         <div>

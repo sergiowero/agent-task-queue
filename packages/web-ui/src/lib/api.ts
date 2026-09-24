@@ -1,4 +1,5 @@
 import type {
+  Role,
   AutonomyLevel,
   FindingStatus,
   Phase,
@@ -59,6 +60,20 @@ export interface Task {
     at: string;
   } | null;
   riskReasons: string[];
+  nonGoals: string[];
+  references: { label: string; target: string }[];
+  /** Definition-of-Ready problems found when the task was created or edited. */
+  dorIssues: string[];
+  parentId: string | null;
+  blockedBy: string[];
+  planSubmission: {
+    openQuestions: { text: string; blocking: boolean }[];
+    suggestedRisk: Risk | null;
+    proposedSubtasks: string[];
+    touchedPaths: string[];
+  } | null;
+  /** A subtask waiting for its parent's plan to be approved. */
+  held: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -123,10 +138,24 @@ export interface Evidence {
   createdAt: string;
 }
 
+export interface Handoff {
+  id: number;
+  phase: string;
+  round: number;
+  agentId: string;
+  summary: string;
+  decisions: string[];
+  risks: string[];
+  next: string[];
+  createdAt: string;
+}
+
 /** Response of `GET /tasks/:id/details`: records kept beside the task. */
 export interface TaskDetails {
   findings: Finding[];
   evidence: Evidence[];
+  handoffs: Handoff[];
+  subtasks: { id: string; title: string; status: string; held: boolean; blockedBy: string[] }[];
 }
 
 /** Response of `GET /meta`. */
@@ -141,7 +170,7 @@ export interface Meta {
 export type ProjectWrite = Omit<Partial<Project>, "profile"> & { profile?: Partial<ProjectProfile> };
 
 /** What the portal sends when it creates or edits a task: criteria as one-line strings. */
-export type TaskWrite = Omit<Partial<Task>, "acceptanceCriteria"> & { acceptanceCriteria?: string[] };
+export type TaskWrite = Omit<Partial<Task>, "acceptanceCriteria"> & { acceptanceCriteria?: string[]; draft?: boolean };
 
 /** Response of `POST /tasks/:id/archive`. */
 export interface ArchiveResult {
@@ -202,7 +231,7 @@ export interface ActivityEvent {
 }
 
 export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
-export type RunnerRole = "planner" | "implementer" | "reviewer" | "senior" | "architect";
+export type RunnerRole = Role;
 export type RunnerPermissionMode = "safe" | "full";
 export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
 
@@ -350,6 +379,7 @@ export const api = {
   archiveTask: (id: string, data: { force?: boolean } = {}) =>
     request<ArchiveResult>(`/tasks/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
   unblock: (id: string) => request<Task>(`/tasks/${id}/unblock`, { method: "POST" }),
+  promoteDraft: (id: string) => request<Task>(`/tasks/${id}/promote-draft`, { method: "POST" }),
   resolveBlocker: (id: string, data: { answer: string; targetStatus: string }) =>
     request<Task>(`/tasks/${id}/resolve-blocker`, { method: "POST", body: JSON.stringify(data) }),
   getMeta: () => request<Meta>("/meta"),

@@ -5,6 +5,9 @@ export {
   type Blocker,
   type Finding,
   type Evidence,
+  type Handoff,
+  type TaskReference,
+  type PlanSubmission,
   type ValidationPlan,
   type ApprovedPlan,
   type DiffStats,
@@ -35,6 +38,7 @@ export {
   getTasksUpdatedSince,
   getTaskById,
   getNextClaimableTask,
+  getSubtasks,
   getClaimableTasks,
   tryAssignTask,
   updateTask,
@@ -101,6 +105,10 @@ export {
   policyFor,
   touchLease,
   submitVerification,
+  submitPlanReview,
+  createSubtask,
+  submitRefinement,
+  promoteDraft,
   editTask,
   verifierOnline,
   hasVerificationCommands,
@@ -130,6 +138,9 @@ export {
   type SubmitMergeInput,
   type SubmitReviewInput,
   type SubmitPlanInput,
+  type SubmitPlanReviewInput,
+  type CreateSubtaskInput,
+  type SubmitRefinementInput,
   type SubmitVerificationInput,
   type TaskEdit,
   type ReviewFindingInput,
@@ -152,6 +163,8 @@ export {
   afterVerify,
   reviewGate,
   afterReview,
+  afterPlanReview,
+  planRoundsUsed,
   type Gate,
   type GatePolicy,
   type PolicySettings,
@@ -167,12 +180,19 @@ export {
   updateFinding,
   addEvidence,
   getEvidence,
+  addHandoff,
+  getHandoffs,
+  latestHandoffs,
+  type NewHandoff,
   type NewEvidence,
   type NewFinding,
   type FindingSource,
 } from "./records.js";
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
+
+export { buildTaskBrief, previousPhase, type TaskBrief } from "./brief.js";
+export { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 
 export {
   normalizeCriteria,
@@ -249,6 +269,7 @@ export {
   policySettingsSchema,
   criterionInputSchema,
   criteriaInputSchema,
+  referenceSchema,
   projectProfileSchema,
   type CreateRunnerInput,
   type UpdateRunnerInput,

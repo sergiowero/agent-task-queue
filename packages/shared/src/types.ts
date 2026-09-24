@@ -136,6 +136,37 @@ export interface Verification {
   at: string;
 }
 
+/** What the planner said beyond the plan text. */
+export interface PlanSubmission {
+  openQuestions: { text: string; blocking: boolean }[];
+  suggestedRisk: Risk | null;
+  /** Subtasks the planner proposes (created with create_subtask). */
+  proposedSubtasks: string[];
+  /** Paths the plan expects to touch (protected ones raise the risk). */
+  touchedPaths: string[];
+}
+
+/** Notes one phase leaves for the next (what was decided, what is risky, what to do next). */
+export interface Handoff {
+  id: number;
+  taskId: string;
+  /** Phase that wrote it; "human" for a person's answer or change request, "legacy" for old contexts. */
+  phase: Phase | "human" | "claim" | "legacy";
+  round: number;
+  agentId: string;
+  summary: string;
+  decisions: string[];
+  risks: string[];
+  next: string[];
+  createdAt: string;
+}
+
+export interface TaskReference {
+  label: string;
+  /** URL, file path or issue id. */
+  target: string;
+}
+
 /** Why an agent (or the runner) stopped and what it needs from a person. */
 export interface Blocker {
   reason: string;
@@ -203,6 +234,19 @@ export interface Task {
   verification: Verification | null;
   /** Why the risk was raised (touched protected paths, a large diff, the plan). */
   riskReasons: string[];
+  /** What the task deliberately does not do. */
+  nonGoals: string[];
+  /** Files, issues and links to look at first. */
+  references: TaskReference[];
+  /** Definition-of-Ready problems found when the task was created or edited. */
+  dorIssues: string[];
+  /** The task this one was split from. */
+  parentId: string | null;
+  /** Tasks that must be complete before this one can be claimed. */
+  blockedBy: string[];
+  planSubmission: PlanSubmission | null;
+  /** A subtask waiting for its parent's plan to be approved. */
+  held: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

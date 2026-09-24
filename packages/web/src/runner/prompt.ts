@@ -1,6 +1,6 @@
 import { MCP_SERVER_NAME } from "@agentq/mcp";
 import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
-import { STATUS_INFO, getFindings, readSkill, stripFrontmatter } from "@agentq/shared";
+import { STATUS_INFO, buildTaskBrief, readSkill, skillForPhase, stripFrontmatter } from "@agentq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -11,10 +11,17 @@ export function phaseForStatus(status: TaskStatus): Phase | null {
   return info && (info.kind === "queued" || info.kind === "active") ? info.phase : null;
 }
 
-const CONTEXT_ARG = "<handoff notes for the agent of the next phase>";
+const CONTEXT_ARG = "<handoff summary for the agent of the next phase>";
+const HANDOFF_ARGS = {
+  decisions: ["<decision and why>"],
+  risks: ["<what could go wrong>"],
+  next: ["<what the next phase should check first>"],
+};
 
 /** What the `context` handoff notes should tell the agent of the next phase. */
 const CONTEXT_HINT: Record<Phase, string> = {
+  refine: "what you assumed, what you left for the planner, and anything a person should confirm",
+  plan_review: "the verdict, the finding ids the planner must address first, and what you checked",
   plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
   code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
   verify: "which commands failed and why, and whether the failure is in the code or the environment",
@@ -24,6 +31,32 @@ const CONTEXT_HINT: Record<Phase, string> = {
 
 /** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
 export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, unknown> }> = {
+  refine: (taskId) => ({
+    tool: "submit_refinement",
+    args: {
+      taskId,
+      message: "<markdown: what you changed and why>",
+      acceptanceCriteria: ["<testable criterion $ command that proves it>"],
+      type: "<feature | bug | refactor | docs | chore>",
+      risk: "<low | medium | high>",
+      nonGoals: ["<out of scope>"],
+      requiresPlan: "<true | false>",
+      openQuestions: [{ text: "<question for a person>", blocking: false }],
+      context: CONTEXT_ARG,
+    },
+  }),
+  plan_review: (taskId) => ({
+    tool: "submit_plan_review",
+    args: {
+      taskId,
+      verdict: "<approve | request_changes | needs_human>",
+      findings: [{ severity: "<blocker | major | minor | nit>", text: "<what is wrong with the plan and what to do>" }],
+      verifiedFindings: [{ id: "<P1-1>", status: "<verified | open>" }],
+      message: "<markdown critique summary>",
+      context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
+    },
+  }),
   plan: (taskId) => ({
     tool: "submit_plan",
     args: {
@@ -33,7 +66,11 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
         items: [{ criterionId: "<AC1>", how: "<how it is verified>", command: "<command, if any>", newTests: ["<test file>"] }],
         regressionCommands: ["<commands that must keep passing>"],
       },
+      openQuestions: [{ text: "<question for a person>", blocking: false }],
+      suggestedRisk: "<low | medium | high>",
+      touchedPaths: ["<paths the plan changes>"],
       context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
   code: (taskId) => ({
@@ -48,6 +85,7 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       criteria: [{ id: "<AC1>", status: "<met | failed | pending>" }],
       findingResolutions: [{ id: "<R1-1>", status: "<fixed | wontfix>", resolution: "<how, or why not>" }],
       context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
   verify: (taskId) => ({
@@ -68,6 +106,7 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       verifiedFindings: [{ id: "<R1-1>", status: "<verified | open>" }],
       message: "<markdown review summary>",
       context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
   merge: (taskId) => ({
@@ -80,12 +119,14 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       worktree: "<task.worktreePath>",
       message: "<markdown with the PR URL>",
       context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
 };
 
 export function readPhaseSkill(phase: Phase): string {
-  return readSkill(`agentq-${phase}`)?.body ?? `(skill file not found: skills/agentq-${phase}/SKILL.md)`;
+  const name = skillForPhase(phase);
+  return readSkill(name)?.body ?? `(skill file not found: skills/${name}/SKILL.md)`;
 }
 
 export interface BuildPromptInput {
@@ -114,30 +155,8 @@ export function buildPrompt(input: BuildPromptInput): string {
     ...claim,
   };
 
-  const taskJson = {
-    id: task.id,
-    title: task.title,
-    description: task.description,
-    steerDetails: task.steerDetails,
-    guardrails: task.guardrails,
-    acceptanceCriteria: task.acceptanceCriteria,
-    priority: task.priority,
-    status: task.status,
-    requiresPlan: task.requiresPlan,
-    recommendedBranch: task.recommendedBranch,
-    realBranch: task.realBranch,
-    mergeBranch: task.mergeBranch,
-    worktreePath: task.worktreePath,
-    risk: task.risk,
-    approvedPlan: task.approvedPlan,
-    verification: task.verification,
-    findings: getFindings(task.id).filter((f) => f.status !== "verified"),
-    contexts: task.contexts,
-    conversation: task.conversation,
-    project: project
-      ? { id: project.id, displayName: project.displayName, workingDirectory: project.workingDirectory }
-      : null,
-  };
+  // The brief, not the whole conversation: its size stays flat as review rounds pile up.
+  const brief = buildTaskBrief(task);
 
   return [
     `# AgentQ ${effectiveRole} agent`,
@@ -151,18 +170,21 @@ export function buildPrompt(input: BuildPromptInput): string {
     "",
     `This run has the \`${MCP_SERVER_NAME}\` MCP server (Claude Code names its tools \`mcp__${MCP_SERVER_NAME}__<tool>\`). Do all queue work through its tools:`,
     "",
-    "- `get_task` — re-read this task (conversation, contexts, worktree path)",
+    "- `get_task_brief` — re-read the brief below (it changes when people comment)",
+    "- `get_task` — the full task: whole conversation, history and every piece of evidence",
     "- `post_comment` — add a note to the task conversation without changing its status",
     `- \`${submit.tool}\` — submit this phase (see Finish)`,
     "- `report_blocker` — stop because something outside your control blocks the phase (see Finish)",
     "",
-    "## Task",
+    "## Task brief",
+    "",
+    "Start from the latest handoffs, the open findings and `humanNotes` (what people said since the last submission). The brief leaves out the full conversation; call `get_task` if you need it.",
     "",
     "```json",
-    JSON.stringify(taskJson, null, 2),
+    JSON.stringify(brief, null, 2),
     "```",
     "",
-    `## Phase skill: agentq-${phase}`,
+    `## Phase skill: ${skillForPhase(phase)}`,
     "",
     skill.trim(),
     "",
@@ -180,7 +202,7 @@ export function buildPrompt(input: BuildPromptInput): string {
     JSON.stringify(blockerArgs, null, 2),
     "```",
     "",
-    `\`context\` is required: short handoff notes, stored in \`task.contexts\`, for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Do not repeat \`message\`.`,
+    `\`context\` is required: a short handoff summary for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Add \`decisions\`, \`risks\` and \`next\` (lists) when you have them. Do not repeat \`message\`.`,
     "",
     "Rules:",
     "- You are running headless. Never ask for permission or confirmation; decide and proceed.",

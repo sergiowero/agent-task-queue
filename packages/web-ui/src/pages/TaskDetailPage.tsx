@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import { api } from "../lib/api";
 import type { Task, TaskWrite } from "../lib/api";
@@ -67,6 +67,8 @@ import {
   type TaskType,
 } from "@agentq/shared/catalog";
 import { FindingsList } from "../components/FindingsList";
+import { HandoffTimeline } from "../components/HandoffTimeline";
+import { Alert } from "../components/Alert";
 import { ApprovedPlanCard, CriteriaList, VerificationCard } from "../components/EvidencePanel";
 import { formatCriterionLine } from "@agentq/shared/criteria";
 import { Select } from "../components/Select";
@@ -88,6 +90,7 @@ type TaskAction =
   | "confirmCompletion"
   | "unblock"
   | "resolveBlocker"
+  | "promoteDraft"
   | "cancel";
 
 const ACTION_DONE: Record<TaskAction, string> = {
@@ -99,6 +102,7 @@ const ACTION_DONE: Record<TaskAction, string> = {
   confirmCompletion: "Task completed",
   unblock: "Task unblocked",
   resolveBlocker: "Answer sent",
+  promoteDraft: "Draft promoted",
   cancel: "Task canceled",
 };
 
@@ -109,7 +113,7 @@ const VERDICT_TONE = { approve: "success", request_changes: "warning", needs_hum
 export function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<"conversation" | "history">("conversation");
+  const [tab, setTab] = useState<"conversation" | "handoffs" | "history">("conversation");
   const [feedback, setFeedback] = useState("");
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -141,6 +145,8 @@ export function TaskDetailPage() {
   });
   const findings = details?.findings ?? [];
   const evidence = details?.evidence ?? [];
+  const handoffs = details?.handoffs ?? [];
+  const subtasks = details?.subtasks ?? [];
 
   const mutation = useMutation({
     mutationFn: ({ action, data }: { action: TaskAction; data?: object }) => {
@@ -385,6 +391,11 @@ export function TaskDetailPage() {
                       Confirm complete
                     </Button>
                   )}
+                  {task.status === "draft" && (
+                    <Button icon={ApproveIcon} {...busy("promoteDraft")} onClick={() => doAction("promoteDraft")}>
+                      Promote to ready
+                    </Button>
+                  )}
                   {UNBLOCK_TARGET[task.status as TaskStatus] && (
                     <Button
                       variant="ghost"
@@ -425,6 +436,16 @@ export function TaskDetailPage() {
               </section>
             )}
 
+            {task.dorIssues?.length > 0 && hasActions(task.status) && (
+              <Alert tone="warning" title="This task may not be ready for an agent">
+                <ul className="list-disc pl-4">
+                  {task.dorIssues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+
             <EditableField
               icon={DescriptionIcon}
               label="Description"
@@ -462,6 +483,71 @@ export function TaskDetailPage() {
                 await updateMutation.mutateAsync({ steerDetails: v.trim() ? v : null })
               }
             />
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <EditableField
+                icon={CancelTaskIcon}
+                label="Out of scope"
+                value={task.nonGoals?.join("\n") ?? ""}
+                placeholder="What this task deliberately does not do, one per line"
+                editable={canEdit}
+                display={
+                  task.nonGoals?.length > 0 ? (
+                    <ul className="list-disc space-y-1 pl-4 text-sm text-text-secondary">
+                      {task.nonGoals.map((g) => (
+                        <li key={g}>{g}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyValue>Nothing listed</EmptyValue>
+                  )
+                }
+                onSubmit={async (v) =>
+                  await updateMutation.mutateAsync({
+                    nonGoals: v
+                      .split("\n")
+                      .map((x) => x.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <EditableField
+                icon={BranchIcon}
+                label="References"
+                value={task.references?.map((r) => `${r.label} | ${r.target}`).join("\n") ?? ""}
+                placeholder="label | URL or path, one per line"
+                editable={canEdit}
+                display={
+                  task.references?.length > 0 ? (
+                    <ul className="space-y-1 text-sm">
+                      {task.references.map((r) => (
+                        <li key={r.target} className="truncate">
+                          <span className="text-text-secondary">{r.label}: </span>
+                          {/^https?:\/\//.test(r.target) ? (
+                            <a className="text-primary underline" href={r.target} target="_blank" rel="noreferrer">
+                              {r.target}
+                            </a>
+                          ) : (
+                            <code className="font-mono text-xs">{r.target}</code>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyValue>No references</EmptyValue>
+                  )
+                }
+                onSubmit={async (v) =>
+                  await updateMutation.mutateAsync({
+                    references: v
+                      .split("\n")
+                      .map((line) => line.split("|").map((x) => x.trim()))
+                      .filter(([label, target]) => label)
+                      .map(([label, target]) => ({ label, target: target || label })),
+                  })
+                }
+              />
+            </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <EditableField
@@ -702,6 +788,55 @@ export function TaskDetailPage() {
           </aside>
 
           <section className="min-w-0 xl:col-start-1 xl:row-start-2">
+            {task.planSubmission && task.planSubmission.openQuestions.length > 0 && (
+              <Alert tone="info" title="The planner's open questions" className="mb-4">
+                <ul className="list-disc pl-4">
+                  {task.planSubmission.openQuestions.map((q) => (
+                    <li key={q.text}>
+                      {q.text}
+                      {q.blocking && <Badge tone="danger" className="ml-1.5">blocking</Badge>}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            {(subtasks.length > 0 || task.parentId || task.blockedBy.length > 0) && (
+              <div className="card mb-4 p-4">
+                <h2 className="eyebrow mb-2">Related tasks</h2>
+                {task.parentId && (
+                  <p className="text-sm">
+                    Subtask of{" "}
+                    <Link className="text-primary underline" to={`/tasks/${task.parentId}/details`}>
+                      the parent task
+                    </Link>
+                    {task.held && " — waiting for its plan to be approved"}
+                  </p>
+                )}
+                {task.blockedBy.length > 0 && (
+                  <p className="mt-1 text-sm text-text-secondary">
+                    Starts after:{" "}
+                    {task.blockedBy.map((id) => (
+                      <Link key={id} className="mr-2 font-mono text-xs text-primary underline" to={`/tasks/${id}/details`}>
+                        {id.slice(0, 8)}
+                      </Link>
+                    ))}
+                  </p>
+                )}
+                {subtasks.length > 0 && (
+                  <ul className="mt-2 space-y-1.5">
+                    {subtasks.map((c) => (
+                      <li key={c.id} className="flex items-center gap-2 text-sm">
+                        <StatusBadge status={c.status} />
+                        <Link className="truncate hover:underline" to={`/tasks/${c.id}/details`}>
+                          {c.title}
+                        </Link>
+                        {c.held && <Badge tone="neutral">held</Badge>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             {task.verification && <VerificationCard task={task} evidence={evidence} />}
             {task.approvedPlan && <ApprovedPlanCard plan={task.approvedPlan} criteria={task.acceptanceCriteria} />}
             {findings.length > 0 && (
@@ -722,17 +857,20 @@ export function TaskDetailPage() {
                   icon: ConversationIcon,
                   count: conversation.length,
                 },
+                { value: "handoffs", label: "Handoffs", icon: SteerIcon, count: handoffs.length },
                 { value: "history", label: "History", icon: HistoryIcon, count: history.length },
               ]}
             />
             <div
               key={tab}
               role="tabpanel"
-              aria-label={tab === "conversation" ? "Conversation" : "History"}
+              aria-label={tab === "conversation" ? "Conversation" : tab === "handoffs" ? "Handoffs" : "History"}
               className="pt-5 animate-fade-in"
             >
               {tab === "conversation" ? (
                 <ConversationTimeline entries={conversation} />
+              ) : tab === "handoffs" ? (
+                <HandoffTimeline handoffs={handoffs} />
               ) : (
                 <HistoryTimeline entries={history} />
               )}

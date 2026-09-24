@@ -7,18 +7,29 @@ import {
   getAppState,
   getClaimableTasks,
   getDbHandle,
+  getSubtasks,
   getProjectById,
   getTaskById,
   patchTask,
+  touchTask,
   tryAssignTask,
   updateProject,
   withTransaction,
   type TaskPatch,
 } from "./database.js";
-import { afterCode, afterPlan, afterReview, afterVerify, resolvePolicy, type GatePolicy } from "./policy.js";
+import {
+  afterCode,
+  afterPlan,
+  afterPlanReview,
+  afterReview,
+  afterVerify,
+  resolvePolicy,
+  type GatePolicy,
+} from "./policy.js";
 import {
   addEvidence,
   addFindings,
+  addHandoff,
   getFinding,
   getOpenFindings,
   updateFinding,
@@ -27,6 +38,7 @@ import {
 } from "./records.js";
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
+import { checkDefinitionOfReady } from "./dor.js";
 import {
   ALL_STATUSES,
   BLOCKING_SEVERITIES,
@@ -35,6 +47,7 @@ import {
   COMPOUND_ROLES,
   REVERT_FALLBACK,
   STATUS_INFO,
+  TASK_TYPES,
   UNBLOCK_TARGET,
   baseRolesOf,
   canTransition,
@@ -51,6 +64,7 @@ import type {
   AgentReference,
   Agent,
   ApprovedPlan,
+  PlanSubmission,
   Blocker,
   ConversationEntry,
   DiffStats,
@@ -202,7 +216,35 @@ export function transitionTask(task: Task, to: TaskStatus, opts: TransitionOptio
   const context = opts.context?.trim();
   if (context) appendJson(task.id, "contexts", context);
   if (opts.event) addActivityEvent({ eventType: opts.event, taskId: task.id, actor: author, details: opts.details });
+  if (task.parentId && (to === TaskStatus.Complete || to === TaskStatus.Canceled)) completeParentIfDone(task.parentId);
   return getTaskById(task.id)!;
+}
+
+/** A split task completes once every subtask is finished (and at least one completed). */
+function completeParentIfDone(parentId: string): void {
+  const parent = getTaskById(parentId);
+  if (!parent || parent.status !== TaskStatus.Split) return;
+  const children = getSubtasks(parentId);
+  const finished = children.every((c) => c.status === TaskStatus.Complete || c.status === TaskStatus.Canceled);
+  if (!finished || !children.some((c) => c.status === TaskStatus.Complete)) return;
+  transitionTask(parent, TaskStatus.Complete, {
+    actor: "system",
+    author: "system",
+    message: `All ${children.length} subtasks are finished.`,
+    messageType: "system",
+    event: "task_completed",
+  });
+}
+
+/**
+ * The plan was approved (by a person or the critic): subtasks it created are
+ * released and the parent waits for them; otherwise the task goes to coding.
+ */
+function planApprovedTarget(task: Task): TaskStatus {
+  const held = getSubtasks(task.id).filter((c) => c.held);
+  if (!held.length) return TaskStatus.ReadyForCode;
+  for (const child of held) patchTask(child.id, { held: false });
+  return TaskStatus.Split;
 }
 
 function requireTask(taskId: string): Task {
@@ -295,6 +337,18 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
 
       const agent = createAgent({ ...input.agent, role: effectiveRole });
       const now = new Date().toISOString();
+      if (newStatus === TaskStatus.Planning) {
+        // A new plan cycle: subtasks proposed by the previous plan are dropped.
+        for (const child of getSubtasks(candidate.id).filter((c) => c.held)) {
+          transitionTask(child, TaskStatus.Canceled, {
+            actor: "system",
+            author: "system",
+            message: "The parent task is being re-planned; this proposed subtask was dropped.",
+            messageType: "system",
+            event: "task_canceled",
+          });
+        }
+      }
       appendJson(candidate.id, "history", {
         pre_status: candidate.status,
         new_status: newStatus,
@@ -309,7 +363,10 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
         messageType: "agent",
       });
       const context = input.context?.trim();
-      if (context) appendJson(candidate.id, "contexts", context);
+      if (context) {
+        appendJson(candidate.id, "contexts", context);
+        addHandoff(candidate.id, { phase: "claim", round: candidate.codeRound, agentId: agent.id, summary: context });
+      }
       // A runner watches its process; a hand-opened session keeps its claim by staying active.
       if (!input.runnerId) {
         patchTask(candidate.id, { leaseExpiresAt: minutesFromNow(policyFor(candidate).leaseMin) });
@@ -475,6 +532,14 @@ export function reportBlocker(taskId: string, input: ReportBlockerInput): Submit
       context: input.context,
       patch: { blocker, revertStreak: 0 },
     });
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: blocker.phase ?? "code",
+        round: task.codeRound,
+        agentId: raisedBy,
+        summary: input.context,
+      });
+    }
     return {
       task: updated,
       previousStatus: task.status,
@@ -505,6 +570,14 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     }
     const actor = input.actor ?? "user";
     const answer = input.answer.trim();
+    if (answer) {
+      addHandoff(taskId, {
+        phase: "human",
+        round: task.codeRound,
+        agentId: actor,
+        summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
+      });
+    }
     return transitionTask(task, input.targetStatus, {
       actor,
       message: answer
@@ -573,18 +646,25 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
       throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingPlanReview)} status`);
     }
     const actor = input.actor ?? "user";
-    return transitionTask(task, TaskStatus.ReadyForCode, {
+    const approved = freezePlan(task, actor);
+    return transitionTask(task, planApprovedTarget(task), {
       actor,
       message: input.message?.trim() || "Plan approved.",
       messageType: "user",
       event: "plan_approved",
-      patch: { revertStreak: 0, approvedPlan: freezePlan(task, actor) },
+      patch: { revertStreak: 0, approvedPlan: approved },
     });
   });
 }
 
+function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
+  const task = getTaskById(taskId);
+  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
+}
+
 export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
+  humanHandoff(taskId, message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
@@ -594,6 +674,7 @@ export function approveCode(taskId: string, input: HumanActionInput = {}): Task 
 
 export function requestCodeChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
+  humanHandoff(taskId, message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.ChangesRequested, "code_changes_requested", message || "Code changes requested.", input, message);
 }
 
@@ -650,6 +731,11 @@ export function editTask(taskId: string, edit: TaskEdit): Task {
   const { acceptanceCriteria, ...rest } = edit;
   const patch: TaskPatch = { ...rest };
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
+  const project = task.projectId ? getProjectById(task.projectId) : null;
+  if (resolveProfile(project?.profile).dorMode !== "off") {
+    const next = { ...task, ...patch };
+    patch.dorIssues = checkDefinitionOfReady({ ...next, acceptanceCriteria: next.acceptanceCriteria });
+  }
   return patchTask(taskId, patch)!;
 }
 
@@ -679,8 +765,17 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
     mergeBranch = detectDefaultBranch(project.workingDirectory);
     updateProject(project.id, { defaultMergeBranch: mergeBranch });
   }
-  const task = createTask({ ...input, mergeBranch });
+  const mode = resolveProfile(project.profile).dorMode;
+  const issues = mode === "off" ? [] : checkDefinitionOfReady(input);
+  if (mode === "enforce" && issues.length && !input.draft) {
+    throw new WorkflowError(`The task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
+  }
+  const task = createTask({ ...input, mergeBranch, dorIssues: issues });
   addActivity(task.id, "task_created", actor);
+  if (issues.length) addActivity(task.id, "dor_warning", actor, issues.join("\n"));
+  for (const note of input.contexts ?? []) {
+    if (note.trim()) addHandoff(task.id, { phase: "human", round: 0, agentId: actor, summary: note });
+  }
   return task;
 }
 
@@ -689,7 +784,14 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
 export interface SubmitInput extends ClaimAuth {
   message?: string;
   author?: string;
+  /** Handoff summary for the next phase (also appended to task.contexts). */
   context?: string;
+  /** Decisions taken, and why. */
+  decisions?: string[];
+  /** What could go wrong or is still uncertain. */
+  risks?: string[];
+  /** What the next phase should do or check first. */
+  next?: string[];
 }
 
 export interface SubmitMergeInput extends SubmitInput {
@@ -760,6 +862,17 @@ function submit(
         producers: { ...task.producers, [spec.phase]: producerOf(task) },
       },
     });
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: spec.phase,
+        round: spec.phase === "plan" ? updated.planRound : updated.codeRound,
+        agentId: task.assignedAgent?.agentId ?? author,
+        summary: input.context,
+        decisions: input.decisions,
+        risks: input.risks,
+        next: input.next,
+      });
+    }
     let final = updated;
     if (out.note) {
       final = addConversation(updated, "system", out.note.message, "system");
@@ -777,6 +890,14 @@ function submit(
 export interface SubmitPlanInput extends SubmitInput {
   /** How each acceptance criterion will be verified, and the commands that must keep passing. */
   validationPlan?: ValidationPlan;
+  /** Questions for a person; a blocking one sends the task to needs_human first. */
+  openQuestions?: { text: string; blocking?: boolean }[];
+  /** The planner's risk estimate (can only raise the task's risk). */
+  suggestedRisk?: Risk;
+  /** Subtask titles the plan proposes (created with create_subtask). */
+  proposedSubtasks?: string[];
+  /** Paths the plan expects to touch; protected ones raise the risk to high. */
+  touchedPaths?: string[];
 }
 
 function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
@@ -798,12 +919,267 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
     taskId,
     { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
-    (task, policy) => ({
-      to: afterPlan(task, policy),
-      message: input.message,
-      patch: input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {},
-    }),
+    (task, policy) => {
+      const project = task.projectId ? getProjectById(task.projectId) : null;
+      const protectedPaths = resolveProfile(project?.profile).protectedPaths;
+      const questions = (input.openQuestions ?? []).map((q) => ({ text: q.text.trim(), blocking: !!q.blocking })).filter((q) => q.text);
+      const touched = (input.touchedPaths ?? []).map((p) => p.trim()).filter(Boolean);
+      const submission: PlanSubmission = {
+        openQuestions: questions,
+        suggestedRisk: input.suggestedRisk ?? null,
+        proposedSubtasks: (input.proposedSubtasks ?? []).map((x) => x.trim()).filter(Boolean),
+        touchedPaths: touched,
+      };
+      // Risk only goes up: the planner's estimate, or protected paths the plan touches.
+      const reasons: string[] = [];
+      let risk = task.risk;
+      if (input.suggestedRisk && maxRisk(risk, input.suggestedRisk) !== risk) {
+        risk = maxRisk(risk, input.suggestedRisk);
+        reasons.push(`The planner rated the plan ${input.suggestedRisk} risk`);
+      }
+      const hits = touched.filter((p) => matchesAny(p, protectedPaths));
+      if (hits.length) {
+        risk = "high";
+        reasons.push(`The plan touches protected paths: ${hits.join(", ")}`);
+      }
+      const blocking = questions.filter((q) => q.blocking);
+      const blocker: Blocker | null = blocking.length
+        ? {
+            reason: "The plan has questions only a person can answer.",
+            question: blocking.map((q) => q.text).join("\n"),
+            phase: "plan",
+            fromStatus: task.status,
+            raisedBy: task.assignedAgent?.agentId ?? input.author ?? "agent",
+            at: new Date().toISOString(),
+          }
+        : null;
+      return {
+        to: afterPlan({ ...task, risk }, policy, { blockingQuestions: blocking.length > 0 }),
+        message: input.message,
+        patch: {
+          ...(input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {}),
+          planSubmission: submission,
+          risk,
+          riskReasons: [...task.riskReasons, ...reasons.filter((r) => !task.riskReasons.includes(r))],
+          ...(blocker ? { blocker } : {}),
+        },
+      };
+    },
   );
+}
+
+export interface SubmitPlanReviewInput extends SubmitInput {
+  verdict: Verdict;
+  findings?: ReviewFindingInput[];
+  verifiedFindings?: { id: string; status: "verified" | "open" }[];
+  /** The critic may raise the risk (never lower it). */
+  suggestedRisk?: Risk;
+  question?: string;
+}
+
+/** An AI critic reviews the plan: approve (low risk goes straight to coding), request changes, or ask a person. */
+export function submitPlanReview(taskId: string, input: SubmitPlanReviewInput): SubmitResult {
+  return submit(
+    taskId,
+    {
+      from: TaskStatus.PlanReviewing,
+      phase: "plan_review",
+      messageType: "review",
+      event: "plan_review_submitted",
+      done: `Plan critique submitted (${input.verdict})`,
+    },
+    input,
+    (task, policy) => {
+      const critic = task.assignedAgent?.agentId ?? input.author ?? "agent";
+      const round = task.planRound + 1;
+      for (const check of input.verifiedFindings ?? []) {
+        const finding = getFinding(taskId, check.id);
+        if (!finding) throw new WorkflowError(`Unknown finding ${check.id}.`);
+        if (check.status === "verified") updateFinding(taskId, check.id, { status: "verified" });
+        else if (finding.status !== "open") updateFinding(taskId, check.id, { status: "open", reopened: true });
+      }
+      addFindings(taskId, "P", round, input.findings ?? [], critic);
+      const open = getOpenFindings(taskId, "plan");
+      const blocking = open.filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
+      if (input.verdict === "approve" && blocking.length) {
+        throw new WorkflowError(
+          `Cannot approve a plan with open blocker or major findings: ${blocking.map((f) => f.id).join(", ")}.`,
+        );
+      }
+      if (input.verdict === "request_changes" && open.length === 0) {
+        throw new WorkflowError("request_changes needs at least one open finding (pass findings[]).");
+      }
+      if (input.verdict === "needs_human" && !input.question?.trim()) {
+        throw new WorkflowError("needs_human needs a question for the person who decides.");
+      }
+      const risk = input.suggestedRisk ? maxRisk(task.risk, input.suggestedRisk) : task.risk;
+      const routing = afterPlanReview({ ...task, risk, planRound: round }, policy, input.verdict);
+      const openIds = open.map((f) => `${f.id} (${f.severity})`).join(", ") || "none";
+      let blocker: Blocker | null = null;
+      let note: SubmitPlanOut["note"];
+      if (routing.reason === "needs_human" || routing.reason === "round_limit") {
+        blocker = {
+          reason:
+            routing.reason === "round_limit"
+              ? `The critic asked for plan changes ${round - (task.roundBaseline.plan ?? 0)} times (limit ${policy.maxPlanRounds}). Open findings: ${openIds}.`
+              : `The critic could not decide. Open findings: ${openIds}.`,
+          question: input.question?.trim() || "Read the plan and the critique, then approve the plan or send it back.",
+          phase: "plan_review",
+          fromStatus: task.status,
+          raisedBy: routing.reason === "round_limit" ? "system" : critic,
+          at: new Date().toISOString(),
+        };
+      } else if (routing.reason === "risk") {
+        note = { message: `The critic approved the plan; the task is ${risk} risk, so a person approves it too.` };
+      }
+      let to = routing.status;
+      let approvedPlan: ApprovedPlan | undefined;
+      if (to === TaskStatus.ReadyForCode) {
+        approvedPlan = freezePlan(task, critic);
+        to = planApprovedTarget(task);
+      }
+      return {
+        to,
+        message: input.message,
+        details: input.verdict,
+        note,
+        patch: {
+          planRound: round,
+          risk,
+          ...(approvedPlan ? { approvedPlan } : {}),
+          ...(blocker ? { blocker } : {}),
+        },
+      };
+    },
+  );
+}
+
+export interface CreateSubtaskInput extends ClaimAuth {
+  title: string;
+  description: string;
+  acceptanceCriteria?: CriterionInput[];
+  type?: Task["type"];
+  risk?: Risk;
+  requiresPlan?: boolean;
+  /** Tasks (usually earlier subtasks) that must be complete first. */
+  blockedBy?: string[];
+  author?: string;
+}
+
+/**
+ * The planner splits a task: the subtask is held until the parent's plan is
+ * approved, then released; the parent waits in `split` until they all finish.
+ */
+export function createSubtask(parentId: string, input: CreateSubtaskInput): Task {
+  return withTransaction(() => {
+    const parent = requireClaim(parentId, TaskStatus.Planning, input);
+    const siblings = new Set(getSubtasks(parentId).map((c) => c.id));
+    for (const dep of input.blockedBy ?? []) {
+      const other = getTaskById(dep);
+      if (!other || (other.projectId !== parent.projectId && !siblings.has(dep))) {
+        throw new WorkflowError(`blockedBy: unknown task ${dep} (use ids of this project's tasks, e.g. earlier subtasks).`);
+      }
+    }
+    const author = input.author ?? parent.assignedAgent?.agentId ?? "planner";
+    const child = createTask({
+      title: input.title,
+      description: input.description,
+      acceptanceCriteria: input.acceptanceCriteria,
+      guardrails: parent.guardrails,
+      type: input.type ?? parent.type,
+      risk: input.risk ? maxRisk(input.risk, parent.risk === "high" ? "medium" : "low") : undefined,
+      requiresPlan: input.requiresPlan ?? false,
+      mergeBranch: parent.mergeBranch,
+      projectId: parent.projectId!,
+      autonomy: parent.autonomy,
+      parentId,
+      blockedBy: input.blockedBy ?? [],
+      held: true,
+    });
+    addActivity(child.id, "task_created", author, `Subtask of ${parentId}`);
+    addActivity(parentId, "subtask_created", author, `${child.title} (${child.id})`);
+    touchTask(parentId);
+    return getTaskById(child.id)!;
+  });
+}
+
+export interface SubmitRefinementInput extends SubmitInput {
+  description?: string;
+  acceptanceCriteria?: CriterionInput[];
+  type?: Task["type"];
+  risk?: Risk;
+  nonGoals?: string[];
+  requiresPlan?: boolean;
+  openQuestions?: { text: string; blocking?: boolean }[];
+}
+
+/** A refiner turns a draft into a ready task (criteria, risk, scope), or asks a person. */
+export function submitRefinement(taskId: string, input: SubmitRefinementInput): SubmitResult {
+  return submit(
+    taskId,
+    { from: TaskStatus.Refining, phase: "refine", messageType: "plan", event: "draft_refined", done: "Draft refined" },
+    input,
+    (task) => {
+      const criteria = input.acceptanceCriteria ? normalizeCriteria(input.acceptanceCriteria, task.acceptanceCriteria) : task.acceptanceCriteria;
+      const next = {
+        ...task,
+        description: input.description?.trim() || task.description,
+        acceptanceCriteria: criteria,
+        type: input.type ?? task.type,
+        // A draft's risk is only its type's default: the refiner sets it, never below
+        // the type's default, and never lowers a risk a person marked high.
+        risk: refinedRisk(task, input.type ?? task.type, input.risk),
+        requiresPlan: input.requiresPlan ?? task.requiresPlan,
+      };
+      const issues = checkDefinitionOfReady(next);
+      const blocking = (input.openQuestions ?? []).filter((q) => q.blocking && q.text.trim());
+      const blocker: Blocker | null = blocking.length
+        ? {
+            reason: "The draft has questions only a person can answer.",
+            question: blocking.map((q) => q.text.trim()).join("\n"),
+            phase: "refine",
+            fromStatus: task.status,
+            raisedBy: task.assignedAgent?.agentId ?? "refiner",
+            at: new Date().toISOString(),
+          }
+        : null;
+      return {
+        to: blocker ? TaskStatus.NeedsHuman : next.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode,
+        message: input.message,
+        patch: {
+          description: next.description,
+          acceptanceCriteria: criteria,
+          type: next.type,
+          risk: next.risk,
+          nonGoals: input.nonGoals ?? task.nonGoals,
+          dorIssues: issues,
+          ...(blocker ? { blocker } : {}),
+        },
+      };
+    },
+  );
+}
+
+function refinedRisk(task: Task, type: Task["type"], wanted: Risk | undefined): Risk {
+  const floor = TASK_TYPES[type].defaultRisk;
+  if (task.risk === "high") return "high";
+  return maxRisk(wanted ?? floor, floor);
+}
+
+/** A person promotes a draft as it is (its readiness issues are kept as warnings). */
+export function promoteDraft(taskId: string, input: HumanActionInput = {}): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.Draft) throw new WorkflowError("Only a draft can be promoted.");
+    const to = task.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode;
+    return transitionTask(task, to, {
+      actor: input.actor ?? "user",
+      message: input.message?.trim() || `Draft promoted to ${statusLabel(to)}.`,
+      messageType: "user",
+      event: "draft_promoted",
+      patch: { dorIssues: checkDefinitionOfReady(task) },
+    });
+  });
 }
 
 export interface SubmitCodeInput extends SubmitInput {
