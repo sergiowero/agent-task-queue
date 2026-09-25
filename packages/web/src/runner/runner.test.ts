@@ -739,6 +739,23 @@ describe("buildCommand", () => {
     ]);
   });
 
+  it("omits the model flag when the model is blank, so the tool uses its default", () => {
+    const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `agentq-no-gemini-${randomUUID()}.json`);
+    try {
+      for (const model of [null, "", "   "]) {
+        expect(buildCommand("claude", { ...ctx, model }).cmd).not.toContain("--model");
+        for (const tool of ["codex", "opencode", "gemini"] as const) {
+          expect(buildCommand(tool, { ...ctx, model }).cmd).not.toContain("-m");
+        }
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+      else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = previous;
+    }
+    expect(buildCommand("codex", { ...ctx, model: "  gpt-5.5 " }).cmd).toContain("gpt-5.5");
+  });
+
   it("strips YAML frontmatter from skills", () => {
     expect(stripFrontmatter("---\nname: x\n---\n\n# Body\n")).toBe("# Body\n");
     expect(stripFrontmatter("# Body\n")).toBe("# Body\n");

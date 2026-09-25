@@ -58,7 +58,6 @@ import {
   paginationSchema,
   createRunnerSchema,
   updateRunnerSchema,
-  runnerToolSchema,
   createRunner,
   getRunners,
   getRunnerById,
@@ -70,7 +69,6 @@ import {
 import { getRunnerEngine, listTools } from "./runner/runner.js";
 import { VerifyWorker } from "./runner/verify.js";
 import { PrSync } from "./pr-sync.js";
-import { discoverModels } from "./runner/models.js";
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
 import { readFile } from "fs/promises";
@@ -369,7 +367,6 @@ export function startServer(opts: StartServerOptions = {}) {
         handleProjectById,
         handleActivity,
         handleRunnerTools,
-        handleRunnerToolModels,
         handleRunners,
         handleRunnerById,
         handleMeta,
@@ -605,23 +602,6 @@ const handleRunnerTools = wrapHandler(async (req, url) => {
   return jsonResponse(await listTools());
 });
 
-// GET /api/runners/tools/:tool/models[?refresh=1] — models + effort levels a tool accepts.
-const handleRunnerToolModels = wrapHandler(async (req, url) => {
-  const match = url.pathname.match(/^\/api\/runners\/tools\/([a-z0-9-]+)\/models\/?$/);
-  if (!match || req.method !== "GET") throw null;
-  const parsedTool = runnerToolSchema.safeParse(match[1]);
-  if (!parsedTool.success) return errorResponse(`unknown tool: ${match[1]}`);
-  const tool = parsedTool.data;
-  const refresh = url.searchParams.get("refresh");
-  const force = refresh === "1" || refresh === "true";
-  try {
-    return jsonResponse(await discoverModels(tool, undefined, { force }));
-  } catch (e: any) {
-    console.error(`[runner] model discovery failed for ${tool}:`, e?.message ?? e);
-    return jsonResponse({ tool, source: "static", models: [], efforts: null, defaultEffort: null });
-  }
-});
-
 const handleRunners = wrapHandler(async (req, url) => {
   if (url.pathname !== "/api/runners") throw null;
   if (req.method === "GET") {
@@ -647,7 +627,7 @@ const handleRunners = wrapHandler(async (req, url) => {
 
 const handleRunnerById = wrapHandler(async (req, url) => {
   const id = getRunnerIdFromUrl(url.pathname);
-  // `/api/runners/tools` and `/api/runners/tools/<tool>/models` are not runner ids.
+  // `/api/runners/tools` and anything under it are not runner ids.
   if (!id || id === "tools" || url.pathname.startsWith("/api/runners/tools/")) throw null;
   const runner = getRunnerById(id);
   if (!runner) return errorResponse("not found", 404);

@@ -82,32 +82,24 @@ AgentQ from a tool you open yourself):
 
 The job log starts with the path of the MCP config the job received.
 
-### Model & effort discovery
+### Model & effort
 
-The runner form does not ask you to type a model name: `GET
-/api/runners/tools/<tool>/models` returns `{ tool, source, models, efforts, defaultEffort }`
-and the UI turns it into a select (plus a `Custom...` entry that reveals a free-text
-field) and, when the tool has an effort flag, an effort select. Each `models[]` entry is
-`{ id, label, description?, efforts?, defaultEffort? }`; a per-model `efforts` list
-overrides the tool-level one.
+The model is a free-text field: whatever you type is passed to the tool as-is
+(`--model` for `claude`, `-m` for `codex`, `opencode` and `gemini`). Leave it empty and
+no model flag is passed at all, so the tool uses its own default (its config file or
+built-in choice). AgentQ does not list or validate models.
 
-| Tool | Models | Efforts |
-|------|--------|---------|
-| `claude` | Aliases quoted in `claude --help` (`fable`, `opus`, `sonnet`, plus `haiku`), the entries of `additionalModelOptionsCache` in `~/.claude.json`, then the static full IDs (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`) | Parsed from the `--effort <level>` line of `--help` → `--effort <e>` |
-| `codex` | `codex debug models` (only `visibility: "list"`, highest `priority` first) with each model's `supported_reasoning_levels`; the `model` / `model_reasoning_effort` set at the top of `~/.codex/config.toml` is prepended as `<model> (configured)` when `codex` does not list it | Union of every model's levels → `-c model_reasoning_effort="<e>"` |
-| `opencode` | `opencode models`, one `provider/model` per line, grouped by provider | Fixed `minimal, low, medium, high, max` → `--variant <e>` |
-| `gemini` | Static `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`; the `model` in `~/.gemini/settings.json` is prepended as `(configured)` | none |
-| `custom` | none (free text only) | none |
+The effort is a select with a fixed list per tool, stored on the runner (`effort`,
+nullable) and only handed to tools that understand it:
 
-`source` tells where the list came from: `cli` (the tool was executed), `cache` (served
-from the in-memory cache, kept per tool for 10 minutes) or `static` (the tool is missing,
-timed out after 15 s or printed something unparsable, so only the built-in and configured
-entries are shown). The "Refresh" link under the model select calls the route with
-`?refresh=1`, which bypasses the cache. Discovery never fails the request: a broken tool
-just degrades to `static`.
+| Tool | Efforts | Flag |
+|------|---------|------|
+| `claude` | `low, medium, high, xhigh, max` | `--effort <e>` |
+| `codex` | `low, medium, high, xhigh, max` | `-c model_reasoning_effort="<e>"` |
+| `opencode` | `minimal, low, medium, high, max` | `--variant <e>` |
+| `gemini`, `custom` | none (ignored) | |
 
-The chosen effort is stored on the runner (`effort`, nullable) and only handed to tools
-that understand it; `gemini` and `custom` ignore it.
+Empty means the tool's default effort.
 
 ### Permission modes
 
