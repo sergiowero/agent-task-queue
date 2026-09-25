@@ -1,7 +1,7 @@
 /**
  * What an agent (and the verifier) needs to know about a project to work in it
- * without asking: its commands, conventions, protected paths and shared
- * guardrails. Stored as JSON on the project; missing keys use the defaults.
+ * without asking: its commands, protected paths and shared guardrails. Stored
+ * as JSON on the project; missing keys use the defaults.
  */
 
 export interface ProjectCommands {
@@ -14,8 +14,6 @@ export interface ProjectCommands {
 
 export interface ProjectProfile {
   commands: ProjectCommands;
-  /** Files agents read first for conventions (CLAUDE.md, AGENTS.md, docs/architecture.md). */
-  conventionFiles: string[];
   /** Globs (e.g. "migrations/**", ".github/**"); touching one raises the task's risk to high. */
   protectedPaths: string[];
   /** Guardrails every task in the project inherits. */
@@ -37,7 +35,6 @@ export interface ProjectProfile {
 
 export const DEFAULT_PROFILE: ProjectProfile = {
   commands: {},
-  conventionFiles: [],
   protectedPaths: [],
   guardrails: [],
   maxDiffLines: 400,

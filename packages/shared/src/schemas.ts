@@ -54,7 +54,6 @@ export const projectProfileSchema = z
         typecheck: z.string().max(500),
       })
       .partial(),
-    conventionFiles: z.array(z.string().max(300)).max(50),
     protectedPaths: z.array(z.string().max(300)).max(100),
     guardrails: z.array(z.string().max(1000)).max(50),
     maxDiffLines: z.number().int().min(10).max(100_000),

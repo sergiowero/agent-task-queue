@@ -294,7 +294,7 @@ export interface Project {
   autonomy: AutonomyLevel;
   /** Overrides of the default policy settings. */
   policy: Partial<PolicySettings>;
-  /** Commands, conventions, protected paths and shared guardrails. */
+  /** Commands, protected paths and shared guardrails. */
   profile: ProjectProfile;
   createdAt: string;
   updatedAt: string;

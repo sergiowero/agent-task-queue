@@ -1,8 +1,8 @@
 /**
  * What an agent needs to continue a task, without rereading the whole
  * conversation: the approved plan and its validation, criteria with status,
- * open findings, the latest handoff of each phase, the project's commands and
- * conventions, the round, and what people said since the last submission.
+ * open findings, the latest handoff of each phase, the project's commands,
+ * the round, and what people said since the last submission.
  * Its size stays flat as rounds pile up; get_task still has everything.
  */
 import { getProjectById, getTaskById } from "./database.js";
@@ -44,7 +44,6 @@ export interface TaskBrief {
   typeGuidance: string;
   /** The project's shared guardrails first, then the task's. */
   guardrails: string[];
-  conventionFiles: string[];
   commands: ProjectCommands;
   criteria: AcceptanceCriterion[];
   approvedPlan: ApprovedPlan | null;
@@ -121,7 +120,6 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
       : null,
     typeGuidance: TASK_TYPES[task.type]?.guidance ?? "",
     guardrails,
-    conventionFiles: profile.conventionFiles,
     commands: profile.commands,
     criteria: task.acceptanceCriteria,
     approvedPlan: task.approvedPlan,

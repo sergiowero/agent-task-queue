@@ -30,7 +30,7 @@ function project(extra: Record<string, unknown> = {}) {
     displayName: "Brief",
     workingDirectory: "/tmp/brief",
     autonomy: 1,
-    profile: { commands: { test: "bun test" }, guardrails: ["No new dependencies"], conventionFiles: ["CLAUDE.md"], ...extra } as any,
+    profile: { commands: { test: "bun test" }, guardrails: ["No new dependencies"], ...extra } as any,
   });
   return id;
 }
@@ -80,7 +80,6 @@ describe("task brief", () => {
     const brief = buildTaskBrief(task.id)!;
     expect(brief.task).toMatchObject({ nonGoals: ["PDF export"], references: [{ label: "Design" }] });
     expect(brief.guardrails).toEqual(["No new dependencies", "Keep the API stable"]);
-    expect(brief.conventionFiles).toEqual(["CLAUDE.md"]);
     expect(brief.commands).toEqual({ test: "bun test" });
     expect(brief.approvedPlan?.markdown).toBe("## Plan v1");
     expect(brief.latestPlan).toBeNull();
