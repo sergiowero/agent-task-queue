@@ -157,6 +157,31 @@ With a single `senior` runner on an L1+ project, reviews therefore wait for a
 second runner that can review (`reviewer`, `architect` or `senior`), and go to
 a person after `reviewStarvationMin`.
 
+### Independent checks
+
+A separate session is not enough if the checker reads the author's reasoning:
+it then tends to agree with it. So the three phases that check another agent's
+work (plan critique, verification, code review) start clean. Their agent gets
+an **independent brief** (`buildIndependentBrief` in
+`packages/shared/src/brief.ts`) instead of the usual one:
+
+| Gets | Never gets |
+| ---- | ---------- |
+| The task: description, steer details, non-goals, references, branches, worktree, head commit | The task's conversation and `contexts` |
+| The criteria and how each is checked | The author's view of which criteria are met, and its evidence |
+| The guardrails, conventions and project commands | The handoffs (`context`, `decisions`, `risks`, `next`) of every phase |
+| The approved plan (review, verification), or the plan under critique with its validation plan and declared paths, questions and risk | The author's submission message and comments |
+| The earlier findings of the phase to verify by id, with the author's reason for each `wontfix` | The author's answer to findings it says it fixed |
+| What people decided (answers to blockers, change requests) and wrote since the last submission | |
+| The verifier's result on the submitted commit (review only) | |
+
+The MCP server enforces it for the session that holds the claim (a runner job's
+server holds its job's claim): `claim_task`, `get_task_brief`, `get_task`,
+`list_tasks`, `post_comment` and `agentq://task/{taskId}` all return the
+independent view. Anyone else, a person's session included, still reads the
+whole task. The checkers' own handoffs still reach the agent that acts on their
+verdict (the planner or the coder).
+
 ## Settings
 
 | Setting | Default | Meaning |

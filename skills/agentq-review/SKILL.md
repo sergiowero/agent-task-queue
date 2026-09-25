@@ -1,15 +1,23 @@
 ---
 name: agentq-review
-description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
+description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "5.0.0"
+  version: "5.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Review Skill
 
-Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
+Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context handoff, autonomy, guardrails, no tasks available) still apply.
+
+## Independent Review
+
+You review the code, not its author's account of it. Your **brief** (`brief` in the claim result, or `get_task_brief`) is an independent one (`brief.independent: true`): the task, the criteria and how each is checked, the approved plan, the guardrails, the project's commands, the verifier's result and the earlier findings to verify. It leaves out, on purpose, the task's conversation, the coder's message, handoff notes (`context`, `decisions`, `risks`, `next`), evidence and view of which criteria are met, and the earlier handoffs.
+
+- Do not look for that context: while you hold the task, `get_task` returns the same brief. Everything else you learn from the diff, the code and the commands you run
+- `brief.openFindings` are the earlier findings to verify by id. `fixed` or `wontfix` is only what the coder says it did: check it in the code. A `wontfix` carries `wontfixReason` for you to judge
+- `brief.humanDecisions` and `brief.humanNotes` are what people decided or asked: they count as requirements
 
 ## Phase
 
@@ -28,7 +36,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 ## Worktree Rules
 
-- **Check first**: If `task.worktreePath` is set (the coding phase stores it with `submit_code`), use that path. If the directory already exists, it was left from a previous session — reuse it.
+- **Check first**: If `brief.task.worktreePath` is set (the coding phase stores it with `submit_code`), use that path. If the directory already exists, it was left from a previous session — reuse it.
 - **Path format**: Always `{project}/.agentq/worktrees/{task.id}` — never `/tmp`. `{project}` is `task.project.workingDirectory`.
 - **Creation command** (only if no worktree exists; run from `task.project.workingDirectory`): `git worktree add {project}/.agentq/worktrees/{task.id} {task.recommendedBranch}`
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
@@ -41,11 +49,11 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 ## Steps
 
-1. `cd` into the worktree (see Worktree Rules) and confirm `git branch --show-current` is `{task.recommendedBranch}`
-2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria` (with their status), `task.approvedPlan` (the plan and its validation plan), `task.verification` and `task.evidence` (what the coder and the verifier ran), `task.conversation[]`, `task.contexts[]` and `task.findings[]` (earlier findings, with ids like `R1-2`). The code submission (`messageType: "code"`) lists the commits and files
-3. **Verify the previous round first.** For every finding of an earlier round that is not `verified`, check the new commits: pass it in `verifiedFindings` as `verified` (fixed) or `open` (still not fixed). Do not re-raise it as a new finding
-4. Inspect the submitted work read-only: `git log --oneline {task.mergeBranch}..HEAD`, `git diff {task.mergeBranch}...HEAD`, `git show <sha>`, and read the changed files. Run the project's tests or the commands the coder says they ran when you can (read-only: do not fix anything)
-5. Check every acceptance criterion against the approved validation plan: the planned tests exist and test what the criterion says. Do not trust the evidence blindly: re-run at least the commands tied to the criteria. Check every guardrail; look for correctness bugs, missing or weakened tests, deviations from the plan and from `task.steerDetails`
+1. `cd` into the worktree (see Worktree Rules) and confirm `git branch --show-current` is the task's branch (`brief.task.realBranch`, or `brief.task.recommendedBranch`) and `git rev-parse HEAD` matches `brief.task.headSha` when it is set
+2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` (each with its `verify` method), `brief.approvedPlan` (the plan and its validation plan), `brief.verification` (what the verifier ran on the submitted commit, with the failing commands), `brief.openFindings`, `brief.humanDecisions` and `brief.humanNotes`
+3. **Verify the previous round first.** For every finding in `brief.openFindings`, check the code: pass it in `verifiedFindings` as `verified` (fixed, or a `wontfix` you accept) or `open` (still not fixed). Do not re-raise it as a new finding
+4. Inspect the submitted work read-only: `git log --oneline {mergeBranch}..HEAD`, `git diff {mergeBranch}...HEAD`, `git show <sha>`, and read the changed files (`mergeBranch` is `brief.task.mergeBranch`). Run the project's commands (`brief.commands`) and the validation plan's commands (read-only: do not fix anything)
+5. Check every acceptance criterion yourself: the planned tests exist, test what the criterion says and pass; re-run at least the commands tied to the criteria. Check every guardrail; look for correctness bugs, missing or weakened tests, deviations from the plan and from `brief.task.steerDetails`
 6. Record each new problem as a finding with a severity (see Severity Rubric) and pick the verdict (see Verdict Rules)
 7. Submit with `context` handoff notes (see Submit Review), then stop and wait for the next claim
 
@@ -115,6 +123,7 @@ The `message` MUST be Markdown. It summarises; the findings themselves go in `fi
 
 - **DO** call `report_blocker` (see Blocked in `agentq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** implement changes during review phase - only review and give verdict
+- **DO NOT** look for the coder's context (the task's conversation, contexts, handoffs or evidence) or ask the coder to explain the code: judge the code from the diff, the task and the criteria
 - **DO NOT** approve with open `blocker` or `major` findings, and **DO NOT** request changes without a finding the coder can act on
 - **DO NOT** modify files in the worktree or anywhere else - reviewing is read-only
 - **DO NOT** run `git add`, `git commit` or `git push` during reviewing

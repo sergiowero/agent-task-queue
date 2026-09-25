@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { Project, SubmitResult, Task } from "@agentq/shared";
+import type { IndependentBrief, IndependentPhase, Project, SubmitResult, Task } from "@agentq/shared";
 import {
   MIN_COMPATIBLE_SKILLS_VERSION,
   ROLES,
@@ -19,7 +19,9 @@ import {
   getFindings,
   getEvidence,
   getHandoffs,
-  buildTaskBrief,
+  buildAgentBrief,
+  buildIndependentBrief,
+  isIndependentPhase,
   listSkills,
   readSkill,
   referenceSchema,
@@ -62,10 +64,11 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (ski
    - planning: write an implementation plan, then call submit_plan.
    - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
    - reviewing: review the submitted code (task.worktreePath), verify the previous round's findings by id, then call submit_review with a verdict (approve, request_changes, needs_human) and structured findings. The verdict routes the task: approve moves it on, request_changes sends it back to the coder with your findings.
+   Plan critique, verification and code review are independent checks: their brief (and get_task, while you hold the task) has the task, the criteria, the plan and the findings to verify, never the author's conversation, handoffs, messages or evidence. Judge the work itself.
    - merging: push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
+7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; the brief shows the notes earlier agents left (except in the independent checks). context is optional on claim_task. Write every message in Markdown.
 8. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
@@ -102,9 +105,20 @@ function publicTask(task: Task): PublicTask {
   return rest;
 }
 
+function projectOf(task: Task): Project | null {
+  return task.projectId ? getProjectByTaskId(task.id) : null;
+}
+
 function withProject(task: Task): PublicTask & { project: Project | null } {
-  const project = task.projectId ? getProjectByTaskId(task.id) : null;
-  return { ...publicTask(task), project };
+  return { ...publicTask(task), project: projectOf(task) };
+}
+
+/**
+ * The task as an independent checker sees it: the brief's summary and the
+ * project, without the conversation, contexts, handoffs or evidence.
+ */
+function independentTask(task: Task, brief: IndependentBrief) {
+  return { ...brief.task, project: projectOf(task), independent: true as const };
 }
 
 /** A task with its project and its review findings (what an agent needs to continue it). */
@@ -221,13 +235,24 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     } catch {}
     return runTool(fn);
   };
+  /** The phase in which this session checks `task`, when it holds it for a plan critique, verification or review. */
+  const checkingPhase = (task: Task): IndependentPhase | null => {
+    const phase = STATUS_INFO[task.status]?.phase;
+    const holds = !!task.claimToken && claims.get(task.id) === task.claimToken;
+    return holds && isIndependentPhase(phase) ? phase : null;
+  };
+  /** A task as this session may see it: an independent checker never gets the author's context. */
+  const visibleTask = (task: Task) => {
+    const phase = checkingPhase(task);
+    return phase ? independentTask(task, buildIndependentBrief(task, phase)!) : withProject(task);
+  };
 
   server.registerTool(
     "claim_task",
     {
       title: "Claim next task",
       description:
-        "Atomically claim the highest-priority task eligible for your role and move it to its in-progress status (planning, coding, reviewing or merging).",
+        "Atomically claim the highest-priority task eligible for your role and move it to its in-progress status (planning, coding, reviewing or merging). A plan critique, verification or review claim comes with an independent brief: the task and what to check, never the author's context.",
       inputSchema: {
         toolName: z.string().min(1).describe('Agent tool name, e.g. "claude-code"'),
         version: z.string().min(1).describe("Agent tool version"),
@@ -281,10 +306,11 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         }
         claims.set(result.task.id, result.claimToken);
         const policy = policyFor(result.task);
+        const brief = buildAgentBrief(result.task)!;
         return {
           success: true,
-          task: taskHeader(result.task),
-          brief: buildTaskBrief(result.task),
+          task: "independent" in brief ? independentTask(result.task, brief) : taskHeader(result.task),
+          brief,
           phaseSkill: phaseSkillOf(result.effectiveRole, result.task.status),
           autonomy: policy.level,
           round: {
@@ -767,7 +793,8 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     "get_task",
     {
       title: "Get task",
-      description: "Fetch a task by ID, including its project, conversation, history, contexts and review findings.",
+      description:
+        "Fetch a task by ID, including its project, conversation, history, contexts and review findings. While you hold the task for a plan critique, verification or review, it returns your independent brief instead: those checks never see the author's context.",
       inputSchema: { taskId: taskIdSchema },
       annotations: { readOnlyHint: true },
     },
@@ -776,6 +803,11 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         const task = getTaskById(input.taskId);
         if (!task) {
           throw new WorkflowError("Task not found.");
+        }
+        const phase = checkingPhase(task);
+        if (phase) {
+          const brief = buildIndependentBrief(task, phase)!;
+          return { success: true, independent: true, task: independentTask(task, brief), brief, message: brief.isolation };
         }
         return { success: true, task: taskDetails(task) };
       }),
@@ -786,13 +818,13 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Get task brief",
       description:
-        "What you need to continue a task without rereading its whole conversation: the approved plan and validation, criteria with status, open findings, the latest handoff of each phase, the project's commands and guardrails, the round, and what people said since the last submission.",
+        "What you need to continue a task without rereading its whole conversation: the approved plan and validation, criteria with status, open findings, the latest handoff of each phase, the project's commands and guardrails, the round, and what people said since the last submission. For a plan critique, verification or review it is the independent brief: the task, what to check and the findings to verify, without the author's handoffs, messages or evidence.",
       inputSchema: { taskId: taskIdSchema },
       annotations: { readOnlyHint: true },
     },
     (input) =>
       run(() => {
-        const brief = buildTaskBrief(input.taskId);
+        const brief = buildAgentBrief(input.taskId);
         if (!brief) throw new WorkflowError("Task not found.");
         return { success: true, brief };
       }),
@@ -835,7 +867,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         const tasks = getTasks(input.projectId).filter(
           (task) => !input.status || task.status === input.status,
         );
-        return { success: true, tasks: tasks.map(withProject) };
+        return { success: true, tasks: tasks.map(visibleTask) };
       }),
   );
 
@@ -938,7 +970,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     (input) =>
       run(() => {
         const task = postComment(input.taskId, { message: input.message, author: input.author });
-        return { success: true, task: withProject(task) };
+        return { success: true, task: visibleTask(task) };
       }),
   );
 
@@ -1010,7 +1042,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
       }
       return {
         contents: [
-          { uri: uri.href, mimeType: "application/json", text: JSON.stringify(withProject(task)) },
+          { uri: uri.href, mimeType: "application/json", text: JSON.stringify(visibleTask(task)) },
         ],
       };
     },

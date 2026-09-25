@@ -3,7 +3,7 @@ name: agentq-pr
 description: Pull-request phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body AgentQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_pr, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "5.0.0"
+  version: "5.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

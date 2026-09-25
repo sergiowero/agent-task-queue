@@ -327,24 +327,6 @@ export interface ToolInfo {
   version: string | null;
 }
 
-export interface ModelOption {
-  id: string;
-  label: string;
-  /** Provider (opencode) or a short blurb; used to group the select. */
-  description?: string;
-  efforts?: string[];
-  defaultEffort?: string;
-}
-
-export interface ModelDiscovery {
-  tool: RunnerTool;
-  source: "cli" | "cache" | "static";
-  models: ModelOption[];
-  /** null when the tool has no effort flag. */
-  efforts: string[] | null;
-  defaultEffort?: string | null;
-}
-
 /** Payload of the `runner_job` SSE event. */
 export type RunnerJobEvent =
   | { type: "started" | "finished"; runnerId: string; jobId: string; job: RunnerJob }
@@ -475,8 +457,6 @@ export const api = {
 
   getRunners: () => request<Runner[]>("/runners"),
   getRunnerTools: () => request<ToolInfo[]>("/runners/tools"),
-  getRunnerModels: (tool: RunnerTool, refresh = false) =>
-    request<ModelDiscovery>(`/runners/tools/${tool}/models${refresh ? "?refresh=1" : ""}`),
   createRunner: (data: RunnerInput) =>
     request<Runner>("/runners", { method: "POST", body: JSON.stringify(data) }),
   updateRunner: (id: string, data: Partial<RunnerInput>) =>

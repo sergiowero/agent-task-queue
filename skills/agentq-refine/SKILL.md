@@ -3,7 +3,7 @@ name: agentq-refine
 description: Refinement phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `draft`, now in `refining` (the agentq-claim router sends you here). Turns a rough draft into a ready task — clear description, testable acceptance criteria with how each is verified, type, risk, non-goals, whether it needs a plan — and submits it with the `submit_refinement` MCP tool. Never writes code.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_refinement, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "5.0.0"
+  version: "5.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
