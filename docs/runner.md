@@ -124,7 +124,9 @@ Empty means the tool's default effort.
 AgentQ MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
 `submit_*` and `report_blocker`), the task **brief** (see [mcp.md](mcp.md): plan,
 criteria, open findings, latest handoffs, human notes; not the whole conversation, so
-the prompt does not grow round after round), the
+the prompt does not grow round after round; for a plan critique, verification or review
+job, the **independent brief**, without the author's conversation, handoffs, messages
+or evidence, see [policy.md](policy.md#independent-checks)), the
 body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the required `context` handoff notes,

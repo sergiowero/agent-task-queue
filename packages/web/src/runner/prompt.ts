@@ -1,6 +1,6 @@
 import { MCP_SERVER_NAME } from "@agentq/mcp";
 import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
-import { STATUS_INFO, buildTaskBrief, readSkill, skillForPhase, stripFrontmatter } from "@agentq/shared";
+import { STATUS_INFO, buildAgentBrief, isIndependentPhase, readSkill, skillForPhase, stripFrontmatter } from "@agentq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -23,7 +23,7 @@ const CONTEXT_HINT: Record<Phase, string> = {
   refine: "what you assumed, what you left for the planner, and anything a person should confirm",
   plan_review: "the verdict, the finding ids the planner must address first, and what you checked",
   plan: "the key decisions and trade-offs, the files the coder should start from, and open questions or risks",
-  code: "what the reviewer should look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested)",
+  code: "known limitations or shortcuts and how you verified it (tests run, what was not tested), for the next coding round and the person merging; the reviewer never reads it, it judges the code on its own",
   verify: "which commands failed and why, and whether the failure is in the code or the environment",
   review: "the verdict, the finding ids the coder must fix first and why (or why it is safe to merge)",
   merge: "the PR URL/number, the base and head branches, and what the person merging should check",
@@ -158,7 +158,12 @@ export function buildPrompt(input: BuildPromptInput): string {
   };
 
   // The brief, not the whole conversation: its size stays flat as review rounds pile up.
-  const brief = buildTaskBrief(task);
+  // A phase that checks another agent's work gets the independent one, without the author's context.
+  const brief = buildAgentBrief(task);
+  const independent = isIndependentPhase(phase);
+  const briefIntro = independent
+    ? "This is an **independent check**. The brief holds the task, what to check and the findings to verify. It leaves out, on purpose, the conversation, the handoff notes, the messages and the evidence of the agent whose work you check: judge the work itself, not its author's account of it. Do not look for that context elsewhere."
+    : "Start from the latest handoffs, the open findings and `humanNotes` (what people said since the last submission). The brief leaves out the full conversation; call `get_task` if you need it.";
 
   return [
     `# AgentQ ${effectiveRole} agent`,
@@ -173,14 +178,16 @@ export function buildPrompt(input: BuildPromptInput): string {
     `This run has the \`${MCP_SERVER_NAME}\` MCP server (Claude Code names its tools \`mcp__${MCP_SERVER_NAME}__<tool>\`). Do all queue work through its tools:`,
     "",
     "- `get_task_brief` — re-read the brief below (it changes when people comment)",
-    "- `get_task` — the full task: whole conversation, history and every piece of evidence",
+    independent
+      ? "- `get_task` — returns this same independent brief while you hold the task"
+      : "- `get_task` — the full task: whole conversation, history and every piece of evidence",
     "- `post_comment` — add a note to the task conversation without changing its status",
     `- \`${submit.tool}\` — submit this phase (see Finish)`,
     "- `report_blocker` — stop because something outside your control blocks the phase (see Finish)",
     "",
     "## Task brief",
     "",
-    "Start from the latest handoffs, the open findings and `humanNotes` (what people said since the last submission). The brief leaves out the full conversation; call `get_task` if you need it.",
+    briefIntro,
     "",
     "```json",
     JSON.stringify(brief, null, 2),

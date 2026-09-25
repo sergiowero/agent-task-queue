@@ -900,6 +900,35 @@ describe("buildPrompt", () => {
     expect(first).toContain("get_task_brief");
   });
 
+  it("a review job starts clean: the independent brief, without the coder's handoff, message or evidence", () => {
+    const pid = randomUUID();
+    createProject({ id: pid, displayName: "Independent", workingDirectory: PROJECT_DIR, autonomy: 2 });
+    const task = createTask({ title: "clean review", description: "A long enough description for readiness.", projectId: pid });
+    const coderAgent = { toolName: "c", version: "1", model: "c", sessionId: "ic" };
+    const reviewerAgent = { toolName: "r", version: "1", model: "r", sessionId: "ir" };
+    const agent = { id: "r@1|r", toolName: "r", version: "1", model: "r", role: "reviewer" } as any;
+    const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
+    const coderPrompt = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+    expect(coderPrompt).not.toContain("independent check");
+    expect(coderPrompt).toContain("whole conversation");
+    submitCode(task.id, {
+      message: "CODER-MESSAGE",
+      worktree: "/w",
+      claimToken: c.claimToken,
+      context: "CODER-NOTE",
+      decisions: ["CODER-DECISION"],
+      evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "CODER-EVIDENCE" }],
+    });
+    const r = claimNextTask({ role: "reviewer", agent: reviewerAgent, projectId: pid })!;
+    expect(r.task.status).toBe(TaskStatus.Reviewing);
+    const prompt = buildPrompt({ task: r.task, project: null, agent, effectiveRole: "reviewer", claimToken: r.claimToken });
+    expect(prompt).toContain("**independent check**");
+    expect(prompt).toContain('"independent": true');
+    expect(prompt).toContain("`get_task` — returns this same independent brief");
+    for (const marker of ["CODER-MESSAGE", "CODER-NOTE", "CODER-DECISION", "CODER-EVIDENCE"]) expect(prompt).not.toContain(marker);
+    submitReview(task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
+  });
+
   it("inlines phase skills that speak MCP, not a command line", () => {
     const statusOf = {
       refine: TaskStatus.Refining,
