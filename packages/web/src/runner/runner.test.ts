@@ -9,6 +9,7 @@ import type { McpServerLaunch } from "@agentq/mcp";
 import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@agentq/mcp";
 import type { Runner, RunnerTool } from "@agentq/shared";
 import {
+  CLAIM_RULES,
   TaskStatus,
   skillForPhase,
   claimNextTask,
@@ -77,7 +78,7 @@ function makeRunner(argv: string[], overrides: Partial<Parameters<typeof createR
   const runner = createRunner({
     name: `test-${randomUUID().slice(0, 8)}`,
     tool: "custom",
-    role: "planner",
+    roles: ["plan"],
     projectId,
     pollIntervalSec: 1,
     extraArgs: argv,
@@ -363,7 +364,7 @@ describe("RunnerEngine", () => {
     expect(seen[0].tool).toBe("claude");
     expect(seen[0].ctx.model).toBe("opus");
     expect(seen[0].ctx.cwd).toBe(PROJECT_DIR);
-    expect(seen[0].ctx.role).toBe("planner");
+    expect(seen[0].ctx.role).toBe("plan");
     expect(seen[0].ctx.mcp).toMatchObject({ ...mcpServerLaunch(DB_PATH), env: { AGENTQ_DB_PATH: DB_PATH, AGENTQ_TASK_ID: task.id } });
     expect(existsSync(seen[0].ctx.mcpConfigFile)).toBe(true);
     const updated = getTaskById(task.id)!;
@@ -407,7 +408,7 @@ describe("RunnerEngine: blocked tasks", () => {
     updateTask(task.id, { status: TaskStatus.Approved });
     const runner = makeRunner(
       agentArgv("report_blocker", { reason: "git push: 403", question: "Grant push access?", context: "tried twice" }),
-      { role: "builder" },
+      { roles: ["code", "pr"] },
     );
     const engine = makeEngine({ revertBackoffMs: 50 });
     engine.start(runner.id);
@@ -473,11 +474,11 @@ describe("RunnerEngine: blocked tasks", () => {
 });
 
 describe("RunnerEngine: separation of duties (autonomy L2)", () => {
-  it("a senior runner does not review its own code; another runner does, and its verdict routes the task", async () => {
+  it("a runner that codes and reviews does not review its own code; another runner does, and its verdict routes the task", async () => {
     const task = createTask({ title: "review me", description: "", projectId });
     const author = makeRunner(
       agentArgv("submit_code", { message: "## Changes", worktree: PROJECT_DIR, context: "look at x" }),
-      { role: "senior" },
+      { roles: ["code", "review"] },
     );
     const engine = makeEngine();
     engine.start(author.id);
@@ -491,7 +492,7 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
 
     const reviewer = makeRunner(
       agentArgv("submit_review", { verdict: "approve", message: "LGTM", context: "safe to merge" }),
-      { role: "reviewer" },
+      { roles: ["review"] },
     );
     engine.start(reviewer.id);
     await waitFor(() => getTaskById(task.id)!.status === TaskStatus.Approved, 20_000, "review approved");
@@ -504,7 +505,7 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
   it("recoverOrphans gives back tasks whose runner job did not survive a restart", () => {
     const task = planTask("orphaned");
     const claimed = claimNextTask({
-      role: "planner",
+      roles: ["plan"],
       agent: { toolName: "custom", version: "1", model: "m", sessionId: "gone" },
       projectId,
       runnerId: "runner-that-died",
@@ -517,7 +518,7 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
 });
 
 describe("RunnerEngine: plan critique (autonomy L2)", () => {
-  it("a plan_reviewer runner critiques a plan with the agentq-plan-review skill, and its verdict routes the task", async () => {
+  it("a plan_review runner critiques a plan with the agentq-plan-review skill, and its verdict routes the task", async () => {
     const l2 = randomUUID();
     createProject({ id: l2, displayName: "Critique", workingDirectory: PROJECT_DIR, autonomy: 2 });
     const task = createTask({ title: "critique me", description: "d", projectId: l2, requiresPlan: true });
@@ -527,7 +528,7 @@ describe("RunnerEngine: plan critique (autonomy L2)", () => {
     });
     const runner = makeRunner(
       agentArgv("submit_plan_review", { verdict: "approve", message: "Sound plan", context: "no concerns" }),
-      { role: "plan_reviewer", projectId: l2 },
+      { roles: ["plan_review"], projectId: l2 },
     );
     const engine = makeEngine();
     engine.start(runner.id);
@@ -590,7 +591,7 @@ describe("buildCommand", () => {
     mcp,
     mcpConfigFile: "/runs/t1/job.mcp.json",
     taskId: "t1",
-    role: "implementer",
+    role: "code",
     model: null,
     effort: null,
     permissionMode: "safe" as const,
@@ -625,7 +626,7 @@ describe("buildCommand", () => {
     }
     expect(allowed.some((t) => t.startsWith("Bash(agentq"))).toBe(false);
     expect(safe.env?.AGENTQ_TASK_ID).toBe("t1");
-    expect(safe.env?.AGENTQ_ROLE).toBe("implementer");
+    expect(safe.env?.AGENTQ_ROLE).toBe("code");
     expect(safe.env?.AGENTQ_PROMPT_FILE).toBe("/tmp/p.md");
     expect(safe.env?.CLAUDECODE).toBeUndefined();
 
@@ -812,7 +813,7 @@ describe("each tool's MCP config starts a working AgentQ server", () => {
         mcp,
         mcpConfigFile,
         taskId: task.id,
-        role: "planner",
+        role: "plan",
         model: null,
         effort: null,
         permissionMode: "safe",
@@ -835,9 +836,12 @@ describe("each tool's MCP config starts a working AgentQ server", () => {
   }
 });
 
+/** The role whose claim moves a task into this active status. */
+const roleOf = (status: TaskStatus) => CLAIM_RULES.find((r) => r.to === status)!.role;
+
 describe("buildPrompt", () => {
   it("names the submit tool and its arguments for every phase", () => {
-    const agent = { id: "claude@1|opus", toolName: "claude", version: "1", model: "opus", role: "senior", sessionId: "s", host: null, startedAt: "", lastSeen: "", deletedAt: null } as any;
+    const agent = { id: "claude@1|opus", toolName: "claude", version: "1", model: "opus", role: "plan", sessionId: "s", host: null, startedAt: "", lastSeen: "", deletedAt: null } as any;
     const cases: [TaskStatus, string, string[]][] = [
       [TaskStatus.Refining, "submit_refinement", ["message", "acceptanceCriteria"]],
       [TaskStatus.PlanReviewing, "submit_plan_review", ["verdict", "message"]],
@@ -848,7 +852,8 @@ describe("buildPrompt", () => {
     ];
     for (const [status, tool, args] of cases) {
       const task = { ...planTask(`prompt ${status}`), status };
-      const prompt = buildPrompt({ task, project: null, agent, effectiveRole: "senior", phaseSkill: "SKILL" });
+      const prompt = buildPrompt({ task, project: null, agent, role: roleOf(status), phaseSkill: "SKILL" });
+      expect(prompt).toContain(`working the **${roleOf(status)}** role`);
       expect(prompt).toContain(`call the \`${tool}\` tool of the \`agentq\` MCP server`);
       expect(prompt).toContain(`"taskId": "${task.id}"`);
       for (const arg of [...args, "context"]) expect(prompt).toContain(`"${arg}":`);
@@ -867,12 +872,12 @@ describe("buildPrompt", () => {
     const task = createTask({ title: "rounds", description: "A long enough description for readiness.", projectId: pid });
     const coderAgent = { toolName: "c", version: "1", model: "c", sessionId: "c" };
     const reviewerAgent = { toolName: "r", version: "1", model: "r", sessionId: "r" };
-    const agent = { id: "c@1|c", toolName: "c", version: "1", model: "c", role: "implementer" } as any;
+    const agent = { id: "c@1|c", toolName: "c", version: "1", model: "c", role: "code" } as any;
     const promptAt: number[] = [];
     let first = "";
     for (let round = 1; round <= 5; round++) {
-      const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
-      const prompt = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+      const c = claimNextTask({ roles: ["code"], agent: coderAgent, projectId: pid })!;
+      const prompt = buildPrompt({ task: c.task, project: null, agent, role: "code", phaseSkill: "SKILL" });
       promptAt.push(prompt.length);
       if (round === 1) first = prompt;
       const open = getFindings(task.id).filter((f) => f.status === "open");
@@ -883,7 +888,7 @@ describe("buildPrompt", () => {
         context: `round ${round}`,
         findingResolutions: open.map((f) => ({ id: f.id, status: "fixed" as const, resolution: "done" })),
       });
-      const r = claimNextTask({ role: "reviewer", agent: reviewerAgent, projectId: pid })!;
+      const r = claimNextTask({ roles: ["review"], agent: reviewerAgent, projectId: pid })!;
       submitReview(task.id, {
         verdict: "request_changes",
         message: `review ${round} ${"dolor sit amet ".repeat(150)}`,
@@ -892,8 +897,8 @@ describe("buildPrompt", () => {
         findings: [{ severity: "minor", text: `finding ${round}` }],
       });
     }
-    const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
-    const last = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+    const c = claimNextTask({ roles: ["code"], agent: coderAgent, projectId: pid })!;
+    const last = buildPrompt({ task: c.task, project: null, agent, role: "code", phaseSkill: "SKILL" });
     expect(getTaskById(task.id)!.conversation.length).toBeGreaterThan(15);
     expect(last.length - promptAt[1]).toBeLessThan(2048);
     expect(last).not.toContain("ROUND-MARKER-1");
@@ -906,9 +911,9 @@ describe("buildPrompt", () => {
     const task = createTask({ title: "clean review", description: "A long enough description for readiness.", projectId: pid });
     const coderAgent = { toolName: "c", version: "1", model: "c", sessionId: "ic" };
     const reviewerAgent = { toolName: "r", version: "1", model: "r", sessionId: "ir" };
-    const agent = { id: "r@1|r", toolName: "r", version: "1", model: "r", role: "reviewer" } as any;
-    const c = claimNextTask({ role: "implementer", agent: coderAgent, projectId: pid })!;
-    const coderPrompt = buildPrompt({ task: c.task, project: null, agent, effectiveRole: "implementer", phaseSkill: "SKILL" });
+    const agent = { id: "r@1|r", toolName: "r", version: "1", model: "r", role: "review" } as any;
+    const c = claimNextTask({ roles: ["code"], agent: coderAgent, projectId: pid })!;
+    const coderPrompt = buildPrompt({ task: c.task, project: null, agent, role: "code", phaseSkill: "SKILL" });
     expect(coderPrompt).not.toContain("independent check");
     expect(coderPrompt).toContain("whole conversation");
     submitCode(task.id, {
@@ -919,9 +924,9 @@ describe("buildPrompt", () => {
       decisions: ["CODER-DECISION"],
       evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "CODER-EVIDENCE" }],
     });
-    const r = claimNextTask({ role: "reviewer", agent: reviewerAgent, projectId: pid })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewerAgent, projectId: pid })!;
     expect(r.task.status).toBe(TaskStatus.Reviewing);
-    const prompt = buildPrompt({ task: r.task, project: null, agent, effectiveRole: "reviewer", claimToken: r.claimToken });
+    const prompt = buildPrompt({ task: r.task, project: null, agent, role: "review", claimToken: r.claimToken });
     expect(prompt).toContain("**independent check**");
     expect(prompt).toContain('"independent": true');
     expect(prompt).toContain("`get_task` — returns this same independent brief");
@@ -942,7 +947,7 @@ describe("buildPrompt", () => {
     for (const phase of Object.keys(statusOf) as (keyof typeof statusOf)[]) {
       const task = { ...planTask(`skill ${phase}`), status: statusOf[phase] };
       const agent = { id: "a", toolName: "claude", model: "m" } as any;
-      const prompt = buildPrompt({ task, project: null, agent, effectiveRole: "senior" });
+      const prompt = buildPrompt({ task, project: null, agent, role: roleOf(statusOf[phase]) });
       expect(prompt).toContain(`## Phase skill: ${skillForPhase(phase)}`);
       expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review", merge: "pr" }[phase as string] ?? phase}`);
       expect(prompt).not.toContain("skill file not found");

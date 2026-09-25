@@ -20,6 +20,7 @@ export interface CommandContext {
    */
   mcpConfigFile: string;
   taskId: string;
+  /** The role the claim acts as (exported as AGENTQ_ROLE). */
   role: string;
   /** Model id as typed on the runner; blank means the tool's own default (no model flag). */
   model: string | null;

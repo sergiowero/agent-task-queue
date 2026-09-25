@@ -23,7 +23,7 @@ and existing projects start at **L2**.
 
 ## Plan routing (L2–L3)
 
-`submit_plan` goes to `plan_review_requested`: a `plan_reviewer` agent (never the
+`submit_plan` goes to `plan_review_requested`: an agent with the `plan_review` role (never the
 planner's own session) critiques it with a verdict and findings (`P<round>-<n>`).
 Approve sends a **low-risk** plan straight to coding and anything riskier to a
 person; request changes goes back to the planner (at most `maxPlanRounds`, then a
@@ -39,7 +39,7 @@ task (a blocked one waits for its dependencies to be complete) and the parent,
 in `split`, completes when they are all finished. Re-planning drops the held
 subtasks of the previous plan.
 
-A task created as a **draft** waits for a `refiner` agent to make it ready
+A task created as a **draft** waits for an agent with the `refine` role to make it ready
 (criteria, type, risk, scope) or for a person to promote it.
 
 L0 reproduces the original behaviour exactly: the reviewer's verdict is advice
@@ -96,7 +96,7 @@ fresh set of rounds.
 
 ## Pull requests
 
-The task ends on GitHub. After the review the integrator pushes the branch and opens
+The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens
 the PR with the body AgentQ writes (`brief.pr.body`: summary, each acceptance criterion
 with its evidence, the verification, the AI review and the findings it addressed, the
 risk), then calls `submit_pr`: the task waits in `pr_open`. The human review happens on
@@ -153,8 +153,8 @@ skips tasks whose code was produced under the same `sessionKey`; a claim of
 `plan_review_requested` skips plans the same session wrote. With
 `requireDifferentModel`, the reviewer's model must also differ from the coder's.
 
-With a single `senior` runner on an L1+ project, reviews therefore wait for a
-second runner that can review (`reviewer`, `architect` or `senior`), and go to
+With a single runner that has both `code` and `review` on an L1+ project, reviews
+therefore wait for a second runner with the `review` role, and go to
 a person after `reviewStarvationMin`.
 
 ### Independent checks

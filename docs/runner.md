@@ -1,7 +1,7 @@
 # Runners
 
 A **runner** is the piece of AgentQ that removes the "open Claude / Codex / OpenCode by
-hand" step. It lives inside the web server, polls the queue with a role, and every time
+hand" step. It lives inside the web server, polls the queue with its roles, and every time
 it claims a task it launches the configured coding tool **headless** in the project's
 working directory with a prompt that contains the task and the matching phase skill.
 Every job gets the AgentQ MCP server, bound to the web server's database, with no setup
@@ -15,7 +15,7 @@ runner picks it up for coding → a PR.
 ## Managing runners
 
 Web UI: **Runners** (sidebar, between Agents and Activity). Each card shows the tool,
-role, project, running/stopped state with a Start/Stop button, active job count and the
+roles, project, running/stopped state with a Start/Stop button, active job count and the
 outcome of the last job. Clicking a card opens the job list with a live log panel.
 
 REST:
@@ -34,10 +34,12 @@ REST:
 Runners persisted as `enabled` are started when the server boots; `SIGINT`/`SIGTERM`
 stops them and releases their tasks before the server exits.
 
-Runner fields: `name`, `tool`, `role` (planner / implementer / reviewer / senior /
-architect), `projectId` (null = any project), `model`, `concurrency` (parallel jobs,
-default 1), `pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`),
-`extraArgs` (string array), `enabled`.
+Runner fields: `name`, `tool`, `roles` (one or more of `refine`, `plan`, `plan_review`,
+`code`, `verify`, `review`, `pr`; the form starts with all but `verify`), `projectId`
+(null = any project), `model`, `concurrency` (parallel jobs, default 1),
+`pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`), `extraArgs` (string
+array), `enabled`. A runner claims the tasks of any of its roles; roles are stored
+without duplicates, in that order.
 
 ## Tools and the commands they run
 
@@ -119,7 +121,8 @@ Empty means the tool's default effort.
 
 ### The prompt
 
-`buildPrompt()` tells the tool it is an AgentQ `<role>` agent, that task `<id>` was
+`buildPrompt()` tells the tool which of the runner's roles the claim acts as (also in
+`$AGENTQ_ROLE`), that task `<id>` was
 **already claimed for it** (so it must not call `claim_task`), the current status, the
 AgentQ MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
 `submit_*` and `report_blocker`), the task **brief** (see [mcp.md](mcp.md): plan,
@@ -137,9 +140,10 @@ partial work), never to ask for permission, and to stop once the submit succeeds
 Phase by status (each phase has its skill, `skills/agentq-<phase>`): `draft` → refine,
 `plan_requested` / `plan_changes_requested` → plan, `plan_review_requested` →
 plan-review, `ready_for_code` / `changes_requested` → code, `verify_requested` →
-verify, `code_review_requested` → review, `approved` → merge (integrator). Existing
-`implementer` runners were migrated to `builder` (implementer + integrator) so they
-keep opening PRs.
+verify, `code_review_requested` → review, `approved` → merge (role `pr`). Runners from
+before roles were lists were migrated: each old role became its list (`senior` → every
+role but `verify`, `architect` → `plan`, `plan_review`, `review`, `qa` → `verify`,
+`review`, `builder` → `code`, `pr`, and each base role its phase name).
 
 ## What happens when the tool exits
 
@@ -179,8 +183,8 @@ anything the dying agent still submits is refused.
 A runner claims with its id, so every claim of the same runner has the same
 `sessionKey` (`runner:<id>`) across jobs. Submits record it as the producer of
 the artifact, and a claim never returns the review of code the same runner
-wrote. On an L1+ project a single `senior` runner therefore needs a second
-runner that can review; the Runners page says so. Reviews nobody eligible picks
+wrote. On an L1+ project a runner with both `code` and `review` therefore needs a
+second runner with `review`; the Runners page says so. Reviews nobody eligible picks
 up go to a person after the project's `reviewStarvationMin`.
 
 When the server starts, tasks that a runner job held when the server went down
@@ -263,9 +267,12 @@ curl -s localhost:3999/api/projects -H 'content-type: application/json' -d '{
   "id": "'"$(uuidgen | tr A-Z a-z)"'", "displayName": "My repo", "workingDirectory": "~/code/my-repo"
 }'
 
-# 3. a senior runner on Claude Code (picks up planning, coding, review and merge)
+# 3. a runner on Claude Code that plans, codes and opens the PR, and one on Codex that reviews
 curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
-  "name": "claude-senior", "tool": "claude", "role": "senior", "permissionMode": "safe", "enabled": true
+  "name": "claude-coder", "tool": "claude", "roles": ["plan", "code", "pr"], "permissionMode": "safe", "enabled": true
+}'
+curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
+  "name": "codex-reviewer", "tool": "codex", "roles": ["plan_review", "review"], "permissionMode": "safe", "enabled": true
 }'
 
 # 4. create a task on the board (requires plan) and watch:

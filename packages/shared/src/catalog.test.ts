@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import {
   ALL_STATUSES,
   CLAIM_RULES,
-  COMPOUND_ROLES,
+  DEFAULT_ROLES,
   REVERT_FALLBACK,
   RESOLVE_TARGETS,
   ROLES,
@@ -11,6 +11,8 @@ import {
   TaskStatus,
   UNBLOCK_TARGET,
   canTransition,
+  claimRuleFor,
+  normalizeRoles,
   normalizeStatus,
 } from "./catalog.js";
 
@@ -41,21 +43,30 @@ describe("status catalog", () => {
     }
   });
 
-  it("every queued status has a role that claims it", () => {
-    const claimable = new Set(CLAIM_RULES.flatMap((r) => r.from));
+  it("every queued status is claimed by exactly one role", () => {
     for (const status of ALL_STATUSES.filter((s) => STATUS_INFO[s].kind === "queued")) {
-      expect({ status, claimable: claimable.has(status) }).toEqual({ status, claimable: true });
+      const roles = CLAIM_RULES.filter((r) => r.from.includes(status)).map((r) => r.role);
+      expect({ status, roles: roles.length }).toEqual({ status, roles: 1 });
+      expect(claimRuleFor(status)!.role).toBe(roles[0]);
+    }
+    expect(claimRuleFor(TaskStatus.Coding)).toBeNull();
+  });
+
+  it("each role is one phase with one claim rule", () => {
+    expect(CLAIM_RULES.map((r) => r.role)).toEqual([...ROLES]);
+    for (const rule of CLAIM_RULES) {
+      // The pull-request phase is "merge" (its statuses and skill keep that name).
+      expect(STATUS_INFO[rule.to].phase).toBe(rule.role === "pr" ? "merge" : rule.role);
     }
   });
 
-  it("roles are the base roles plus the compound ones", () => {
-    const base = new Set(CLAIM_RULES.map((r) => r.role));
-    for (const role of ROLES) {
-      expect(base.has(role) || !!COMPOUND_ROLES[role]).toBe(true);
-    }
-    for (const members of Object.values(COMPOUND_ROLES)) {
-      for (const member of members) expect(base.has(member)).toBe(true);
-    }
+  it("agents that name no roles do everything but verify", () => {
+    expect(DEFAULT_ROLES).toEqual(["refine", "plan", "plan_review", "code", "review", "pr"]);
+  });
+
+  it("normalizes a role list: known roles, no duplicates, catalog order", () => {
+    expect(normalizeRoles(["review", "plan", "review", "boss"])).toEqual(["plan", "review"]);
+    expect(normalizeRoles([])).toEqual([]);
   });
 
   it("finished tasks go nowhere; needs_human goes only to resolve targets", () => {

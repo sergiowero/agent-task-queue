@@ -1,6 +1,14 @@
 import { MCP_SERVER_NAME } from "@agentq/mcp";
-import type { Agent, Phase, Project, Task , TaskStatus} from "@agentq/shared";
-import { STATUS_INFO, buildAgentBrief, isIndependentPhase, readSkill, skillForPhase, stripFrontmatter } from "@agentq/shared";
+import type { Agent, Phase, Project, Role, Task, TaskStatus } from "@agentq/shared";
+import {
+  ROLE_INFO,
+  STATUS_INFO,
+  buildAgentBrief,
+  isIndependentPhase,
+  readSkill,
+  skillForPhase,
+  stripFrontmatter,
+} from "@agentq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -135,7 +143,8 @@ export interface BuildPromptInput {
   task: Task;
   project: Project | null;
   agent: Agent;
-  effectiveRole: string;
+  /** The role the claim acts as. */
+  role: Role;
   /** The job's claim: every submit for this task must carry it. */
   claimToken?: string;
   /** Overrides the skill body read from disk (tests). */
@@ -143,7 +152,7 @@ export interface BuildPromptInput {
 }
 
 export function buildPrompt(input: BuildPromptInput): string {
-  const { task, project, agent, effectiveRole } = input;
+  const { task, project, agent, role } = input;
   const phase = phaseForStatus(task.status) ?? "code";
   const skill = input.phaseSkill ?? readPhaseSkill(phase);
   const submit = SUBMIT_TOOL[phase](task.id);
@@ -166,9 +175,9 @@ export function buildPrompt(input: BuildPromptInput): string {
     : "Start from the latest handoffs, the open findings and `humanNotes` (what people said since the last submission). The brief leaves out the full conversation; call `get_task` if you need it.";
 
   return [
-    `# AgentQ ${effectiveRole} agent`,
+    `# AgentQ agent: ${ROLE_INFO[role].label}`,
     "",
-    `You are an AgentQ **${effectiveRole}** agent (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
+    `You are an AgentQ agent working the **${role}** role (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
     `Task \`${task.id}\` has ALREADY been claimed for you by the runner. Do **NOT** call \`claim_task\`.`,
     `Current status: \`${task.status}\` (phase: ${phase}).`,
     project ? `Project working directory: \`${project.workingDirectory}\` (you are running inside it).` : "",

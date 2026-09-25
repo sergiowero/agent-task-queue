@@ -6,7 +6,6 @@ import type {
   Runner,
   RunnerInput,
   RunnerPermissionMode,
-  RunnerRole,
   RunnerTool,
 } from "../lib/api";
 import { api } from "../lib/api";
@@ -27,15 +26,14 @@ import {
 import { cn } from "../lib/cn";
 import { Alert } from "./Alert";
 import { Button } from "./Button";
+import { Checkbox } from "./Checkbox";
 import { Field } from "./Field";
 import { Input } from "./Input";
 import { Modal, useModal } from "./Modal";
 import type { SegmentOption } from "./SegmentedControl";
 import { SegmentedControl } from "./SegmentedControl";
 import { Select } from "./Select";
-import { ROLES as CATALOG_ROLES, ROLE_INFO } from "@agentq/shared/catalog";
-
-const ROLES = CATALOG_ROLES as readonly RunnerRole[];
+import { DEFAULT_ROLES, ROLES, ROLE_INFO, normalizeRoles, type Role } from "@agentq/shared/catalog";
 
 /** Effort levels per tool; null when the tool has no effort flag (see commands.ts). */
 const TOOL_EFFORTS: Record<RunnerTool, string[] | null> = {
@@ -96,7 +94,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
 
   const [name, setName] = useState(runner?.name ?? "");
   const [tool, setTool] = useState<RunnerTool | "">(runner?.tool ?? "");
-  const [role, setRole] = useState<RunnerRole>(runner?.role ?? "senior");
+  const [roles, setRoles] = useState<Role[]>(runner?.roles ?? DEFAULT_ROLES);
   const [projectId, setProjectId] = useState(runner?.projectId ?? "");
   const [model, setModel] = useState(runner?.model ?? "");
   const [effort, setEffort] = useState(runner?.effort ?? "");
@@ -123,12 +121,16 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
     setEffort("");
   }
 
+  function toggleRole(role: Role, on: boolean) {
+    setRoles((current) => normalizeRoles(on ? [...current, role] : current.filter((r) => r !== role)));
+  }
+
   const mutation = useMutation({
     mutationFn: () => {
       const payload: RunnerInput = {
         name: name.trim(),
         tool: effectiveTool as RunnerTool,
-        role,
+        roles,
         projectId: projectId || null,
         model: model.trim() || null,
         effort: showEffort && effort ? effort : null,
@@ -150,7 +152,8 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
 
   const isCustomTool = effectiveTool === "custom";
   const customNeedsArgs = isCustomTool && !parseExtraArgs(extraArgs);
-  const canSave = !!name.trim() && !!effectiveTool && !customNeedsArgs && !mutation.isPending;
+  const canSave =
+    !!name.trim() && !!effectiveTool && roles.length > 0 && !customNeedsArgs && !mutation.isPending;
 
   return (
     <Modal
@@ -184,7 +187,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
       <div className="space-y-4">
         <Field label="Name" required>
           <Input
-            placeholder="e.g. claude-senior"
+            placeholder="e.g. claude-coder"
             value={name}
             onChange={(e) => setName(e.target.value)}
             autoFocus
@@ -213,26 +216,51 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
               )}
             </Select>
           </Field>
-          <Field label="Role" icon={UserIcon} required hint={ROLE_INFO[role]}>
-            <Select value={role} onChange={(e) => setRole(e.target.value as RunnerRole)}>
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+          <Field label="Project" icon={FolderIcon}>
+            <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">Any project</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.displayName}
                 </option>
               ))}
             </Select>
           </Field>
         </div>
 
-        <Field label="Project" icon={FolderIcon}>
-          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Any project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.displayName}
-              </option>
+        <Field
+          label="Roles"
+          icon={UserIcon}
+          required
+          aside={
+            <Checkbox
+              label="All"
+              showLabel
+              checked={roles.length === ROLES.length}
+              indeterminate={roles.length > 0 && roles.length < ROLES.length}
+              onChange={() => setRoles(roles.length === ROLES.length ? [] : [...ROLES])}
+            />
+          }
+          hintTone={roles.length === 0 ? "danger" : "muted"}
+          hint={
+            roles.length === 0
+              ? "Pick at least one role."
+              : "The phases this runner works. The server verifies code itself, so verify is rarely needed."
+          }
+        >
+          <div role="group" className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-lg border border-border p-3">
+            {ROLES.map((r) => (
+              <div key={r} className="min-w-0">
+                <Checkbox
+                  label={ROLE_INFO[r].label}
+                  showLabel
+                  checked={roles.includes(r)}
+                  onChange={(on) => toggleRole(r, on)}
+                />
+                <p className="ml-6 text-xs leading-snug text-text-muted">{ROLE_INFO[r].description}</p>
+              </div>
             ))}
-          </Select>
+          </div>
         </Field>
 
         <div className={cn("grid gap-4", showEffort ? "grid-cols-3" : "grid-cols-1")}>

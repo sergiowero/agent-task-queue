@@ -18,6 +18,7 @@ import {
 import { getEvidence, getFindings } from "./records.js";
 import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
+import { DEFAULT_ROLES, type Role } from "./catalog.js";
 import {
   approveCode,
   approvePlan,
@@ -92,11 +93,12 @@ describe("claimNextTask", () => {
 
   it("returns null when no tasks are claimable", () => {
     createTestTask({ title: "coding", status: TaskStatus.Coding });
-    expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["code"], agent: agentA, projectId })).toBeNull();
   });
 
-  it("throws on an invalid role", () => {
-    expect(() => claimNextTask({ role: "janitor", agent: agentA, projectId })).toThrow("Invalid role");
+  it("throws on no roles or an unknown role", () => {
+    expect(() => claimNextTask({ roles: ["janitor" as Role], agent: agentA, projectId })).toThrow("Invalid roles");
+    expect(() => claimNextTask({ roles: [], agent: agentA, projectId })).toThrow("Invalid roles");
   });
 
   it("claims the highest priority task first", () => {
@@ -104,19 +106,19 @@ describe("claimNextTask", () => {
     createTestTask({ title: "high", status: TaskStatus.ReadyForCode, priority: 100 });
     createTestTask({ title: "mid", status: TaskStatus.ReadyForCode, priority: 50 });
 
-    const result = claimNextTask({ role: "implementer", agent: agentA, projectId });
+    const result = claimNextTask({ roles: ["code"], agent: agentA, projectId });
     expect(result).not.toBeNull();
     expect(result!.task.title).toBe("high");
     expect(result!.task.status).toBe(TaskStatus.Coding);
-    expect(result!.effectiveRole).toBe("implementer");
+    expect(result!.role).toBe("code");
   });
 
   it("two sequential claims by two agents return two different tasks", () => {
     const first = createTestTask({ title: "first", status: TaskStatus.ReadyForCode, priority: 100 });
     const second = createTestTask({ title: "second", status: TaskStatus.ReadyForCode, priority: 50 });
 
-    const a = claimNextTask({ role: "implementer", agent: agentA, projectId });
-    const b = claimNextTask({ role: "implementer", agent: agentB, projectId });
+    const a = claimNextTask({ roles: ["code"], agent: agentA, projectId });
+    const b = claimNextTask({ roles: ["code"], agent: agentB, projectId });
     expect(a!.task.id).toBe(first.id);
     expect(b!.task.id).toBe(second.id);
     expect(a!.task.assignedAgent).toMatchObject({
@@ -129,7 +131,7 @@ describe("claimNextTask", () => {
     expect(a!.task.claimToken).toBe(a!.claimToken);
     expect(b!.claimToken).not.toBe(a!.claimToken);
 
-    expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["code"], agent: agentA, projectId })).toBeNull();
   });
 
   it("never returns an already-assigned task", () => {
@@ -141,76 +143,76 @@ describe("claimNextTask", () => {
     });
     const free = createTestTask({ title: "free", status: TaskStatus.ReadyForCode, priority: 1 });
 
-    const result = claimNextTask({ role: "implementer", agent: agentA, projectId });
+    const result = claimNextTask({ roles: ["code"], agent: agentA, projectId });
     expect(result!.task.id).toBe(free.id);
   });
 
   it("planner cannot claim ready_for_code tasks", () => {
     createTestTask({ title: "code", status: TaskStatus.ReadyForCode, priority: 100 });
-    expect(claimNextTask({ role: "planner", agent: agentA, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["plan"], agent: agentA, projectId })).toBeNull();
   });
 
   it("planner claims plan_requested into planning", () => {
     const task = createTestTask({ title: "plan", status: TaskStatus.PlanRequested });
-    const result = claimNextTask({ role: "planner", agent: agentA, projectId });
+    const result = claimNextTask({ roles: ["plan"], agent: agentA, projectId });
     expect(result!.task.id).toBe(task.id);
     expect(result!.task.status).toBe(TaskStatus.Planning);
-    expect(result!.agent.role).toBe("planner");
+    expect(result!.agent.role).toBe("plan");
   });
 
   it("reviewer claims code_review_requested into reviewing", () => {
     createTestTask({ title: "code", status: TaskStatus.ReadyForCode, priority: 100 });
     const review = createTestTask({ title: "review", status: TaskStatus.CodeReviewRequested });
-    const result = claimNextTask({ role: "reviewer", agent: agentA, projectId });
+    const result = claimNextTask({ roles: ["review"], agent: agentA, projectId });
     expect(result!.task.id).toBe(review.id);
     expect(result!.task.status).toBe(TaskStatus.Reviewing);
   });
 
-  it("the integrator claims approved into merging (the implementer no longer does)", () => {
+  it("the pr role claims approved into merging (the code role does not)", () => {
     const approved = createTestTask({ title: "approved", status: TaskStatus.Approved });
-    expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
-    const result = claimNextTask({ role: "integrator", agent: agentA, projectId });
+    expect(claimNextTask({ roles: ["code"], agent: agentA, projectId })).toBeNull();
+    const result = claimNextTask({ roles: ["pr"], agent: agentA, projectId });
     expect(result!.task.id).toBe(approved.id);
     expect(result!.task.status).toBe(TaskStatus.Merging);
   });
 
-  it("senior can claim everything with the effective role", () => {
+  it("an agent with several roles claims across phases, acting as the role of each claim", () => {
     createTestTask({ title: "plan", status: TaskStatus.PlanRequested, priority: 30 });
     createTestTask({ title: "code", status: TaskStatus.ReadyForCode, priority: 20 });
     createTestTask({ title: "review", status: TaskStatus.CodeReviewRequested, priority: 10 });
 
-    const first = claimNextTask({ role: "senior", agent: agentA, projectId });
+    const first = claimNextTask({ roles: ["plan", "code", "review", "pr"], agent: agentA, projectId });
     expect(first!.task.title).toBe("plan");
     expect(first!.task.status).toBe(TaskStatus.Planning);
-    expect(first!.effectiveRole).toBe("planner");
+    expect(first!.role).toBe("plan");
 
-    const second = claimNextTask({ role: "senior", agent: agentA, projectId });
+    const second = claimNextTask({ roles: ["plan", "code", "review", "pr"], agent: agentA, projectId });
     expect(second!.task.title).toBe("code");
     expect(second!.task.status).toBe(TaskStatus.Coding);
-    expect(second!.effectiveRole).toBe("implementer");
+    expect(second!.role).toBe("code");
 
-    const third = claimNextTask({ role: "senior", agent: agentA, projectId });
+    const third = claimNextTask({ roles: ["plan", "code", "review", "pr"], agent: agentA, projectId });
     expect(third!.task.title).toBe("review");
     expect(third!.task.status).toBe(TaskStatus.Reviewing);
-    expect(third!.effectiveRole).toBe("reviewer");
+    expect(third!.role).toBe("review");
 
-    expect(claimNextTask({ role: "senior", agent: agentA, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["plan", "code", "review", "pr"], agent: agentA, projectId })).toBeNull();
   });
 
   it("filters by projectId", () => {
     createTestTask({ title: "other", status: TaskStatus.ReadyForCode, priority: 100, projectId: otherProjectId });
     const mine = createTestTask({ title: "mine", status: TaskStatus.ReadyForCode, priority: 1 });
 
-    const result = claimNextTask({ role: "implementer", agent: agentA, projectId });
+    const result = claimNextTask({ roles: ["code"], agent: agentA, projectId });
     expect(result!.task.id).toBe(mine.id);
     expect(result!.task.projectId).toBe(projectId);
 
-    expect(claimNextTask({ role: "implementer", agent: agentA, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["code"], agent: agentA, projectId })).toBeNull();
   });
 
   it("records history, conversation, context and registers the agent", () => {
     const task = createTestTask({ title: "side-effects", status: TaskStatus.PlanChangesRequested });
-    const result = claimNextTask({ role: "planner", agent: agentA, context: "extra context", projectId });
+    const result = claimNextTask({ roles: ["plan"], agent: agentA, context: "extra context", projectId });
 
     const stored = getTaskById(task.id)!;
     expect(stored.status).toBe(TaskStatus.Planning);
@@ -227,7 +229,7 @@ describe("claimNextTask", () => {
 
     const agent = getAgentById(result!.agent.id)!;
     expect(agent.toolName).toBe(agentA.toolName);
-    expect(agent.role).toBe("planner");
+    expect(agent.role).toBe("plan");
     expect(agent.sessionId).toBe(agentA.sessionId);
   });
 });
@@ -324,12 +326,12 @@ describe("concurrent claims from separate processes", () => {
     const script = `
       import { claimNextTask, getProjectByTaskId } from ${JSON.stringify(SHARED_INDEX)};
       const result = claimNextTask({
-        role: "implementer",
+        roles: ["code"],
         agent: { toolName: ${JSON.stringify(agentName)}, version: "1.0", model: "model", sessionId: ${JSON.stringify(`session-${agentName}`)} },
         projectId: ${JSON.stringify(projectId ?? null)} ?? undefined,
       });
       console.log(JSON.stringify(result
-        ? { success: true, task: { ...result.task, project: getProjectByTaskId(result.task.id) }, agent: { id: result.agent.id, role: result.effectiveRole } }
+        ? { success: true, task: { ...result.task, project: getProjectByTaskId(result.task.id) }, agent: { id: result.agent.id, role: result.role } }
         : { success: false, reason: "no_tasks_available" }));
     `;
     return run(["-e", script], dbPath);
@@ -352,7 +354,7 @@ describe("concurrent claims from separate processes", () => {
     expect(outA.task.status).toBe(TaskStatus.Coding);
     expect(outB.task.status).toBe(TaskStatus.Coding);
     expect(outA.task.project.id).toBe("p1");
-    expect(outA.agent.role).toBe("implementer");
+    expect(outA.agent.role).toBe("code");
   });
 
   it("only one of two simultaneous claims wins a single task", async () => {
@@ -413,7 +415,7 @@ describe("workflow actions", () => {
 
   function claimPlan() {
     const task = newTask();
-    const claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    const claimed = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
     expect(claimed.task.id).toBe(task.id);
     return claimed;
   }
@@ -452,17 +454,17 @@ describe("workflow actions", () => {
     const { task, claimToken } = claimPlan();
     submitPlan(task.id, { message: "p", claimToken });
     expect(approvePlan(task.id).status).toBe(TaskStatus.ReadyForCode);
-    const coder = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    const coder = claimNextTask({ roles: ["code"], agent: planner, projectId })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: coder.claimToken });
     expect(requestAiReview(task.id).status).toBe(TaskStatus.CodeReviewRequested);
     // Another session reviews: nobody reviews their own code.
-    expect(claimNextTask({ role: "reviewer", agent: planner, projectId })).toBeNull();
-    const reviewer = claimNextTask({ role: "reviewer", agent: { ...planner, sessionId: "s-reviewer" }, projectId })!;
+    expect(claimNextTask({ roles: ["review"], agent: planner, projectId })).toBeNull();
+    const reviewer = claimNextTask({ roles: ["review"], agent: { ...planner, sessionId: "s-reviewer" }, projectId })!;
     submitReview(task.id, { verdict: "approve", message: "ok", claimToken: reviewer.claimToken });
     expect(requestCodeChanges(task.id, { message: "fix" }).status).toBe(TaskStatus.ChangesRequested);
     // The person's request is a finding the coder must answer by id.
     expect(getFindings(task.id).find((f) => f.id === "H1-1")).toMatchObject({ severity: "major", text: "fix", status: "open" });
-    const again = claimNextTask({ role: "implementer", agent: planner, projectId })!;
+    const again = claimNextTask({ roles: ["code"], agent: planner, projectId })!;
     expect(() => submitCode(task.id, { message: "c2", worktree: "/w", claimToken: again.claimToken })).toThrow("H1-1");
     submitCode(task.id, {
       message: "c2",
@@ -471,7 +473,7 @@ describe("workflow actions", () => {
       claimToken: again.claimToken,
     });
     expect(approveCode(task.id).status).toBe(TaskStatus.Approved);
-    const merger = claimNextTask({ role: "builder", agent: planner, projectId })!;
+    const merger = claimNextTask({ roles: ["code", "pr"], agent: planner, projectId })!;
     submitMerge(task.id, { branch: "main", commit: "abc", authors: "a", claimToken: merger.claimToken });
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.PrOpen);
     const done = completeTask(task.id);
@@ -513,7 +515,7 @@ describe("workflow actions", () => {
     });
     expect(blocked.newStatus).toBe(TaskStatus.NeedsHuman);
     expect(blocked.task.blocker).toMatchObject({ phase: "plan", fromStatus: TaskStatus.Planning, question: "Which one wins?" });
-    expect(claimNextTask({ role: "senior", agent: planner, projectId })).toBeNull();
+    expect(claimNextTask({ roles: DEFAULT_ROLES, agent: planner, projectId })).toBeNull();
 
     expect(() => resolveBlocker(task.id, { answer: "x", targetStatus: TaskStatus.Approved })).toThrow("can be resolved to");
     const resolved = resolveBlocker(task.id, { answer: "The guardrails win.", targetStatus: TaskStatus.PlanChangesRequested });
@@ -526,10 +528,10 @@ describe("workflow actions", () => {
   it("stops retrying after AGENTQ_MAX_REVERTS runs without a submit", () => {
     const task = newTask();
     for (let i = 1; i <= 2; i++) {
-      claimNextTask({ role: "planner", agent: planner, projectId });
+      claimNextTask({ roles: ["plan"], agent: planner, projectId });
       expect(revertClaim(task.id, `crash ${i}`)!.status).toBe(TaskStatus.PlanRequested);
     }
-    claimNextTask({ role: "planner", agent: planner, projectId });
+    claimNextTask({ roles: ["plan"], agent: planner, projectId });
     const blocked = revertClaim(task.id, "crash 3")!;
     expect(blocked.status).toBe(TaskStatus.NeedsHuman);
     expect(blocked.revertStreak).toBe(3);
@@ -541,9 +543,9 @@ describe("workflow actions", () => {
 
   it("a submit resets the revert streak", () => {
     newTask();
-    let claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    let claimed = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
     revertClaim(claimed.task.id, "crash");
-    claimed = claimNextTask({ role: "planner", agent: planner, projectId })!;
+    claimed = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
     expect(getTaskById(claimed.task.id)!.revertStreak).toBe(1);
     expect(submitPlan(claimed.task.id, { message: "p", claimToken: claimed.claimToken }).task.revertStreak).toBe(0);
   });
@@ -587,7 +589,7 @@ describe("autonomy L2: reviews that decide", () => {
   function coded(risk: "low" | "medium" | "high" = "medium") {
     const task = createTask({ title: "l2", description: "d", projectId, risk });
     createdTaskIds.push(task.id);
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     expect(c.task.id).toBe(task.id);
     const submitted = submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
     expect(submitted.newStatus).toBe(TaskStatus.CodeReviewRequested);
@@ -595,13 +597,13 @@ describe("autonomy L2: reviews that decide", () => {
   }
 
   function review(taskId: string, input: Omit<Parameters<typeof submitReview>[1], "claimToken">) {
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     expect(r.task.id).toBe(taskId);
     return submitReview(taskId, { ...input, claimToken: r.claimToken });
   }
 
   function recode(taskId: string) {
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     expect(c.task.id).toBe(taskId);
     const findingResolutions = getFindings(taskId)
       .filter((f) => f.status === "open")
@@ -611,7 +613,7 @@ describe("autonomy L2: reviews that decide", () => {
 
   it("submit_code asks for an AI review without a click, and the coder cannot take it", () => {
     const id = coded();
-    expect(claimNextTask({ role: "senior", agent: coder, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["code", "review"], agent: coder, projectId })).toBeNull();
     expect(getTaskById(id)!.producers.code).toMatchObject({ sessionKey: "session:s-coder", model: "sonnet" });
   });
 
@@ -627,7 +629,7 @@ describe("autonomy L2: reviews that decide", () => {
 
   it("refuses approve with open blocker/major findings, and request_changes without findings", () => {
     const id = coded();
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     expect(() =>
       submitReview(id, { verdict: "approve", message: "x", claimToken: r.claimToken, findings: [{ severity: "major", text: "no tests" }] }),
     ).toThrow("open blocker or major findings: R1-1");
@@ -684,14 +686,14 @@ describe("autonomy L2: reviews that decide", () => {
     updateProject(projectId, { policy: { requireDifferentModel: true } });
     const id = coded();
     const sameModel = { ...reviewer, model: "sonnet" };
-    expect(claimNextTask({ role: "reviewer", agent: sameModel, projectId })).toBeNull();
-    expect(claimNextTask({ role: "reviewer", agent: reviewer, projectId })!.task.id).toBe(id);
+    expect(claimNextTask({ roles: ["review"], agent: sameModel, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: reviewer, projectId })!.task.id).toBe(id);
   });
 
   it("claims by hand-opened sessions get a lease; the sweeper returns expired ones to the queue", () => {
     const task = createTask({ title: "lease", description: "d", projectId });
     createdTaskIds.push(task.id);
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     const lease = getTaskById(task.id)!.leaseExpiresAt!;
     expect(new Date(lease).getTime()).toBeGreaterThan(Date.now() + 80 * 60_000);
     expect(touchLease(task.id, "wrong")).toBe(false);
@@ -705,7 +707,7 @@ describe("autonomy L2: reviews that decide", () => {
     expect(released.status).toBe(TaskStatus.ReadyForCode);
     expect(released.leaseExpiresAt).toBeNull();
 
-    const byRunner = claimNextTask({ role: "implementer", agent: coder, projectId, runnerId: "r1" })!;
+    const byRunner = claimNextTask({ roles: ["code"], agent: coder, projectId, runnerId: "r1" })!;
     expect(byRunner.task.leaseExpiresAt).toBeNull();
     expect(byRunner.task.assignedAgent?.sessionKey).toBe("runner:r1");
   });
@@ -750,7 +752,7 @@ describe("evidence, validation plans and findings by id", () => {
       requiresPlan: true,
       acceptanceCriteria: ["persists", "fast"],
     });
-    const c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
     expect(c.task.id).toBe(task.id);
     return { task, claimToken: c.claimToken };
   }
@@ -783,7 +785,7 @@ describe("evidence, validation plans and findings by id", () => {
   it("submit_code records evidence per criterion, the branch and the head commit", () => {
     const projectId = fresh();
     const task = createTask({ title: "evidence", description: "d", projectId, acceptanceCriteria: ["works"] });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     expect(c.task.id).toBe(task.id);
     expect(() =>
       submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken, criteria: [{ id: "AC7", status: "met" }] }),
@@ -808,13 +810,13 @@ describe("evidence, validation plans and findings by id", () => {
   it("the coder must answer every open finding; a finding reopened twice goes to a person", () => {
     const projectId = fresh();
     const task = createTask({ title: "dispute", description: "d", projectId });
-    let c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
-    let r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    let r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, { verdict: "request_changes", message: "m", claimToken: r.claimToken, findings: [{ severity: "major", text: "add a test" }] });
 
     for (let round = 1; round <= 2; round++) {
-      c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+      c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
       expect(() => submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken })).toThrow(
         "Answer every open review finding",
       );
@@ -825,7 +827,7 @@ describe("evidence, validation plans and findings by id", () => {
         findingResolutions: [{ id: "R1-1", status: "wontfix", resolution: "Covered by an existing test" }],
       });
       expect(getFindings(task.id)[0]).toMatchObject({ status: "wontfix", resolution: "Covered by an existing test" });
-      r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+      r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
       const out = submitReview(task.id, {
         verdict: "request_changes",
         message: "still needed",

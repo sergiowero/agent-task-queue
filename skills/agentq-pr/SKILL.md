@@ -3,13 +3,13 @@ name: agentq-pr
 description: Pull-request phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body AgentQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_pr, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "5.1.0"
+  version: "6.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
 # AgentQ Pull Request Skill
 
-Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). This is the **integrator** role (also part of `builder` and `senior`). The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, handoff, autonomy, guardrails) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`).
+Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). This is the **`pr`** role. The cross-cutting rules in `agentq-claim` (identity, MCP conventions, context reading, handoff, autonomy, guardrails) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`).
 
 ## What this phase does
 
@@ -85,7 +85,7 @@ rm .git/agentq-pr-body.md
   "mergeBranch": "<task.mergeBranch>",
   "headBranch": "<feature branch>",
   "commit": "<feature-branch head SHA>",
-  "authors": "<implementer>,<co-authors>",
+  "authors": "<coder>,<co-authors>",
   "worktree": "<task.worktreePath>",
   "message": "<optional notes for the person who merges>",
   "context": "PR #<n> open against <mergeBranch>; <anything the person merging should check>" }

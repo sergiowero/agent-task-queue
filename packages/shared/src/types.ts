@@ -3,6 +3,7 @@ import type {
   FindingStatus,
   Phase,
   Risk,
+  Role,
   Severity,
   TaskStatus,
   TaskType,
@@ -146,7 +147,7 @@ export interface PlanSubmission {
   touchedPaths: string[];
 }
 
-/** The pull request the integrator opened, kept in sync with GitHub. */
+/** The pull request the agent with the `pr` role opened, kept in sync with GitHub. */
 export interface PullRequest {
   url: string | null;
   number: number | null;
@@ -277,6 +278,7 @@ export interface Agent {
   toolName: string;
   version: string;
   model: string;
+  /** The role its latest claim acted as (e.g. "code"). */
   role: string;
   sessionId: string;
   host: string | null;
@@ -317,7 +319,8 @@ export interface Runner {
   id: string;
   name: string;
   tool: RunnerTool;
-  role: string;
+  /** The phases it works (one or more). */
+  roles: Role[];
   projectId: string | null;
   model: string | null;
   /** Reasoning effort passed to tools that support it (claude, codex, opencode). */

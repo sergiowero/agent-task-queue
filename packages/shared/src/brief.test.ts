@@ -53,7 +53,7 @@ describe("task brief", () => {
       nonGoals: ["PDF export"],
       references: [{ label: "Design", target: "https://example.com/design" }],
     });
-    let c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
     submitPlan(task.id, {
       message: "## Plan v1",
       claimToken: c.claimToken,
@@ -66,9 +66,9 @@ describe("task brief", () => {
     expect(buildTaskBrief(task.id)!.latestPlan).toBe("## Plan v1");
     approvePlan(task.id);
 
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, { message: "## Code r1 MARKER-ROUND-1", worktree: "/w", claimToken: c.claimToken, context: "Look at the stream" });
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, {
       verdict: "request_changes",
       message: "one issue",
@@ -101,13 +101,13 @@ describe("task brief", () => {
   it("records people's change requests and answers as handoffs", () => {
     const projectId = project();
     const task = createTaskForProject({ title: "human", description: "A long enough description for readiness.", projectId });
-    let c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     reportBlocker(task.id, { reason: "Unclear", question: "Which format?", claimToken: c.claimToken, context: "tried both" });
     resolveBlocker(task.id, { answer: "CSV only.", targetStatus: TaskStatus.ChangesRequested });
     expect(buildTaskBrief(task.id)!.lastAnswer).toBe("CSV only.");
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.Approved);
     const phases = getHandoffs(task.id).map((h) => [h.phase, h.summary]);
@@ -118,7 +118,7 @@ describe("task brief", () => {
   it("a person's change request reaches the coder as a human handoff", () => {
     const l0 = project();
     const task = createTaskForProject({ title: "l0", description: "A long enough description for readiness.", projectId: l0, autonomy: 0 });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId: l0 })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: l0 })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
     requestCodeChanges(task.id, { message: "Rename the flag." });
     expect(buildTaskBrief(task.id)!.handoffs.at(-1)).toMatchObject({ phase: "human", summary: "Rename the flag." });
@@ -136,7 +136,7 @@ describe("pull request body", () => {
       acceptanceCriteria: ["export works $ bun test export"],
       nonGoals: ["PDF export"],
     });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, {
       message: "done",
       worktree: "/w",
@@ -145,7 +145,7 @@ describe("pull request body", () => {
       claimToken: c.claimToken,
     });
     expect(buildTaskBrief(task.id)!.pr).toBeNull();
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, {
       verdict: "approve",
       message: "ok",
@@ -228,7 +228,7 @@ describe("independent checks", () => {
       acceptanceCriteria: ["export works $ bun test export"],
       nonGoals: ["PDF export"],
     });
-    let c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
     submitPlan(task.id, {
       message: "## Plan v1",
       claimToken: c.claimToken,
@@ -239,7 +239,7 @@ describe("independent checks", () => {
     });
     approvePlan(task.id);
 
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     postComment(task.id, { message: "CODER-COMMENT" });
     submitCode(task.id, {
       message: "## Code CODER-MESSAGE",
@@ -254,7 +254,7 @@ describe("independent checks", () => {
       criteria: [{ id: "AC1", status: "met" }],
     });
 
-    const r1 = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r1 = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     expect(r1.task.status).toBe(TaskStatus.Reviewing);
     const first = buildAgentBrief(r1.task) as IndependentBrief;
     expect(first).toMatchObject({ independent: true, phase: "review", task: { headSha: "abc123", worktreePath: "/w" } });
@@ -271,10 +271,10 @@ describe("independent checks", () => {
     });
 
     // Round 2: the coder asks a person, answers the findings and resubmits.
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     reportBlocker(task.id, { reason: "CODER-BLOCKER reason", question: "CSV or XLSX?", claimToken: c.claimToken, context: "CODER-BLOCKER note" });
     resolveBlocker(task.id, { answer: "CSV only.", targetStatus: TaskStatus.ChangesRequested });
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, {
       message: "## Code r2 CODER-MESSAGE",
       worktree: "/w",
@@ -288,7 +288,7 @@ describe("independent checks", () => {
     });
     addUserComment(task.id, { message: "Check the header row too." });
 
-    const r2 = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r2 = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     const brief = buildAgentBrief(r2.task) as IndependentBrief;
     expect(brief.task).toMatchObject({
       description: "Users can export their data as CSV from the settings page.",
@@ -345,7 +345,7 @@ describe("independent checks", () => {
       autonomy: 2,
       acceptanceCriteria: ["export works $ bun test export"],
     });
-    const c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
     submitPlan(task.id, {
       message: "## Plan to critique",
       claimToken: c.claimToken,
@@ -356,7 +356,7 @@ describe("independent checks", () => {
       touchedPaths: ["src/export.ts"],
       openQuestions: [{ text: "Dates in UTC?", blocking: false }],
     });
-    const critic = claimNextTask({ role: "plan_reviewer", agent: reviewer, projectId })!;
+    const critic = claimNextTask({ roles: ["plan_review"], agent: reviewer, projectId })!;
     expect(critic.task.status).toBe(TaskStatus.PlanReviewing);
     const brief = buildAgentBrief(critic.task) as IndependentBrief;
     expect(brief).toMatchObject({ independent: true, phase: "plan_review", latestPlan: "## Plan to critique", validationPlan });
@@ -375,7 +375,7 @@ describe("independent checks", () => {
       projectId,
       acceptanceCriteria: ["export works $ bun test export"],
     });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     // The verifier is online only for this submit: other tests expect code to go straight to review.
     setAppState("verifier_heartbeat", new Date().toISOString());
     try {
@@ -390,7 +390,7 @@ describe("independent checks", () => {
     } finally {
       setAppState("verifier_heartbeat", new Date(0).toISOString());
     }
-    const v = claimNextTask({ role: "verifier", agent: reviewer, projectId })!;
+    const v = claimNextTask({ roles: ["verify"], agent: reviewer, projectId })!;
     expect(v.task.status).toBe(TaskStatus.Verifying);
     const brief = buildAgentBrief(v.task) as IndependentBrief;
     expect(brief).toMatchObject({ independent: true, phase: "verify", commands: { test: "bun test" }, task: { worktreePath: "/w" } });

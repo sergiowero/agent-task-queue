@@ -1,9 +1,9 @@
 ---
 name: agentq-claim
-description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
+description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "5.1.0"
+  version: "6.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -21,15 +21,25 @@ If the `agentq` tools are missing, the server is not registered: tell the user t
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
 - **sessionId**: Current session ID from the invoking tool (do not generate)
-- **role**: Specified by user at skill invocation, default: `senior`. Base roles: `refiner`, `planner`, `plan_reviewer`, `implementer`, `verifier`, `reviewer`, `integrator` (pushes and opens the PR). Compound: `senior` (all but verifier), `architect` (planner + plan_reviewer + reviewer), `qa` (verifier + reviewer), `builder` (implementer + integrator)
+- **roles**: the phases you work, one or more, as the user asks at skill invocation (e.g. "work as plan and review" → `["plan", "review"]`). When the user names none, **omit `roles`**: the server gives you every role but `verify` (it has a built-in verifier).
+
+| Role | Claims | Phase skill |
+|------|--------|-------------|
+| `refine` | `draft` | `agentq-refine` |
+| `plan` | `plan_requested`, `plan_changes_requested` | `agentq-plan` |
+| `plan_review` | `plan_review_requested` | `agentq-plan-review` |
+| `code` | `ready_for_code`, `changes_requested` | `agentq-code` |
+| `verify` | `verify_requested` | `agentq-verify` |
+| `review` | `code_review_requested` | `agentq-review` |
+| `pr` | `approved` (push the branch, open the PR) | `agentq-pr` |
 
 ## Claim a Task
 
 Call `claim_task`:
 
 ```json
-{ "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "5.1.0",
+{ "toolName": "<toolName>", "version": "<version>", "model": "<model>", "roles": ["<role>", "..."], "sessionId": "<sessionId>",
+  "skillsVersion": "6.0.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -47,19 +57,21 @@ Call `claim_task`:
     "evidence": [{ "id": "E1", "criterionId": "AC1", "command": "bun test", "exitCode": 0, "summary": "..." }],
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
-  "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "5.1.0" }
+  "agent": { "id": "opencode@1.0|model", "role": "code" },
+  "claimToken": "<secret for this claim>", "skillsVersion": "6.0.0" }
 ```
+
+`agent.role` is the one of your roles this claim acts as.
 
 For a plan critique, a verification or a code review (see Independent Checks), `task` is only the brief's task summary with its `project` (`"independent": true`): no conversation, contexts, handoffs, evidence or criteria status.
 
-**Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
+**Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your roles." }`
 
 **Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", ... }` — stop and tell the user to run `bun run install:skills` in the AgentQ checkout. Do the same if the server's instructions name a newer skills bundle than this skill's version.
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
-**Separation of duties**: you never get the review of code your own session wrote (and, when the project requires it, not with the coder's model either). With the `senior` role you may therefore find no tasks while your code waits for another agent's review: that is expected.
+**Separation of duties**: you never get the review of code your own session wrote (and, when the project requires it, not with the coder's model either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected.
 
 **Lease**: a claim from a hand-opened session expires after the project's lease (90 min by default) without any AgentQ call, and the task goes back to the queue. Every AgentQ tool call keeps it alive; during a long silent stretch (a long build or test run), call `heartbeat` with the `taskId`.
 
@@ -78,17 +90,17 @@ If an AgentQ runner started you, the task was **already claimed by the runner**:
 
 The claim moves the task to its in-progress status; route on the status it was claimed from (the last `history` entry's `pre_status`) or on the in-progress status:
 
-| Claimed from | In progress | Phase | Skill to read next |
-|--------------|-------------|-------|--------------------|
-| `draft` | `refining` | Refining | `agentq-refine` |
-| `plan_requested` | `planning` | Planning | `agentq-plan` |
-| `plan_changes_requested` | `planning` | Planning | `agentq-plan` |
-| `plan_review_requested` | `plan_reviewing` | Plan critique | `agentq-plan-review` |
-| `ready_for_code` | `coding` | Coding | `agentq-code` |
-| `changes_requested` | `coding` | Coding | `agentq-code` |
-| `verify_requested` | `verifying` | Verifying | `agentq-verify` |
-| `code_review_requested` | `reviewing` | Reviewing | `agentq-review` |
-| `approved` | `merging` | Pull request (integrator) | `agentq-pr` |
+| Claimed from | In progress | Role | Phase | Skill to read next |
+|--------------|-------------|------|-------|--------------------|
+| `draft` | `refining` | `refine` | Refining | `agentq-refine` |
+| `plan_requested` | `planning` | `plan` | Planning | `agentq-plan` |
+| `plan_changes_requested` | `planning` | `plan` | Planning | `agentq-plan` |
+| `plan_review_requested` | `plan_reviewing` | `plan_review` | Plan critique | `agentq-plan-review` |
+| `ready_for_code` | `coding` | `code` | Coding | `agentq-code` |
+| `changes_requested` | `coding` | `code` | Coding | `agentq-code` |
+| `verify_requested` | `verifying` | `verify` | Verifying | `agentq-verify` |
+| `code_review_requested` | `reviewing` | `review` | Reviewing | `agentq-review` |
+| `approved` | `merging` | `pr` | Pull request | `agentq-pr` |
 
 `claim_task` also returns `phaseSkill` with the name to follow.
 
@@ -114,7 +126,7 @@ Agents MUST respect guardrails — they define hard constraints that must not be
 
 ## Context Handoff
 
-Handoffs are how agents pass knowledge to the agents that continue the work (refiner → planner → coder → coder of the next round → integrator). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase. The independent checks (plan critic, verifier, reviewer) never read handoffs, but they write one for the agent that acts on their verdict.
+Handoffs are how agents pass knowledge to the agents that continue the work (refine → plan → code → code of the next round → pr). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase. The independent checks (`plan_review`, `verify`, `review`) never read handoffs, but they write one for the agent that acts on their verdict.
 
 - Write what the next agent needs and cannot get cheaply from the diff or the `message`: decisions and why, gotchas, where to look first, what is left or risky. Do not repeat the `message`.
 - Keep it short (1–5 sentences) and concrete: file paths, function names, commands.
@@ -148,4 +160,4 @@ Agents MUST NOT ask the user for permission or confirmation during task executio
 
 ## No Tasks Available
 
-When `claim_task` returns `{ "success": false, "reason": "no_tasks_available" }`: stop immediately, inform the user "No tasks available for your role.", and do NOT retry or loop.
+When `claim_task` returns `{ "success": false, "reason": "no_tasks_available" }`: stop immediately, inform the user "No tasks available for your roles.", and do NOT retry or loop.

@@ -48,7 +48,7 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 | **Works with the agents you already use** | Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot (CLI and VS Code), or any MCP client. |
 | **One-command setup** | `bun run install:all` registers the MCP server and the workflow skills with every coding tool it finds, on macOS, Linux and Windows. |
 | **Hands-free runners** | The server claims tasks and launches `claude`, `codex`, `opencode` or `gemini` headless in the right repo. No manual prompting. |
-| **Role-based agents** | Planner, implementer, reviewer, senior (all three) and architect (plan + review). Mix models per role. |
+| **Composable roles** | One role per phase (refine, plan, plan_review, code, verify, review, pr); give an agent or runner any mix of them. Mix models per role. |
 | **Context handoff** | Every submission carries notes for the next agent: decisions taken, gotchas, what to check next. No more cold starts. |
 | **Isolated git worktrees** | One worktree and feature branch per task, so parallel agents never step on each other. |
 | **Atomic claims** | Claims run in a SQLite transaction. Two agents never get the same task. |
@@ -73,7 +73,7 @@ flowchart LR
 ```
 
 1. **You** create a project (a local git repo) and write tasks with a description, guardrails and acceptance criteria.
-2. **An agent claims** the highest-priority task its role can work on, through the `claim_task` MCP tool.
+2. **An agent claims** the highest-priority task one of its roles can work on, through the `claim_task` MCP tool.
 3. **It does the phase's work** (plan, code, review or merge), guided by a phase skill, in the project directory or in the task's worktree.
 4. **It submits** with a Markdown message plus handoff notes. The task moves to the next status and is released.
 5. **You review** in the dashboard. Approve, request changes, or ask for an AI code review. The next agent picks it up.
@@ -116,9 +116,9 @@ Open **http://localhost:3000**. The API and the dashboard share that single port
 1. **Projects → New project.** Give it a name and the absolute path of a local git repository.
 2. **Board → New task.** Describe what you want, add acceptance criteria, and choose whether it needs a plan first.
 3. **Put an agent on it.** Pick one of the two modes:
-   - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`), role `senior`, mode `safe`, and start it. It claims the task within seconds.
+   - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`), keep the default roles (all but verify), mode `safe`, and start it. It claims the task within seconds.
    - **Interactive:** open your coding tool in any folder and say:
-     > Work the AgentQ queue as a senior.
+     > Work the AgentQ queue.
 
      The `agentq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty.
 4. **Review.** The plan lands in *Needs you*. Approve it, and an agent writes the code in its own worktree. Approve the code, and an agent pushes the branch and opens a PR.
@@ -128,7 +128,7 @@ Open **http://localhost:3000**. The API and the dashboard share that single port
 
 | Mode | What happens | Best for |
 |---|---|---|
-| **Runners** (hands-free) | The server polls the queue with a role and launches the coding tool headless in the project directory, with the task and the phase skill as the prompt. Each job gets the MCP server automatically. | Background work, overnight queues, parallel agents |
+| **Runners** (hands-free) | The server polls the queue with its roles and launches the coding tool headless in the project directory, with the task and the phase skill as the prompt. Each job gets the MCP server automatically. | Background work, overnight queues, parallel agents |
 | **MCP + skills** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and invoke the `agentq-claim` skill. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
 
 Both go through the same MCP server, the same SQLite database and the same workflow rules in `packages/shared`.
@@ -158,27 +158,27 @@ stateDiagram-v2
     plan_review_requested --> waiting_plan_review: critic approves (medium/high risk)
     planning --> split: plan with subtasks approved
     [*] --> ready_for_code: no plan
-    plan_requested --> planning: planner claims
+    plan_requested --> planning: plan role claims
     planning --> waiting_plan_review: submit_plan
     waiting_plan_review --> ready_for_code: you approve
     waiting_plan_review --> plan_changes_requested: you request changes
-    plan_changes_requested --> planning: planner claims
-    ready_for_code --> coding: implementer claims
+    plan_changes_requested --> planning: plan role claims
+    ready_for_code --> coding: code role claims
     coding --> waiting_code_review: submit_code (L0)
     coding --> code_review_requested: submit_code (L1+)
     coding --> verify_requested: submit_code (with commands)
-    verify_requested --> verifying: verifier claims
+    verify_requested --> verifying: verify role claims
     verifying --> code_review_requested: green
     verifying --> changes_requested: red
     reviewing --> approved: approve (L1+)
     reviewing --> changes_requested: request_changes (L1+)
     waiting_code_review --> code_review_requested: you request an AI review
-    code_review_requested --> reviewing: reviewer claims
+    code_review_requested --> reviewing: review role claims
     reviewing --> waiting_code_review: submit_review (L0)
     waiting_code_review --> changes_requested: you request changes
-    changes_requested --> coding: implementer claims
+    changes_requested --> coding: code role claims
     waiting_code_review --> approved: you approve
-    approved --> merging: integrator claims
+    approved --> merging: pr role claims
     merging --> pr_open: submit_pr (PR opened)
     pr_open --> complete: PR merged on GitHub
     pr_open --> needs_human: PR closed
@@ -196,27 +196,25 @@ Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first
 
 Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
 
-The task ends on GitHub. The integrator opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
+The task ends on GitHub. The agent with the `pr` role opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
 Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
 
 ### Roles
 
+A role is a phase. An agent or runner has **one or more** roles and claims the tasks of any of them; an agent that names none gets every role but `verify`.
+
 | Role | Claims tasks in | Does |
 |---|---|---|
-| `refiner` | `draft` | Turns a rough draft into a ready task: testable criteria, type, risk, scope |
-| `planner` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the plan with its validation plan; splits big work into subtasks |
-| `plan_reviewer` | `plan_review_requested` | Critiques plans (L2+); a low-risk plan it approves goes straight to coding |
-| `implementer` | `ready_for_code`, `changes_requested` | Codes in the task worktree with tests and evidence, and commits |
-| `verifier` | `verify_requested` | Runs the verification commands (the server has a built-in one) |
-| `reviewer` | `code_review_requested` | Reviews the commits; the verdict routes the task |
-| `integrator` | `approved` | Pushes the branch and opens the PR |
-| `senior` | everything but verification | One agent for the whole flow (it never reviews its own work) |
-| `architect` | planner + plan_reviewer + reviewer | Plans and reviews, never writes code |
-| `qa` | verifier + reviewer | Checks the work |
-| `builder` | implementer + integrator | Writes the code and opens the PR |
+| `refine` | `draft` | Turns a rough draft into a ready task: testable criteria, type, risk, scope |
+| `plan` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the plan with its validation plan; splits big work into subtasks |
+| `plan_review` | `plan_review_requested` | Critiques plans (L2+); a low-risk plan it approves goes straight to coding |
+| `code` | `ready_for_code`, `changes_requested` | Codes in the task worktree with tests and evidence, and commits |
+| `verify` | `verify_requested` | Runs the verification commands (the server has a built-in verifier) |
+| `review` | `code_review_requested` | Reviews the commits; the verdict routes the task |
+| `pr` | `approved` | Pushes the branch and opens the PR |
 
-Run a cheap, fast model as implementer and a stronger one as plan reviewer and reviewer, or one `senior` agent plus a second reviewing agent. Nobody reviews their own plan or code. Agents are identified as `<tool>@<version>|<model>`, so every plan, commit and review is traceable to the exact tool and model that produced it.
+Compose them to fit your models: a cheap, fast model with `["code", "pr"]` and a stronger one with `["plan", "plan_review", "review"]`, or one agent with every role plus a second one with `["review"]`. Nobody reviews their own plan or code. Agents are identified as `<tool>@<version>|<model>`, so every plan, commit and review is traceable to the exact tool and model that produced it.
 
 ### The board
 
@@ -241,7 +239,7 @@ Let an agent write tasks for you with the `agentq-create-task` skill: *"Create a
 
 ## Runners (hands-free mode)
 
-A runner is a worker inside the web server with a **tool**, a **role**, an optional **project**, a **model**, a **concurrency** and a **permission mode**. Every few seconds it claims the next eligible task and launches the tool headless in the project directory.
+A runner is a worker inside the web server with a **tool**, one or more **roles**, an optional **project**, a **model**, a **concurrency** and a **permission mode**. Every few seconds it claims the next eligible task and launches the tool headless in the project directory.
 
 - **Model and effort**: type any model id the tool accepts, or leave it empty to use the tool's default; pick an effort level for tools that have one.
 - **Live logs**: follow every job's output from the Runners page.
@@ -258,11 +256,11 @@ The `agentq` MCP server exposes the whole agent protocol as typed tools. In Clau
 
 | Tool | Purpose |
 |---|---|
-| `claim_task` | Atomically claim the highest-priority task eligible for your role |
+| `claim_task` | Atomically claim the highest-priority task one of your roles works (`roles` is optional: all but `verify`) |
 | `submit_plan` | Submit a plan and move the task to plan review |
 | `submit_code` | Submit the worktree and move the task to code review |
 | `submit_review` | Submit review findings with an approve or request-changes verdict |
-| `submit_pr` | Record the pull request the integrator opened (`submit_merge` is its deprecated alias) |
+| `submit_pr` | Record the pull request the `pr` role opened (`submit_merge` is its deprecated alias) |
 | `get_task` | Read a task with its project, conversation and handoff notes |
 | `post_comment` | Add a note to a task without changing its status |
 | `list_projects`, `create_task` | Create well-formed tasks |
@@ -272,7 +270,7 @@ Every `submit_*` call requires a `context`: short handoff notes for the agent of
 
 ## Skills
 
-Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders.
+Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run it again (and restart your tools) after updating AgentQ: the server refuses skills older than the bundle it supports (6.0.0 replaced the single `role` with a `roles` list named after the phases).
 
 | Skill | What it does |
 |---|---|

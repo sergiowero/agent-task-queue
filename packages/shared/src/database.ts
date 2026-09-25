@@ -3,8 +3,8 @@ import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import type { AutonomyLevel, Risk, TaskType } from "./catalog.js";
-import { SEPARATION, TASK_TYPES } from "./catalog.js";
+import type { AutonomyLevel, Risk, Role, TaskType } from "./catalog.js";
+import { SEPARATION, TASK_TYPES, normalizeRoles } from "./catalog.js";
 import type { PolicySettings } from "./policy.js";
 import { criteriaFromStored, normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { resolveProfile, type ProjectProfile } from "./profile.js";
@@ -196,6 +196,24 @@ function createLegacyTables(d: Database): void {
   d.exec(`CREATE TABLE IF NOT EXISTS status_history (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
     pre_status TEXT NOT NULL, new_status TEXT NOT NULL, timestamp TEXT NOT NULL, FOREIGN KEY (task_id) REFERENCES tasks(id))`);
 }
+
+/**
+ * Role names before 024_phase_roles → the roles they became. Frozen here: a
+ * migration must not follow later changes to the catalog.
+ */
+const LEGACY_ROLES: Record<string, string[]> = {
+  refiner: ["refine"],
+  planner: ["plan"],
+  plan_reviewer: ["plan_review"],
+  implementer: ["code"],
+  verifier: ["verify"],
+  reviewer: ["review"],
+  integrator: ["pr"],
+  senior: ["refine", "plan", "plan_review", "code", "review", "pr"],
+  architect: ["plan", "plan_review", "review"],
+  qa: ["verify", "review"],
+  builder: ["code", "pr"],
+};
 
 interface Migration {
   name: string;
@@ -569,6 +587,29 @@ const MIGRATIONS: Migration[] = [
       try { d.exec("UPDATE tasks SET pull_request = NULL"); } catch {}
     },
   },
+  {
+    // Roles are named after their phase and a runner has a list of them (compound roles are gone).
+    // runners.role stays (SQLite cannot drop it portably) but is no longer read.
+    name: "024_phase_roles",
+    up: (d) => {
+      addColumn(d, "runners", "roles TEXT");
+      const runners = d.prepare("SELECT id, role FROM runners").all() as { id: string; role: string }[];
+      for (const { id, role } of runners) {
+        const roles = LEGACY_ROLES[role] ?? LEGACY_ROLES.senior;
+        d.prepare("UPDATE runners SET roles = ? WHERE id = ?").run(JSON.stringify(roles), id);
+      }
+      // Agents only ever recorded a base role.
+      for (const [old, roles] of Object.entries(LEGACY_ROLES)) {
+        if (roles.length === 1) d.prepare("UPDATE agents SET role = ? WHERE role = ?").run(roles[0], old);
+      }
+    },
+    down: (d) => {
+      try { d.exec("UPDATE runners SET roles = NULL"); } catch {}
+      for (const [old, roles] of Object.entries(LEGACY_ROLES)) {
+        if (roles.length === 1) d.prepare("UPDATE agents SET role = ? WHERE role = ?").run(old, roles[0]);
+      }
+    },
+  },
 ];
 
 function runMigrations(): void {
@@ -738,7 +779,7 @@ function rowToRunner(row: any): Runner {
     id: row.id,
     name: row.name,
     tool: row.tool,
-    role: row.role,
+    roles: normalizeRoles(parseJson<string[]>(row.roles, [])),
     projectId: row.project_id ?? null,
     model: row.model ?? null,
     effort: row.effort ?? null,
@@ -1464,7 +1505,7 @@ export function getActivityEvents(filters?: {
 export function createRunner(data: {
   name: string;
   tool: Runner["tool"];
-  role: string;
+  roles: Role[];
   projectId?: string | null;
   model?: string | null;
   effort?: string | null;
@@ -1476,17 +1517,20 @@ export function createRunner(data: {
 }): Runner {
   const now = new Date().toISOString();
   const id = randomUUID();
+  const roles = normalizeRoles(data.roles);
   getDb()
     .prepare(
-      `INSERT INTO runners (id, name, tool, role, project_id, model, effort, concurrency, poll_interval_sec,
+      `INSERT INTO runners (id, name, tool, role, roles, project_id, model, effort, concurrency, poll_interval_sec,
         permission_mode, extra_args, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       data.name,
       data.tool,
-      data.role,
+      // The legacy role column is NOT NULL but no longer read.
+      roles.join(","),
+      JSON.stringify(roles),
       data.projectId ?? null,
       data.model ?? null,
       data.effort ?? null,
@@ -1515,7 +1559,7 @@ export function updateRunner(
   data: {
     name?: string;
     tool?: Runner["tool"];
-    role?: string;
+    roles?: Role[];
     projectId?: string | null;
     model?: string | null;
     effort?: string | null;
@@ -1532,7 +1576,7 @@ export function updateRunner(
   const updated = {
     name: data.name ?? existing.name,
     tool: data.tool ?? existing.tool,
-    role: data.role ?? existing.role,
+    roles: data.roles ? normalizeRoles(data.roles) : existing.roles,
     projectId: data.projectId !== undefined ? data.projectId : existing.projectId,
     model: data.model !== undefined ? data.model : existing.model,
     effort: data.effort !== undefined ? data.effort : existing.effort,
@@ -1544,13 +1588,14 @@ export function updateRunner(
   };
   getDb()
     .prepare(
-      `UPDATE runners SET name = ?, tool = ?, role = ?, project_id = ?, model = ?, effort = ?, concurrency = ?,
+      `UPDATE runners SET name = ?, tool = ?, role = ?, roles = ?, project_id = ?, model = ?, effort = ?, concurrency = ?,
         poll_interval_sec = ?, permission_mode = ?, extra_args = ?, enabled = ?, updated_at = ? WHERE id = ?`,
     )
     .run(
       updated.name,
       updated.tool,
-      updated.role,
+      updated.roles.join(","),
+      JSON.stringify(updated.roles),
       updated.projectId,
       updated.model,
       updated.effort,

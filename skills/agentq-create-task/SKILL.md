@@ -3,7 +3,7 @@ name: agentq-create-task
 description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
 allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
 metadata:
-  version: "5.1.0"
+  version: "6.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

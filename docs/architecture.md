@@ -12,18 +12,20 @@ A local task queue system for managing coding-agent work across multiple project
 Manage tasks across multiple repositories from a single dashboard. Each task belongs to a project, which represents a local repository with its own working directory.
 
 ### Agent Orchestration
-Multiple AI agents can claim, work on, and complete tasks autonomously. Agents are identified by tool name, version, model, role, and session — enabling full audit traceability.
+Multiple AI agents can claim, work on, and complete tasks autonomously. Agents are identified by tool name, version, model and session, and each claim records the role it acts as — enabling full audit traceability.
 
 ### Plan → Code → Review → Merge Workflow
 Full lifecycle with approval gates and feedback loops. Tasks flow through planning, coding, reviewing, and merging phases. At each gate, a user or an agent can approve, request changes, or trigger an AI review.
 
-### Role-Based Access
-Five roles with distinct permissions:
-- **Planner** — Creates implementation plans
-- **Implementer** — Writes code
-- **Reviewer** — Reviews submissions
-- **Senior** — All roles combined
-- **Architect** — Planning + reviewing (no implementation)
+### Composable Roles
+A role is a phase an agent works; an agent or runner has one or more (an agent that names none gets all but `verify`):
+- **refine** — Turns drafts into ready tasks
+- **plan** — Writes implementation plans with a validation plan
+- **plan_review** — Critiques plans
+- **code** — Writes the code and tests
+- **verify** — Runs the verification commands (the server has a built-in verifier)
+- **review** — Reviews code with a verdict
+- **pr** — Pushes the branch and opens the pull request
 
 ### Real-Time Updates
 SSE-powered live updates propagate changes to the web UI instantly, including the claims and submissions agents make through the MCP server. Task creation and status changes appear without manual refresh.
@@ -80,7 +82,7 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 
 ### MCP Server
 Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction; see `docs/mcp.md`. Tools:
-- **claim_task** — claims the highest-priority eligible task for a given agent role (planner, implementer, reviewer, senior, architect)
+- **claim_task** — claims the highest-priority task one of the agent's roles works (refine, plan, plan_review, code, verify, review, pr; default all but verify)
 - **submit_plan** — transitions task from Planning to Waiting Plan Review
 - **submit_code** — transitions from Coding to Waiting Code Review, stores worktree path
 - **submit_review** — transitions from Reviewing back to Waiting Code Review
@@ -137,7 +139,7 @@ A unit of work assigned to an agent. Contains:
 ### Agent
 A coding agent that claims and works on tasks. Contains:
 - **Identity**: auto-generated ID (`tool@version|model`), toolName, version, model
-- **Role**: refiner, planner, plan_reviewer, implementer, verifier, reviewer, integrator, or a compound role (senior, architect, qa, builder)
+- **Role**: the role its latest claim acted as (refine, plan, plan_review, code, verify, review or pr); agents and runners claim with a list of roles
 - **Session**: sessionId (UUID), host, started_at, last_seen
 - **Lifecycle**: soft delete support
 
@@ -199,7 +201,7 @@ The task lifecycle moves through these states:
 
 **approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for the pull request.
 
-**merging** → The integrator is pushing the branch and opening the pull request.
+**merging** → An agent with the `pr` role is pushing the branch and opening the pull request.
 
 **pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. Under L3 with `autoMerge`, a green low-risk PR merges itself. A person can also mark it merged.
 
@@ -207,9 +209,9 @@ The task lifecycle moves through these states:
 
 **canceled** → Work stopped. Can be entered from any state.
 
-**draft** → A rough task; a refiner agent (or a person, "Promote") makes it ready.
+**draft** → A rough task; an agent with the `refine` role (or a person, "Promote") makes it ready.
 
-**refining** → A refiner agent is writing the criteria, risk and scope.
+**refining** → An agent with the `refine` role is writing the criteria, risk and scope.
 
 **plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never the planner's own session).
 
@@ -231,7 +233,7 @@ The task lifecycle moves through these states:
 - Archive a complete task
 
 ### Agent Actions
-- Claim task (based on role eligibility); the claim returns a `claimToken` every submit must present
+- Claim task (any of the agent's roles); the claim returns a `claimToken` every submit must present
 - Submit plan, submit code, submit review, submit the PR
 - Report a blocker (`report_blocker`) instead of submitting partial work
 

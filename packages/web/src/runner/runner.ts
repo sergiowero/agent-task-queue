@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { homedir, hostname } from "os";
 import { join } from "path";
 import { claimEnv, mcpServerLaunch, mcpServersConfig } from "@agentq/mcp";
-import type { Agent, Runner, RunnerTool, Task } from "@agentq/shared";
+import type { Agent, Role, Runner, RunnerTool, Task } from "@agentq/shared";
 import {
   TaskStatus,
   claimNextTask,
@@ -304,7 +304,7 @@ export class RunnerEngine {
       while (rt.running && rt.active.size < runner.concurrency) {
         const claimed = this.claim(runner, rt);
         if (!claimed) break;
-        await this.launch(runner, rt, claimed.task, claimed.effectiveRole, claimed.agent, claimed.claimToken);
+        await this.launch(runner, rt, claimed.task, claimed.role, claimed.agent, claimed.claimToken);
       }
       // A clean tick clears a stale error, but not one raised during this tick.
       if (rt.lastError && rt.lastError === errorBefore) {
@@ -327,7 +327,7 @@ export class RunnerEngine {
   private claim(runner: Runner, rt: RunnerRuntime) {
     return claimNextTask({
       excludeTaskIds: this.activeCooldownIds(),
-      role: runner.role,
+      roles: runner.roles,
       agent: {
         toolName: runner.tool,
         version: rt.version,
@@ -381,7 +381,7 @@ export class RunnerEngine {
     runner: Runner,
     rt: RunnerRuntime,
     task: Task,
-    effectiveRole: string,
+    role: Role,
     agent: Agent,
     claimToken: string,
   ): Promise<void> {
@@ -418,7 +418,7 @@ export class RunnerEngine {
     let built: BuiltCommand;
     try {
       mkdirSync(dir, { recursive: true });
-      const prompt = buildPrompt({ task, project, agent, effectiveRole, claimToken });
+      const prompt = buildPrompt({ task, project, agent, role, claimToken });
       writeFileSync(promptFile, prompt);
       // Every job gets the AgentQ MCP server, bound to this server's database and
       // holding the job's claim (so the agent's submits carry the claim token).
@@ -431,7 +431,7 @@ export class RunnerEngine {
         mcp,
         mcpConfigFile,
         taskId: task.id,
-        role: effectiveRole,
+        role,
         model: runner.model,
         effort: runner.effort,
         permissionMode: runner.permissionMode,

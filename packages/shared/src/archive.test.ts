@@ -21,6 +21,7 @@ import {
 } from "./database.js";
 import type { ConversationEntry, Task } from "./types.js";
 import { TaskStatus } from "./types.js";
+import { DEFAULT_ROLES } from "./catalog.js";
 import {
   WorkflowError,
   approveCode,
@@ -192,7 +193,7 @@ describe("archiveTask", () => {
       contexts: ["created by test"],
     });
     const codex = { ...agent, toolName: "codex", model: "gpt", sessionId: "codex-session" };
-    const claim = (who = agent) => claimNextTask({ role: "senior", agent: who, projectId })!;
+    const claim = (who = agent) => claimNextTask({ roles: DEFAULT_ROLES, agent: who, projectId })!;
     let claimed = claim();
     const t = claimed.task;
     submitPlan(t.id, {
