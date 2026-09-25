@@ -13,10 +13,6 @@ lerna-debug.log*
 # package-json
 package-json.lock
 
-# OpenSpec
-.openspec/
-.openspec.yaml
-
 # Agent workspace folders
 .claude/
 .codex/
