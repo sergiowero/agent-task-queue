@@ -95,13 +95,8 @@ agent-task-queue/
 ├── skills/                            # Shared agent skill definitions
 │   └── agentq-workflow/SKILL.md
 │
-├── .opencode/                         # OpenCode-specific config
-│   ├── skills/                        # 7 skills (agentq-workflow, agentq-create-task, openspec-*)
-│   └── commands/                      # 5 custom commands
-│
-├── .claude/skills/                    # 5 openspec skills (no propose)
-│
-└── openspec/                          # Change proposals
+└── .opencode/                         # OpenCode-specific config
+    └── skills/                        # agentq-workflow, agentq-create-task
 ```
 
 ---
@@ -779,15 +774,6 @@ typescript ^5.8
 
 - `agentq-workflow/SKILL.md` — Adapted for OpenCode
 - `agentq-create-task/SKILL.md` — Creating well-structured tasks via CLI
-- 5 openspec skills: `openspec-apply-change`, `openspec-archive-change`, `openspec-explore`, `openspec-propose`, `openspec-sync-specs`
-
-### Claude Skills (`.claude/skills/`)
-
-- Same openspec skills (apply, archive, explore, sync) — minus propose
-
-### OpenCode Commands (`.opencode/commands/`)
-
-5 commands matching openspec skills (apply, archive, explore, propose, sync).
 
 ---
 
