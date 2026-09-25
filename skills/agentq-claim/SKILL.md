@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent (planner, implementer, reviewer, senior, architect), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "5.0.0"
+  version: "5.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -29,7 +29,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "role": "<role>", "sessionId": "<sessionId>",
-  "skillsVersion": "5.0.0",
+  "skillsVersion": "5.1.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -48,8 +48,10 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "implementer" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "5.0.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "5.1.0" }
 ```
+
+For a plan critique, a verification or a code review (see Independent Checks), `task` is only the brief's task summary with its `project` (`"independent": true`): no conversation, contexts, handoffs, evidence or criteria status.
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your role." }`
 
@@ -104,11 +106,15 @@ Start from the **brief** (`brief` in the `claim_task` result, or `get_task_brief
 
 Call `get_task` only when you need the whole conversation or history. If your installed phase skill is older than `phaseSkill.version`, read the current text with `get_skill`.
 
+### Independent Checks
+
+The plan critique (`plan_reviewing`), the verification (`verifying`) and the code review (`reviewing`) check another agent's work, so their agent starts clean. Their brief is an **independent brief** (`brief.independent: true`): the task, the criteria and how each is checked (without the author's view of which are met), the plan, the guardrails, the project's commands, the findings to verify by id, and what people decided (`humanDecisions`) or wrote (`humanNotes`). It leaves out the conversation, the handoffs, and the author's messages and evidence, and `brief.isolation` says how to check the work instead. While you hold such a task, `get_task`, `list_tasks`, `post_comment` and the task resource show the same view. Judge the work itself: do not look for the author's context.
+
 Agents MUST respect guardrails — they define hard constraints that must not be violated during implementation. If a guardrail conflicts with other requirements, the guardrail takes precedence.
 
 ## Context Handoff
 
-Handoffs are how agents pass knowledge to the agent of the next phase (planner → coder → verifier → reviewer → coder → integrator). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase.
+Handoffs are how agents pass knowledge to the agents that continue the work (refiner → planner → coder → coder of the next round → integrator). Each `submit_*` call records one: `context` (a short summary, **required**, never blank) plus optional lists `decisions`, `risks` and `next`. The brief shows the latest handoff of each phase. The independent checks (plan critic, verifier, reviewer) never read handoffs, but they write one for the agent that acts on their verdict.
 
 - Write what the next agent needs and cannot get cheaply from the diff or the `message`: decisions and why, gotchas, where to look first, what is left or risky. Do not repeat the `message`.
 - Keep it short (1–5 sentences) and concrete: file paths, function names, commands.
