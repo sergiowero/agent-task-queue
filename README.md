@@ -243,7 +243,7 @@ Let an agent write tasks for you with the `agentq-create-task` skill: *"Create a
 
 A runner is a worker inside the web server with a **tool**, a **role**, an optional **project**, a **model**, a **concurrency** and a **permission mode**. Every few seconds it claims the next eligible task and launches the tool headless in the project directory.
 
-- **Model and effort pickers** are discovered from the installed CLIs (`claude --help`, `codex debug models`, `opencode models`...).
+- **Model and effort**: type any model id the tool accepts, or leave it empty to use the tool's default; pick an effort level for tools that have one.
 - **Live logs**: follow every job's output from the Runners page.
 - **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
 - **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
