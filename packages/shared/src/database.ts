@@ -413,7 +413,7 @@ const MIGRATIONS: Migration[] = [
     down: (d) => d.exec("DROP TABLE IF EXISTS task_findings"),
   },
   {
-    // Commands, conventions, protected paths and shared guardrails per project.
+    // Commands, protected paths and shared guardrails per project.
     name: "014_project_profile",
     up: (d) => addColumn(d, "projects", "profile TEXT DEFAULT '{}'"),
     down: (d) => { try { d.exec("UPDATE projects SET profile = '{}'"); } catch {} },

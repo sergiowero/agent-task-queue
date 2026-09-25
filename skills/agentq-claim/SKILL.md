@@ -100,7 +100,7 @@ Start from the **brief** (`brief` in the `claim_task` result, or `get_task_brief
 
 - `task`: description (what, functional only), steerDetails (how), nonGoals (what not to do), references (where to look first), type and risk
 - `typeGuidance`: what this kind of task needs (e.g. a bug starts with a failing test)
-- `guardrails`: the project's shared ones and the task's (hard constraints), `conventionFiles` to read, the project's `commands`
+- `guardrails`: the project's shared ones and the task's (hard constraints), the project's `commands`
 - `criteria` with ids and status, the `approvedPlan` (or `latestPlan` while none is approved)
 - `openFindings`, the latest `handoffs` of each phase, `humanNotes` (what people wrote since the last submission), `round`, `verification` (with the failing commands), `lastAnswer` (a person's answer to a blocker)
 

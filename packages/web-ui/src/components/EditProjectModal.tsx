@@ -25,7 +25,7 @@ interface ProjectRef {
   profile?: ProjectProfile;
 }
 
-type ProjectTab = "general" | "autonomy" | "commands" | "conventions";
+type ProjectTab = "general" | "autonomy" | "commands" | "guardrails";
 const COMMANDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const lines = (v: string) =>
   v
@@ -103,9 +103,6 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const [commands, setCommands] = useState<Record<string, string>>({
     ...(profile?.commands ?? {}),
   });
-  const [conventionFiles, setConventionFiles] = useState(
-    (profile?.conventionFiles ?? []).join("\n"),
-  );
   const [protectedPaths, setProtectedPaths] = useState((profile?.protectedPaths ?? []).join("\n"));
   const [sharedGuardrails, setSharedGuardrails] = useState((profile?.guardrails ?? []).join("\n"));
   const [verifyAllowlist, setVerifyAllowlist] = useState(
@@ -145,7 +142,6 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
         },
         profile: {
           commands: Object.fromEntries(COMMANDS.map((k) => [k, commands[k]?.trim() ?? ""])),
-          conventionFiles: lines(conventionFiles),
           protectedPaths: lines(protectedPaths),
           guardrails: lines(sharedGuardrails),
           verifyAllowlist: lines(verifyAllowlist),
@@ -207,7 +203,7 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
             { value: "general", label: "General" },
             { value: "autonomy", label: "Autonomy" },
             { value: "commands", label: "Commands" },
-            { value: "conventions", label: "Conventions" },
+            { value: "guardrails", label: "Guardrails" },
           ]}
         />
         {tab === "general" && (
@@ -310,19 +306,8 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
             ))}
           </div>
         )}
-        {tab === "conventions" && (
+        {tab === "guardrails" && (
           <div className="space-y-4">
-            <Field
-              label="Convention files"
-              hint="Agents read these first. One path per line (CLAUDE.md, AGENTS.md…)."
-            >
-              <Textarea
-                rows={3}
-                className="font-mono"
-                value={conventionFiles}
-                onChange={(e) => setConventionFiles(e.target.value)}
-              />
-            </Field>
             <Field
               label="Shared guardrails"
               hint="Every task in the project inherits them. One per line."

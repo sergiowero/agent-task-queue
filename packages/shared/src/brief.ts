@@ -1,8 +1,8 @@
 /**
  * What an agent needs to continue a task, without rereading the whole
  * conversation: the approved plan and its validation, criteria with status,
- * open findings, the latest handoff of each phase, the project's commands and
- * conventions, the round, and what people said since the last submission.
+ * open findings, the latest handoff of each phase, the project's commands,
+ * the round, and what people said since the last submission.
  * Its size stays flat as rounds pile up; get_task still has everything.
  *
  * The phases that check another agent's work (plan critique, verification,
@@ -50,7 +50,6 @@ export interface TaskBrief {
   typeGuidance: string;
   /** The project's shared guardrails first, then the task's. */
   guardrails: string[];
-  conventionFiles: string[];
   commands: ProjectCommands;
   criteria: AcceptanceCriterion[];
   approvedPlan: ApprovedPlan | null;
@@ -115,7 +114,6 @@ function briefBasics(task: Task) {
       : null,
     typeGuidance: TASK_TYPES[task.type]?.guidance ?? "",
     guardrails: [...new Set([...profile.guardrails, ...task.guardrails].map((g) => g.trim()).filter(Boolean))],
-    conventionFiles: profile.conventionFiles,
     commands: profile.commands,
     humanNotes,
     round: {
@@ -208,7 +206,6 @@ export interface IndependentBrief {
   project: TaskBrief["project"];
   typeGuidance: string;
   guardrails: string[];
-  conventionFiles: string[];
   commands: ProjectCommands;
   /** What must hold and how each one is checked, without anyone's claim that it does. */
   criteria: Pick<AcceptanceCriterion, "id" | "text" | "verify">[];

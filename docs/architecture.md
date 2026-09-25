@@ -145,7 +145,7 @@ A coding agent that claims and works on tasks. Contains:
 A local repository that tasks belong to. Contains:
 - **Identity**: UUID, displayName
 - **Location**: workingDirectory (absolute path to repo)
-- **Profile**: commands (install/build/test/lint/typecheck), convention files, protected paths, shared guardrails, max diff size, verifier timeout and allowlist
+- **Profile**: commands (install/build/test/lint/typecheck), protected paths, shared guardrails, max diff size, verifier timeout and allowlist
 - **Autonomy**: level L0–L3 (default L2) and policy overrides (review rounds, spot checks, different reviewer model, lease, starvation); see [policy.md](policy.md)
 - **defaultMergeBranch**: branch new tasks target unless they name one; detected from `origin/HEAD` when the project is created (falls back to `main`/`master`), editable
 - **Lifecycle**: timestamps, soft delete support
@@ -161,7 +161,7 @@ A message in a task's conversation thread. Contains:
 - timestamp, message body, messageType (user/agent/plan/code/review/merge/system)
 
 ### TaskBrief
-What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, open findings, the latest handoff per phase, project commands, conventions and guardrails, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).
+What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, open findings, the latest handoff per phase, project commands and guardrails, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).
 
 ### StatusHistoryEntry
 A record of a task status transition. Contains:

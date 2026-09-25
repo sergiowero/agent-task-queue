@@ -30,7 +30,7 @@ Read-only, in `task.project.workingDirectory`: read files, `git log`, `git show`
 
 - **Coverage**: every acceptance criterion is addressed by a step, and the plan does nothing outside the task's scope or non-goals
 - **Validation**: every criterion has an executable check (a command or a test to add) or a reason to be manual; the regression commands exist in this project
-- **Grounded**: the files and functions it cites exist; the approach fits the codebase's conventions (`brief.conventionFiles`)
+- **Grounded**: the files and functions it cites exist; the approach fits the codebase's existing patterns
 - **Risk**: protected areas (migrations, auth, CI, public APIs) are identified; if the plan is riskier than the task's risk, pass `suggestedRisk` (it can only go up)
 - **Size**: a plan bigger than one reviewable PR (~400 changed lines) should be split into subtasks
 

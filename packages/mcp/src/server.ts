@@ -818,7 +818,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Get task brief",
       description:
-        "What you need to continue a task without rereading its whole conversation: the approved plan and validation, criteria with status, open findings, the latest handoff of each phase, the project's commands, conventions and guardrails, the round, and what people said since the last submission. For a plan critique, verification or review it is the independent brief: the task, what to check and the findings to verify, without the author's handoffs, messages or evidence.",
+        "What you need to continue a task without rereading its whole conversation: the approved plan and validation, criteria with status, open findings, the latest handoff of each phase, the project's commands and guardrails, the round, and what people said since the last submission. For a plan critique, verification or review it is the independent brief: the task, what to check and the findings to verify, without the author's handoffs, messages or evidence.",
       inputSchema: { taskId: taskIdSchema },
       annotations: { readOnlyHint: true },
     },
