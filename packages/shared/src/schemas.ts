@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ROLES, TaskStatus } from "./catalog.js";
+import { ROLES, TaskStatus, normalizeRoles } from "./catalog.js";
 import { parseCriterionLine } from "./criteria.js";
 
 export const riskSchema = z.enum(["low", "medium", "high"]);
@@ -187,12 +187,13 @@ export const updateProjectSchema = z.object({
 });
 
 export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "custom"]);
-export const runnerRoleSchema = z.enum(ROLES);
+/** One or more roles; stored without duplicates, in catalog order. */
+export const runnerRolesSchema = z.array(z.enum(ROLES)).min(1).transform(normalizeRoles);
 
 export const createRunnerSchema = z.object({
   name: z.string().min(1).max(100),
   tool: runnerToolSchema,
-  role: runnerRoleSchema,
+  roles: runnerRolesSchema,
   projectId: z.string().min(1).max(200).nullable().optional(),
   model: z.string().max(200).nullable().optional(),
   effort: z.string().max(40).nullable().optional(),

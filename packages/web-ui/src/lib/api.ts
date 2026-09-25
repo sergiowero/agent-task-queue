@@ -81,7 +81,7 @@ export interface Task {
   archivedAt: string | null;
   /** Absolute path of the archive summary file; the detailed record sits next to it. */
   archivePath: string | null;
-  /** The task's pull request, once the integrator opened it (kept in step with GitHub). */
+  /** The task's pull request, once the agent with the `pr` role opened it (kept in step with GitHub). */
   pullRequest: PullRequest | null;
 }
 
@@ -262,7 +262,6 @@ export interface ActivityEvent {
 }
 
 export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
-export type RunnerRole = Role;
 export type RunnerPermissionMode = "safe" | "full";
 export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
 
@@ -293,7 +292,7 @@ export interface Runner {
   id: string;
   name: string;
   tool: RunnerTool;
-  role: RunnerRole;
+  roles: Role[];
   projectId: string | null;
   model: string | null;
   effort: string | null;
@@ -310,7 +309,7 @@ export interface Runner {
 export interface RunnerInput {
   name: string;
   tool: RunnerTool;
-  role: RunnerRole;
+  roles: Role[];
   projectId?: string | null;
   model?: string | null;
   effort?: string | null;

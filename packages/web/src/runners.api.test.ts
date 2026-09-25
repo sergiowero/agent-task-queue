@@ -42,7 +42,7 @@ async function createRunnerViaApi(overrides: Record<string, unknown> = {}): Prom
   const res = await json("/api/runners", "POST", {
     name: "API runner",
     tool: "custom",
-    role: "planner",
+    roles: ["plan"],
     projectId,
     pollIntervalSec: 1,
     extraArgs: ["bash", "-c", "true"],
@@ -195,7 +195,7 @@ describe("runners CRUD", () => {
     expect(runner).toMatchObject({
       name: "defaults",
       tool: "custom",
-      role: "planner",
+      roles: ["plan"],
       projectId,
       model: null,
       effort: null,
@@ -209,18 +209,37 @@ describe("runners CRUD", () => {
   });
 
   it("validates the body", async () => {
-    let res = await json("/api/runners", "POST", { name: "", tool: "custom", role: "planner" });
+    let res = await json("/api/runners", "POST", { name: "", tool: "custom", roles: ["plan"] });
     expect(res.status).toBe(400);
-    res = await json("/api/runners", "POST", { name: "x", tool: "vim", role: "planner" });
+    res = await json("/api/runners", "POST", { name: "x", tool: "vim", roles: ["plan"] });
     expect(res.status).toBe(400);
-    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "boss" });
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: ["boss"] });
     expect(res.status).toBe(400);
-    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior", concurrency: 0 });
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: [] });
     expect(res.status).toBe(400);
-    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior", projectId: "missing" });
+    // The old single role (and its compound names) is gone.
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior" });
+    expect(res.status).toBe(400);
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: ["code"], concurrency: 0 });
+    expect(res.status).toBe(400);
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: ["code"], projectId: "missing" });
     expect(res.status).toBe(404);
-    res = await json("/api/runners", "POST", { name: "x", tool: "claude", role: "senior", effort: "x".repeat(41) });
+    res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: ["code"], effort: "x".repeat(41) });
     expect(res.status).toBe(400);
+  });
+
+  it("stores several roles without duplicates, in catalog order, and updates them", async () => {
+    const runner = await createRunnerViaApi({ name: "composed", roles: ["review", "plan", "review"] });
+    expect(runner.roles).toEqual(["plan", "review"]);
+
+    let res = await json(`/api/runners/${runner.id}`, "PUT", { roles: ["pr", "code"] });
+    expect(res.status).toBe(200);
+    expect((await res.json()).roles).toEqual(["code", "pr"]);
+
+    res = await json(`/api/runners/${runner.id}`, "PUT", { roles: [] });
+    expect(res.status).toBe(400);
+    res = await api(`/api/runners/${runner.id}`);
+    expect((await res.json()).roles).toEqual(["code", "pr"]);
   });
 
   it("persists the effort on create and update", async () => {

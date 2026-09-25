@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { Project, SubmitResult, Task } from "@agentq/shared";
 import {
   MIN_COMPATIBLE_SKILLS_VERSION,
+  CLAIM_RULES,
+  DEFAULT_ROLES,
   ROLES,
   STATUS_INFO,
   skillForPhase,
@@ -55,14 +57,17 @@ export const SERVER_VERSION = "0.1.0";
 const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
 export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, role, sessionId) and skillsVersion (metadata.version of your agentq-claim skill). Roles: ${ROLES.join(", ")} (senior = planner + implementer + reviewer, architect = planner + reviewer). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (metadata.version of your agentq-claim skill). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
 2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills are older than ${SKILLS_VERSION} or still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
-4. Read task.status to know what to do, working in task.project.workingDirectory:
-   - planning: write an implementation plan, then call submit_plan.
-   - coding: implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
-   - reviewing: review the submitted code (task.worktreePath), verify the previous round's findings by id, then call submit_review with a verdict (approve, request_changes, needs_human) and structured findings. The verdict routes the task: approve moves it on, request_changes sends it back to the coder with your findings.
-   - merging: push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
+4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the agentq-* skill to follow:
+   - refining (role refine): make the draft ready (testable criteria, type, risk, non-goals), then call submit_refinement.
+   - planning (role plan): write an implementation plan with its validation plan, then call submit_plan.
+   - plan_reviewing (role plan_review): critique the plan against the task and the codebase, then call submit_plan_review with a verdict and findings.
+   - coding (role code): implement and commit in the task's git worktree on the recommended branch, then call submit_code with the worktree path.
+   - verifying (role verify): run the validation plan's and the project's commands in the task's worktree, then call submit_verification.
+   - reviewing (role review): review the submitted code (task.worktreePath), verify the previous round's findings by id, then call submit_review with a verdict (approve, request_changes, needs_human) and structured findings. The verdict routes the task: approve moves it on, request_changes sends it back to the coder with your findings.
+   - merging (role pr): push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
 7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; read task.contexts for the notes earlier agents left. context is optional on claim_task. Write every message in Markdown.
@@ -118,7 +123,7 @@ function taskDetails(task: Task) {
 }
 
 /** The skill the claimed status belongs to (e.g. agentq-code), with its version. */
-function phaseSkillOf(_role: string, status: Task["status"]) {
+function phaseSkillOf(status: Task["status"]) {
   const phase = STATUS_INFO[status]?.phase;
   const name = phase ? skillForPhase(phase) : null;
   const skill = name ? readSkill(name) : null;
@@ -227,14 +232,18 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Claim next task",
       description:
-        "Atomically claim the highest-priority task eligible for your role and move it to its in-progress status (planning, coding, reviewing or merging).",
+        "Atomically claim the highest-priority task one of your roles works and move it to its in-progress status (refining, planning, plan_reviewing, coding, verifying, reviewing or merging).",
       inputSchema: {
         toolName: z.string().min(1).describe('Agent tool name, e.g. "claude-code"'),
         version: z.string().min(1).describe("Agent tool version"),
         model: z.string().min(1).describe("Model identifier"),
-        role: z
-          .enum(ROLES)
-          .describe(`Agent role: ${ROLES.join(", ")}`),
+        roles: z
+          .array(z.enum(ROLES))
+          .min(1)
+          .optional()
+          .describe(
+            `The phases you work, one or more; each claims tasks in these statuses: ${CLAIM_RULES.map((r) => `${r.role} (${r.from.join(", ")})`).join("; ")}. Omit for all but verify.`,
+          ),
         sessionId: z.string().min(1).describe("Session ID (UUID) for audit traceability"),
         host: z.string().optional().describe("Host path or machine name"),
         projectId: z.string().optional().describe("Only claim tasks from this project"),
@@ -260,7 +269,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         }
         sweepQueue();
         const result = claimNextTask({
-          role: input.role,
+          roles: input.roles ?? DEFAULT_ROLES,
           agent: {
             toolName: input.toolName,
             version: input.version,
@@ -276,7 +285,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           return {
             success: false,
             reason: "no_tasks_available",
-            message: "No tasks available for your role.",
+            message: "No tasks available for your roles.",
           };
         }
         claims.set(result.task.id, result.claimToken);
@@ -285,14 +294,14 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           success: true,
           task: taskHeader(result.task),
           brief: buildTaskBrief(result.task),
-          phaseSkill: phaseSkillOf(result.effectiveRole, result.task.status),
+          phaseSkill: phaseSkillOf(result.task.status),
           autonomy: policy.level,
           round: {
             codeRound: result.task.codeRound,
             used: reviewRoundsUsed(result.task),
             maxReviewRounds: policy.maxReviewRounds,
           },
-          agent: { id: result.agent.id, role: result.effectiveRole },
+          agent: { id: result.agent.id, role: result.role },
           claimToken: result.claimToken,
           skillsVersion: SKILLS_VERSION,
           skills: skillsManifest(),
@@ -489,7 +498,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit verification",
       description:
-        "For verifier agents: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
+        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
       inputSchema: {
         taskId: taskIdSchema,
         passed: z.boolean().describe("Every command passed and no tests were weakened"),
@@ -575,7 +584,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Create subtask",
       description:
-        "Planner only, while you hold the parent in `planning`: split the work into a subtask (one reviewable PR, under ~400 changed lines). Subtasks are held until the parent's plan is approved; then they run (in blockedBy order) and the parent completes when they all do.",
+        "With the `plan` role, while you hold the parent in `planning`: split the work into a subtask (one reviewable PR, under ~400 changed lines). Subtasks are held until the parent's plan is approved; then they run (in blockedBy order) and the parent completes when they all do.",
       inputSchema: {
         taskId: taskIdSchema.describe("The parent task you are planning"),
         title: z.string().min(1),
@@ -612,7 +621,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit refinement",
       description:
-        "For refiner agents, on a task you claimed in `refining`: make the draft ready (testable criteria, type, risk, non-goals, whether it needs a plan). It moves on to planning or coding; a blocking question sends it to a person.",
+        "With the `refine` role, on a task you claimed in `refining`: make the draft ready (testable criteria, type, risk, non-goals, whether it needs a plan). It moves on to planning or coding; a blocking question sends it to a person.",
       inputSchema: {
         taskId: taskIdSchema,
         description: z.string().optional(),
@@ -875,7 +884,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           ),
         type: taskTypeSchema.optional().describe("feature, bug, refactor, docs or chore (default feature)"),
         nonGoals: z.array(z.string()).optional().describe("What the task deliberately does not do"),
-        draft: z.boolean().optional().describe("Create a rough draft a refiner agent makes ready"),
+        draft: z.boolean().optional().describe("Create a rough draft an agent with the `refine` role makes ready"),
         references: z.array(referenceSchema).optional().describe("Files, issues and links to look at first"),
         risk: riskSchema.optional().describe("low, medium or high (default from the type)"),
         priority: z

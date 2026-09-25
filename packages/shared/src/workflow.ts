@@ -47,19 +47,20 @@ import {
   BLOCKING_SEVERITIES,
   CLAIM_RULES,
   CLAIMABLE_FROM,
-  COMPOUND_ROLES,
   REVERT_FALLBACK,
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
-  baseRolesOf,
   canTransition,
+  claimRuleFor,
+  isRole,
   resolveTargets,
   statusLabel,
   maxRisk,
   type CriterionStatus,
   type Phase,
   type Risk,
+  type Role,
   type Verdict,
 } from "./catalog.js";
 import { detectDefaultBranch } from "./git.js";
@@ -79,39 +80,23 @@ import type {
 } from "./types.js";
 import { TaskStatus } from "./types.js";
 
-export { COMPOUND_ROLES, REVERT_FALLBACK };
+export { REVERT_FALLBACK };
 
-/** Base role → statuses it claims (derived from CLAIM_RULES). */
-export const ROLE_STATUSES: Record<string, TaskStatus[]> = CLAIM_RULES.reduce(
+/** Role → statuses it claims (derived from CLAIM_RULES). */
+export const ROLE_STATUSES: Record<Role, TaskStatus[]> = CLAIM_RULES.reduce(
   (acc, rule) => {
     acc[rule.role] = [...(acc[rule.role] ?? []), ...rule.from];
     return acc;
   },
-  {} as Record<string, TaskStatus[]>,
+  {} as Record<Role, TaskStatus[]>,
 );
 
 /** Statuses a person can no longer cancel. */
 export const CANCELED_CANT_CANCEL = new Set(ALL_STATUSES.filter((s) => !STATUS_INFO[s].cancelable));
 
-export function getClaimableStatuses(role: string): TaskStatus[] {
-  return [...new Set(baseRolesOf(role).flatMap((base) => ROLE_STATUSES[base] ?? []))];
-}
-
-export function getClaimTransition(status: TaskStatus, role: string): TaskStatus | null {
-  for (const base of baseRolesOf(role)) {
-    const rule = CLAIM_RULES.find((r) => r.role === base && r.from.includes(status));
-    if (rule) return rule.to;
-  }
-  return null;
-}
-
-/** The base role a (possibly compound) role acts as for a task in `status`. */
-export function getEffectiveRole(status: TaskStatus, role: string): string {
-  if (!COMPOUND_ROLES[role]) return role;
-  const base = COMPOUND_ROLES[role].find((r) =>
-    CLAIM_RULES.some((rule) => rule.role === r && rule.from.includes(status)),
-  );
-  return base ?? role;
+/** Every status an agent with these roles may claim. */
+export function getClaimableStatuses(roles: readonly Role[]): TaskStatus[] {
+  return [...new Set(roles.flatMap((role) => ROLE_STATUSES[role] ?? []))];
 }
 
 export function normalizeStatusInput(status: string): TaskStatus | null {
@@ -271,7 +256,8 @@ function minutesFromNow(minutes: number): string {
 export const MAX_CLAIM_ATTEMPTS = 10;
 
 export interface ClaimNextTaskInput {
-  role: string;
+  /** The phases the agent works; it claims the queued statuses of any of them. */
+  roles: readonly Role[];
   agent: {
     toolName: string;
     version: string;
@@ -295,16 +281,17 @@ export interface ClaimNextTaskInput {
 export interface ClaimNextTaskResult {
   task: Task;
   agent: Agent;
-  effectiveRole: string;
+  /** The role the claim acts as (the one whose rule covers the task's status). */
+  role: Role;
   /** Secret the claim holder presents on every submit for this task. */
   claimToken: string;
 }
 
 export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | null {
-  const claimableStatuses = getClaimableStatuses(input.role);
-  if (claimableStatuses.length === 0) {
-    throw new Error(`Invalid role: ${input.role}`);
+  if (input.roles.length === 0 || !input.roles.every(isRole)) {
+    throw new Error(`Invalid roles: ${JSON.stringify(input.roles)}`);
   }
+  const claimableStatuses = getClaimableStatuses(input.roles);
 
   const sessionKey =
     input.sessionKey ?? (input.runnerId ? `runner:${input.runnerId}` : `session:${input.agent.sessionId}`);
@@ -317,9 +304,9 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       { sessionKey, model: input.agent.model },
     );
     for (const candidate of candidates) {
-      const effectiveRole = getEffectiveRole(candidate.status, input.role);
-      const newStatus = getClaimTransition(candidate.status, effectiveRole);
-      if (!newStatus) continue;
+      const rule = claimRuleFor(candidate.status);
+      if (!rule || !input.roles.includes(rule.role)) continue;
+      const newStatus = rule.to;
 
       const claimToken = randomUUID();
       const agentId = agentIdFor(input.agent);
@@ -339,7 +326,7 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       });
       if (!assigned) continue;
 
-      const agent = createAgent({ ...input.agent, role: effectiveRole });
+      const agent = createAgent({ ...input.agent, role: rule.role });
       const now = new Date().toISOString();
       if (newStatus === TaskStatus.Planning) {
         // A new plan cycle: subtasks proposed by the previous plan are dropped.
@@ -376,7 +363,7 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
         patchTask(candidate.id, { leaseExpiresAt: minutesFromNow(policyFor(candidate).leaseMin) });
       }
 
-      return { task: getTaskById(candidate.id)!, agent, effectiveRole, claimToken };
+      return { task: getTaskById(candidate.id)!, agent, role: rule.role, claimToken };
     }
     return null;
   });
@@ -1678,7 +1665,7 @@ function prNumberOf(url: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** The integrator opened the PR: the task waits in pr_open until it is merged on GitHub. */
+/** The agent with the `pr` role opened the PR: the task waits in pr_open until it is merged on GitHub. */
 export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
   const url = input.prUrl?.trim() || input.message?.match(PR_URL_RE)?.[0];
   // archive.ts parses this format (Branch/Commit/Authors/Worktree/Message).

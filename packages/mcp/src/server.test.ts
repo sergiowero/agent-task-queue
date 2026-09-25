@@ -14,6 +14,7 @@ import {
   getTaskById,
   getActivityEvents,
   updateTask,
+  ROLES,
   TaskStatus,
   skillsBundleVersion,
 } from "@agentq/shared";
@@ -52,11 +53,11 @@ const TOOL_NAMES = [
   "submit_refinement",
 ];
 
-const senior = {
+// Names no roles: the server gives it every role but verify.
+const defaultAgent = {
   toolName: "TestAgent",
   version: "1.0",
   model: "test-model",
-  role: "senior",
   sessionId: "session-mcp",
 };
 
@@ -115,9 +116,23 @@ describe("AgentQ MCP server", () => {
     for (const name of TOOL_NAMES) {
       expect(names).toContain(name);
     }
-    expect(tools.find((t) => t.name === "claim_task")?.inputSchema.required).toEqual(
-      expect.arrayContaining(["toolName", "version", "model", "role", "sessionId"]),
+    const claimTask = tools.find((t) => t.name === "claim_task")!;
+    expect(claimTask.inputSchema.required).toEqual(
+      expect.arrayContaining(["toolName", "version", "model", "sessionId"]),
     );
+    expect(claimTask.inputSchema.required).not.toContain("roles");
+  });
+
+  it("describes roles as phases, with no legacy role names", async () => {
+    const { tools } = await client.listTools();
+    const claimTask = JSON.stringify(tools.find((t) => t.name === "claim_task"));
+    for (const role of ROLES) {
+      expect(INSTRUCTIONS).toContain(role);
+      expect(claimTask).toContain(role);
+    }
+    const legacy = /\b(senior|architect|qa|builder|implementer|integrator|plan_reviewer|refiner agents?|verifier agents?)\b/;
+    expect(INSTRUCTIONS).not.toMatch(legacy);
+    for (const tool of tools) expect(`${tool.name}: ${JSON.stringify(tool)}`).not.toMatch(legacy);
   });
 
   it("lists resource templates and static resources", async () => {
@@ -144,7 +159,7 @@ describe("AgentQ MCP server", () => {
     expect(result.projects.map((p: any) => p.id)).toContain(projectId);
   });
 
-  it("create_task -> claim_task (senior) -> submit_plan follows the workflow transitions", async () => {
+  it("create_task -> claim_task (default roles) -> submit_plan follows the workflow transitions", async () => {
     const created = parse(
       (await client.callTool({
         name: "create_task",
@@ -173,14 +188,14 @@ describe("AgentQ MCP server", () => {
     const claimed = parse(
       (await client.callTool({
         name: "claim_task",
-        arguments: { ...senior, projectId, context: "claim context" },
+        arguments: { ...defaultAgent, projectId, context: "claim context" },
       })) as CallToolResult,
     );
     expect(claimed.success).toBe(true);
     expect(claimed.task.id).toBe(taskId);
     expect(claimed.task.status).toBe(TaskStatus.Planning);
     expect(claimed.task.project.id).toBe(projectId);
-    expect(claimed.agent).toEqual({ id: "testagent@1.0|test-model", role: "planner" });
+    expect(claimed.agent).toEqual({ id: "testagent@1.0|test-model", role: "plan" });
     expect(claimed.task.assignedAgent).toMatchObject({
       name: "TestAgent",
       tool: "TestAgent",
@@ -229,13 +244,13 @@ describe("AgentQ MCP server", () => {
     createProject({ id: emptyProject, displayName: "Empty", workingDirectory: "/tmp/empty" });
     const result = (await client.callTool({
       name: "claim_task",
-      arguments: { ...senior, projectId: emptyProject },
+      arguments: { ...defaultAgent, projectId: emptyProject },
     })) as CallToolResult;
     expect(result.isError).toBeFalsy();
     expect(parse(result)).toEqual({
       success: false,
       reason: "no_tasks_available",
-      message: "No tasks available for your role.",
+      message: "No tasks available for your roles.",
     });
   });
 
@@ -504,8 +519,8 @@ describe("AgentQ MCP agent workflow", () => {
     return out;
   }
 
-  function claim(role: string, sessionId: string) {
-    return ok("claim_task", { ...agent, role, sessionId, projectId });
+  function claim(roles: string[], sessionId: string) {
+    return ok("claim_task", { ...agent, roles, sessionId, projectId });
   }
 
   async function status(taskId: string): Promise<string> {
@@ -549,23 +564,25 @@ describe("AgentQ MCP agent workflow", () => {
     removeProjectTasks(projectId);
   });
 
-  it("rejects a claim with missing identity fields or an invalid role", async () => {
-    const missing = validationError(await call("claim_task", { role: "planner" }));
+  it("rejects a claim with missing identity fields, an unknown role or an empty role list", async () => {
+    const missing = validationError(await call("claim_task", { roles: ["plan"] }));
     for (const field of ["toolName", "version", "model", "sessionId"]) {
       expect(missing).toContain(field);
     }
-    const wizard = validationError(
-      await call("claim_task", { ...agent, role: "wizard", sessionId: "s0", projectId }),
-    );
-    expect(wizard).toContain("role");
+    for (const roles of [["wizard"], [], ["senior"]]) {
+      const invalid = validationError(
+        await call("claim_task", { ...agent, roles, sessionId: "s0", projectId }),
+      );
+      expect(invalid).toContain("roles");
+    }
   });
 
-  it("planner claims the plan_requested task -> planning", async () => {
-    const out = await claim("planner", "s1");
+  it("the plan role claims the plan_requested task -> planning", async () => {
+    const out = await claim(["plan"], "s1");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(planTaskId);
     expect(out.task.status).toBe(TaskStatus.Planning);
-    expect(out.agent.role).toBe("planner");
+    expect(out.agent.role).toBe("plan");
     expect(typeof out.agent.id).toBe("string");
   });
 
@@ -591,25 +608,25 @@ describe("AgentQ MCP agent workflow", () => {
 
   it("returns no_tasks_available when nothing is claimable for the role", async () => {
     // No task is in code_review_requested yet, so a reviewer has nothing to claim.
-    const out = await claim("reviewer", "s2");
+    const out = await claim(["review"], "s2");
     expect(out).toMatchObject({ success: false, reason: "no_tasks_available" });
     expect(typeof out.message).toBe("string");
   });
 
-  it("architect does not claim implementation work", async () => {
-    // Only the ready_for_code task is claimable here, and architects plan and review.
-    expect(await claim("architect", "s2b")).toMatchObject({
+  it("an agent that plans and reviews does not claim implementation work", async () => {
+    // Only the ready_for_code task is claimable here, and this agent only plans and reviews.
+    expect(await claim(["plan", "plan_review", "review"], "s2b")).toMatchObject({
       success: false,
       reason: "no_tasks_available",
     });
   });
 
-  it("implementer claims the ready_for_code task -> coding", async () => {
-    const out = await claim("implementer", "s3");
+  it("the code role claims the ready_for_code task -> coding", async () => {
+    const out = await claim(["code"], "s3");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(codeTaskId);
     expect(out.task.status).toBe(TaskStatus.Coding);
-    expect(out.agent.role).toBe("implementer");
+    expect(out.agent.role).toBe("code");
   });
 
   it("submit_code requires the worktree", async () => {
@@ -655,10 +672,10 @@ describe("AgentQ MCP agent workflow", () => {
     }
   });
 
-  it("senior claims a code_review_requested task as reviewer -> reviewing", async () => {
+  it("an agent with the code and review roles claims a code_review_requested task as reviewer -> reviewing", async () => {
     updateTask(codeTaskId, { status: TaskStatus.CodeReviewRequested });
     // This session wrote the code, so it may not review it: another session does.
-    const own = await claim("senior", "s4");
+    const own = await claim(["code", "review"], "s4");
     expect(own.reason).toBe("no_tasks_available");
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await createAgentQMcpServer().connect(serverTransport);
@@ -666,11 +683,11 @@ describe("AgentQ MCP agent workflow", () => {
     await reviewerClient.connect(clientTransport);
     primaryClient = client;
     client = reviewerClient;
-    const out = await claim("senior", "s4");
+    const out = await claim(["code", "review"], "s4");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(codeTaskId);
     expect(out.task.status).toBe(TaskStatus.Reviewing);
-    expect(out.agent.role).toBe("reviewer");
+    expect(out.agent.role).toBe("review");
   });
 
   it("submit_review moves the task back to waiting_code_review (L0: the verdict is advice)", async () => {
@@ -687,14 +704,14 @@ describe("AgentQ MCP agent workflow", () => {
     client = primaryClient!;
   });
 
-  it("the integrator (not the implementer) claims an approved task -> merging", async () => {
+  it("the pr role (not the code role) claims an approved task -> merging", async () => {
     updateTask(codeTaskId, { status: TaskStatus.Approved });
-    expect((await claim("implementer", "s5")).reason).toBe("no_tasks_available");
-    const out = await claim("builder", "s5");
+    expect((await claim(["code"], "s5")).reason).toBe("no_tasks_available");
+    const out = await claim(["code", "pr"], "s5");
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(codeTaskId);
     expect(out.task.status).toBe(TaskStatus.Merging);
-    expect(out.agent.role).toBe("integrator");
+    expect(out.agent.role).toBe("pr");
   });
 
   it("submit_merge requires mergeBranch, commit and authors, then moves the task to pr_open", async () => {
@@ -724,13 +741,13 @@ describe("AgentQ MCP agent workflow", () => {
     expect(last.message).toContain("Authors: dev1,dev2");
   });
 
-  it("senior claims a plan_changes_requested task as planner -> planning", async () => {
+  it("an agent that names no roles claims a plan_changes_requested task as planner -> planning", async () => {
     updateTask(planTaskId, { status: TaskStatus.PlanChangesRequested });
-    const out = await claim("senior", "s6");
+    const out = await ok("claim_task", { ...agent, sessionId: "s6", projectId });
     expect(out.success).toBe(true);
     expect(out.task.id).toBe(planTaskId);
     expect(out.task.status).toBe(TaskStatus.Planning);
-    expect(out.agent.role).toBe("planner");
+    expect(out.agent.role).toBe("plan");
   });
 });
 
@@ -934,7 +951,7 @@ describe("AgentQ MCP claims and blockers", () => {
     const task = createTask({ title: "claimed elsewhere", description: "d", projectId, requiresPlan: true });
     const owner = await connect();
     const stranger = await connect();
-    const claimed = parse(await call(owner, "claim_task", { ...agent, role: "planner", sessionId: "s1", projectId }));
+    const claimed = parse(await call(owner, "claim_task", { ...agent, roles: ["plan"], sessionId: "s1", projectId }));
     expect(claimed.task.id).toBe(task.id);
 
     const denied = await call(stranger, "submit_plan", { taskId: task.id, message: "mine", context: "c" });
@@ -958,7 +975,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("a server started with a claim (runner job) submits it without passing the token", async () => {
     const task = createTask({ title: "runner claim", description: "d", projectId, requiresPlan: true });
     const claimer = await connect();
-    const claimed = parse(await call(claimer, "claim_task", { ...agent, role: "planner", sessionId: "s2", projectId }));
+    const claimed = parse(await call(claimer, "claim_task", { ...agent, roles: ["plan"], sessionId: "s2", projectId }));
     expect(claimed.task.id).toBe(task.id);
     const job = await connect({ claims: { [task.id]: claimed.claimToken } });
     const out = await call(job, "submit_plan", { taskId: task.id, message: "plan", context: "c" });
@@ -968,7 +985,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("report_blocker moves the task to needs_human and releases it", async () => {
     const task = createTask({ title: "cannot push", description: "d", projectId });
     const client = await connect();
-    parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "s3", projectId }));
+    parse(await call(client, "claim_task", { ...agent, roles: ["code"], sessionId: "s3", projectId }));
     const out = parse(
       await call(client, "report_blocker", {
         taskId: task.id,
@@ -983,7 +1000,7 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(getActivityEvents({ taskId: task.id }).some((e) => e.eventType === "task_blocked")).toBe(true);
 
     // Nothing claims a task that waits for a person.
-    const none = parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "s3", projectId }));
+    const none = parse(await call(client, "claim_task", { ...agent, roles: ["code"], sessionId: "s3", projectId }));
     expect(none.reason).toBe("no_tasks_available");
   });
 
@@ -991,11 +1008,11 @@ describe("AgentQ MCP claims and blockers", () => {
     const task = createTask({ title: "l2 review", description: "d", projectId });
     const coder = await connect();
     const reviewer = await connect();
-    parse(await call(coder, "claim_task", { ...agent, role: "implementer", sessionId: "c1", projectId }));
+    parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "c1", projectId }));
     const coded = parse(await call(coder, "submit_code", { taskId: task.id, message: "c", worktree: "/w", context: "c" }));
     expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
 
-    const claimed = parse(await call(reviewer, "claim_task", { ...agent, role: "reviewer", sessionId: "r1", projectId }));
+    const claimed = parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "r1", projectId }));
     expect(claimed.task.id).toBe(task.id);
     expect(claimed).toMatchObject({ autonomy: 2, round: { codeRound: 0, maxReviewRounds: 3 } });
 
@@ -1018,7 +1035,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("heartbeat extends a hand-opened session's lease", async () => {
     createTask({ title: "long work", description: "d", projectId });
     const client = await connect();
-    const { task } = parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "h1", projectId }));
+    const { task } = parse(await call(client, "claim_task", { ...agent, roles: ["code"], sessionId: "h1", projectId }));
     const before = getTaskById(task.id)!.leaseExpiresAt!;
     await Bun.sleep(5);
     const beat = parse(await call(client, "heartbeat", { taskId: task.id }));
@@ -1046,7 +1063,7 @@ describe("AgentQ MCP claims and blockers", () => {
       ["AC2", "command"],
     ]);
     const agentClient = await connect();
-    const claimed = parse(await call(agentClient, "claim_task", { ...agent, role: "planner", sessionId: "p9", projectId }));
+    const claimed = parse(await call(agentClient, "claim_task", { ...agent, roles: ["plan"], sessionId: "p9", projectId }));
     expect(claimed.task.id).toBe(created.task.id);
     const bad = parse(
       await call(agentClient, "submit_plan", {
@@ -1078,7 +1095,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("claim_task returns the brief instead of the conversation; get_task_brief re-reads it", async () => {
     const created = createTask({ title: "brief me", description: "d", projectId, priority: 90, acceptanceCriteria: ["x $ bun test x"] });
     const client = await connect();
-    const claimed = parse(await call(client, "claim_task", { ...agent, role: "implementer", sessionId: "b1", projectId }));
+    const claimed = parse(await call(client, "claim_task", { ...agent, roles: ["code"], sessionId: "b1", projectId }));
     expect(claimed.task.id).toBe(created.id);
     expect(claimed.task.conversation).toBeUndefined();
     expect(claimed.task.history).toBeUndefined();
@@ -1119,7 +1136,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("refuses agents whose skills are older than the server supports", async () => {
     const client = await connect();
     const out = parse(
-      await call(client, "claim_task", { ...agent, role: "planner", sessionId: "s4", projectId, skillsVersion: "2.0.0" }),
+      await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "s4", projectId, skillsVersion: "5.0.0" }),
     );
     expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
     expect(out.message).toContain("bun run install:skills");

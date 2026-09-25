@@ -3,7 +3,7 @@ name: agentq-plan-review
 description: Plan-critique phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the agentq-claim router sends you here). Reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "5.0.0"
+  version: "6.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

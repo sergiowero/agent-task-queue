@@ -52,7 +52,7 @@ describe("task brief", () => {
       nonGoals: ["PDF export"],
       references: [{ label: "Design", target: "https://example.com/design" }],
     });
-    let c = claimNextTask({ role: "planner", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
     submitPlan(task.id, {
       message: "## Plan v1",
       claimToken: c.claimToken,
@@ -65,9 +65,9 @@ describe("task brief", () => {
     expect(buildTaskBrief(task.id)!.latestPlan).toBe("## Plan v1");
     approvePlan(task.id);
 
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, { message: "## Code r1 MARKER-ROUND-1", worktree: "/w", claimToken: c.claimToken, context: "Look at the stream" });
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, {
       verdict: "request_changes",
       message: "one issue",
@@ -101,13 +101,13 @@ describe("task brief", () => {
   it("records people's change requests and answers as handoffs", () => {
     const projectId = project();
     const task = createTaskForProject({ title: "human", description: "A long enough description for readiness.", projectId });
-    let c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     reportBlocker(task.id, { reason: "Unclear", question: "Which format?", claimToken: c.claimToken, context: "tried both" });
     resolveBlocker(task.id, { answer: "CSV only.", targetStatus: TaskStatus.ChangesRequested });
     expect(buildTaskBrief(task.id)!.lastAnswer).toBe("CSV only.");
-    c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.Approved);
     const phases = getHandoffs(task.id).map((h) => [h.phase, h.summary]);
@@ -118,7 +118,7 @@ describe("task brief", () => {
   it("a person's change request reaches the coder as a human handoff", () => {
     const l0 = project();
     const task = createTaskForProject({ title: "l0", description: "A long enough description for readiness.", projectId: l0, autonomy: 0 });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId: l0 })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: l0 })!;
     submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
     requestCodeChanges(task.id, { message: "Rename the flag." });
     expect(buildTaskBrief(task.id)!.handoffs.at(-1)).toMatchObject({ phase: "human", summary: "Rename the flag." });
@@ -136,7 +136,7 @@ describe("pull request body", () => {
       acceptanceCriteria: ["export works $ bun test export"],
       nonGoals: ["PDF export"],
     });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
     submitCode(task.id, {
       message: "done",
       worktree: "/w",
@@ -145,7 +145,7 @@ describe("pull request body", () => {
       claimToken: c.claimToken,
     });
     expect(buildTaskBrief(task.id)!.pr).toBeNull();
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
     submitReview(task.id, {
       verdict: "approve",
       message: "ok",

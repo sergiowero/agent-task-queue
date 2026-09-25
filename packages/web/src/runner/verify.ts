@@ -327,7 +327,7 @@ export class VerifyWorker {
       setAppState("verifier_heartbeat", new Date().toISOString());
       if (this.busy) return null;
       const claimed = claimNextTask({
-        role: "verifier",
+        roles: ["verify"],
         agent: { toolName: "agentq-verifier", version: "1", model: "none", sessionId: VERIFIER_RUNNER_ID, host: hostname() },
         runnerId: VERIFIER_RUNNER_ID,
       });

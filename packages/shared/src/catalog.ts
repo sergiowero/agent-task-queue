@@ -109,7 +109,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "pending",
     cancelable: true,
     editable: true,
-    hint: "Waiting for an implementer agent to pick it up.",
+    hint: "Waiting for a coding agent to pick it up.",
   },
   [TaskStatus.Coding]: {
     label: "Coding",
@@ -118,7 +118,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "in-progress",
     cancelable: true,
     editable: false,
-    hint: "An implementer agent is writing the code.",
+    hint: "A coding agent is writing the code.",
   },
   [TaskStatus.WaitingCodeReview]: {
     label: "Code review",
@@ -154,7 +154,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "pending",
     cancelable: true,
     editable: true,
-    hint: "Waiting for an implementer agent to address the feedback.",
+    hint: "Waiting for a coding agent to address the feedback.",
   },
   [TaskStatus.Approved]: {
     label: "Approved",
@@ -293,84 +293,73 @@ export function isActiveStatus(status: string): boolean {
 
 // ─── Roles and claims ─────────────────────────────────────────────────
 
+/**
+ * A role is a phase an agent may work. An agent or runner has one or more roles
+ * (e.g. ["plan", "review"]) and claims the queued statuses of each of them.
+ */
+export const ROLES = ["refine", "plan", "plan_review", "code", "verify", "review", "pr"] as const;
+export type Role = (typeof ROLES)[number];
+
 export interface ClaimRule {
-  role: string;
+  role: Role;
   from: TaskStatus[];
   to: TaskStatus;
 }
 
-/** What each base role claims, and the active status the claim moves the task to. */
+/** What each role claims, and the active status the claim moves the task to. */
 export const CLAIM_RULES: ClaimRule[] = [
-  { role: "refiner", from: [TaskStatus.Draft], to: TaskStatus.Refining },
+  { role: "refine", from: [TaskStatus.Draft], to: TaskStatus.Refining },
   {
-    role: "planner",
+    role: "plan",
     from: [TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested],
     to: TaskStatus.Planning,
   },
-  { role: "plan_reviewer", from: [TaskStatus.PlanReviewRequested], to: TaskStatus.PlanReviewing },
+  { role: "plan_review", from: [TaskStatus.PlanReviewRequested], to: TaskStatus.PlanReviewing },
   {
-    role: "implementer",
+    role: "code",
     from: [TaskStatus.ReadyForCode, TaskStatus.ChangesRequested],
     to: TaskStatus.Coding,
   },
   // The server's built-in verifier (no LLM) claims these too.
-  { role: "verifier", from: [TaskStatus.VerifyRequested], to: TaskStatus.Verifying },
-  { role: "reviewer", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
-  { role: "integrator", from: [TaskStatus.Approved], to: TaskStatus.Merging },
+  { role: "verify", from: [TaskStatus.VerifyRequested], to: TaskStatus.Verifying },
+  { role: "review", from: [TaskStatus.CodeReviewRequested], to: TaskStatus.Reviewing },
+  { role: "pr", from: [TaskStatus.Approved], to: TaskStatus.Merging },
 ];
 
-export const BASE_ROLES = [
-  "refiner",
-  "planner",
-  "plan_reviewer",
-  "implementer",
-  "verifier",
-  "reviewer",
-  "integrator",
-] as const;
-
-export const COMPOUND_ROLES: Record<string, string[]> = {
-  // The built-in verifier covers verification, so senior agents do not claim it.
-  senior: ["refiner", "planner", "plan_reviewer", "implementer", "reviewer", "integrator"],
-  architect: ["planner", "plan_reviewer", "reviewer"],
-  qa: ["verifier", "reviewer"],
-  builder: ["implementer", "integrator"],
+export const ROLE_INFO: Record<Role, { label: string; description: string }> = {
+  refine: { label: "Refine", description: "Turns rough drafts into ready tasks" },
+  plan: { label: "Plan", description: "Writes implementation plans with a validation plan" },
+  plan_review: {
+    label: "Plan review",
+    description: "Critiques plans (best on a different model than the planner)",
+  },
+  code: { label: "Code", description: "Writes the code and tests, and fixes review findings" },
+  verify: {
+    label: "Verify",
+    description: "Runs the verification commands (the server has a built-in verifier)",
+  },
+  review: {
+    label: "Code review",
+    description: "Reviews code with a verdict (best on a different model than the coder)",
+  },
+  pr: { label: "Pull request", description: "Pushes the branch and opens the pull request" },
 };
 
-/** Every role an agent or runner may use. */
-export const ROLES = [
-  "planner",
-  "plan_reviewer",
-  "implementer",
-  "reviewer",
-  "integrator",
-  "verifier",
-  "refiner",
-  "senior",
-  "architect",
-  "qa",
-  "builder",
-] as const;
-export type Role = (typeof ROLES)[number];
+/** Roles of an agent that names none: all but verify, which the server's built-in verifier does. */
+export const DEFAULT_ROLES: Role[] = ROLES.filter((r) => r !== "verify");
 
-export const ROLE_INFO: Record<Role, string> = {
-  planner: "Writes implementation plans with a validation plan",
-  plan_reviewer: "Critiques plans (use a different model than the planner)",
-  implementer: "Writes the code and tests, with evidence",
-  reviewer: "Reviews code with a verdict (use a different model than the coder)",
-  integrator: "Pushes the branch and opens the pull request",
-  verifier: "Runs the verification commands (the server has a built-in one)",
-  refiner: "Turns rough drafts into ready tasks",
-  senior: "Everything except verification (for a single agent)",
-  architect: "Plans, critiques plans and reviews code; never writes code",
-  qa: "Verifies and reviews",
-  builder: "Implements and integrates (opens the PR)",
-};
+export function isRole(role: string): role is Role {
+  return (ROLES as readonly string[]).includes(role);
+}
 
-/** Base roles a (possibly compound) role stands for. */
-export function baseRolesOf(role: string): string[] {
-  if (COMPOUND_ROLES[role]) return COMPOUND_ROLES[role];
-  return CLAIM_RULES.some((r) => r.role === role) ? [role] : [];
+/** The known roles among `roles`, without duplicates, in catalog order. */
+export function normalizeRoles(roles: readonly string[]): Role[] {
+  return ROLES.filter((r) => roles.includes(r));
+}
+
+/** The rule that claims a task in `status` (each queued status has exactly one), or null. */
+export function claimRuleFor(status: TaskStatus): ClaimRule | null {
+  return CLAIM_RULES.find((r) => r.from.includes(status)) ?? null;
 }
 
 /** Active status → the statuses a claim into it may come from. */

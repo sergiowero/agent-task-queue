@@ -75,7 +75,7 @@ function project(repo: string, commands: Record<string, string>, extra: Record<s
 /** Codes a task in the worktree and submits it; returns the task in its next status. */
 function coded(projectId: string, worktree: string, over: Partial<Parameters<typeof createTask>[0]> = {}): Task {
   const task = createTask({ title: "verify me", description: "d", projectId, ...over });
-  const c = claimNextTask({ role: "implementer", agent: coder, projectId })!;
+  const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
   expect(c.task.id).toBe(task.id);
   setAppState("verifier_heartbeat", new Date().toISOString());
   const headSha = existsSync(worktree) ? git(worktree, "rev-parse", "HEAD") : undefined;
@@ -86,7 +86,7 @@ function coded(projectId: string, worktree: string, over: Partial<Parameters<typ
 /** What the worker does: claim, run, report. */
 async function verify(projectId: string, opts: Parameters<typeof runVerification>[2] = {}) {
   const claimed = claimNextTask({
-    role: "verifier",
+    roles: ["verify"],
     agent: { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "v" },
     projectId,
     runnerId: "builtin:verifier",
@@ -99,7 +99,7 @@ async function verify(projectId: string, opts: Parameters<typeof runVerification
 
 function recode(task: Task, worktree: string, files: Record<string, string | null> = {}) {
   if (Object.keys(files).length) commit(worktree, files);
-  const c = claimNextTask({ role: "implementer", agent: coder, projectId: task.projectId! })!;
+  const c = claimNextTask({ roles: ["code"], agent: coder, projectId: task.projectId! })!;
   expect(c.task.id).toBe(task.id);
   setAppState("verifier_heartbeat", new Date().toISOString());
   submitCode(task.id, { message: "again", worktree, claimToken: c.claimToken });
@@ -208,7 +208,7 @@ describe.skipIf(!hasGit)("verification", () => {
     const verified = await verify(pid);
     expect(verified.risk).toBe("high");
     expect(verified.riskReasons[0]).toContain("migrations/001.sql");
-    const r = claimNextTask({ role: "reviewer", agent: reviewer, projectId: pid })!;
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
     const out = submitReview(r.task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
     expect(out.newStatus).toBe(TaskStatus.WaitingCodeReview);
   });
@@ -251,7 +251,7 @@ describe.skipIf(!hasGit)("verification", () => {
 
     const withCommands = project(repo, { test: "bun test" });
     const t2 = createTask({ title: "offline", description: "d", projectId: withCommands });
-    const c = claimNextTask({ role: "implementer", agent: coder, projectId: withCommands })!;
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: withCommands })!;
     setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
     submitCode(t2.id, { message: "c", worktree, claimToken: c.claimToken });
     const offline = getTaskById(t2.id)!;

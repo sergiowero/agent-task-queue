@@ -1,9 +1,9 @@
 ---
 name: agentq-verify
-description: Verification phase of the AgentQ workflow, for LLM verifier agents (roles verifier or qa). Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `verify_requested`, now in `verifying`. Runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The AgentQ web server has a built-in verifier that usually does this; this skill is for when an agent does it instead. Never edits code.
+description: Verification phase of the AgentQ workflow, for LLM agents with the `verify` role. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `verify_requested`, now in `verifying`. Runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The AgentQ web server has a built-in verifier that usually does this; this skill is for when an agent does it instead. Never edits code.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_verification, mcp__agentq__report_blocker, mcp__agentq__get_task, Bash(git:*), Bash(bun:*), Bash(npm:*), Bash(npx:*)
 metadata:
-  version: "5.0.0"
+  version: "6.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

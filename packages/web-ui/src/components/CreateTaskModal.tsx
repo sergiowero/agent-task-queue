@@ -232,7 +232,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
               checked={draft}
               onChange={setDraft}
               label="Save as draft"
-              description="Rough idea: a refiner agent turns it into a ready task (criteria, risk, scope), or you promote it later."
+              description="Rough idea: an agent with the refine role turns it into a ready task (criteria, risk, scope), or you promote it later."
             />
           </div>
         </div>

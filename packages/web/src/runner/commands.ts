@@ -20,6 +20,7 @@ export interface CommandContext {
    */
   mcpConfigFile: string;
   taskId: string;
+  /** The role the claim acts as (exported as AGENTQ_ROLE). */
   role: string;
   model: string | null;
   /** Reasoning effort; only claude, codex and opencode receive it. */

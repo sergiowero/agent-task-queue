@@ -85,8 +85,6 @@ export {
 
 export {
   getClaimableStatuses,
-  getClaimTransition,
-  getEffectiveRole,
   addConversation,
   addActivity,
   normalizeStatusInput,
@@ -155,7 +153,6 @@ export {
   type SubmitResult,
   type TransitionOptions,
   ROLE_STATUSES,
-  COMPOUND_ROLES,
   CANCELED_CANT_CANCEL,
 } from "./workflow.js";
 
@@ -269,7 +266,7 @@ export {
   createRunnerSchema,
   updateRunnerSchema,
   runnerToolSchema,
-  runnerRoleSchema,
+  runnerRolesSchema,
   riskSchema,
   taskTypeSchema,
   autonomySchema,

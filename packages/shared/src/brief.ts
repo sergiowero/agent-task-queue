@@ -66,7 +66,7 @@ export interface TaskBrief {
   verification: (Verification & { failing: Pick<Evidence, "command" | "exitCode" | "summary">[] }) | null;
   /** What a person answered to the last blocker, if the task was blocked. */
   lastAnswer: string | null;
-  /** For the integrator: the pull request body to use (criteria, evidence, review, risk). */
+  /** For the `pr` role: the pull request body to use (criteria, evidence, review, risk). */
   pr: { body: string; url: string | null } | null;
   /** Where the full history is. */
   more: string;

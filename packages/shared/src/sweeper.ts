@@ -4,7 +4,7 @@
  * picked up in time go to a person. Safe to call often and from any process.
  */
 import { getDbHandle, getTaskById } from "./database.js";
-import { TaskStatus } from "./catalog.js";
+import { TaskStatus, claimRuleFor } from "./catalog.js";
 import { reviewGate } from "./policy.js";
 import { policyFor, revertClaim, transitionTask, verifierOnline } from "./workflow.js";
 
@@ -62,7 +62,7 @@ export function sweepQueue(now: Date = new Date()): SweepResult {
       transitionTask(task, to, {
         actor: "system:sweeper",
         author: "system",
-        message: `No eligible agent picked this ${what} up in ${limit} min (an agent never reviews its own work). A person does it instead; start a runner with a reviewing role to avoid this.`,
+        message: `No eligible agent picked this ${what} up in ${limit} min (an agent never reviews its own work). A person does it instead; start a runner with the \`${claimRuleFor(from)?.role}\` role to avoid this.`,
         messageType: "system",
         event: "review_starved",
       });

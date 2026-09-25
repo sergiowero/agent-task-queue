@@ -22,12 +22,15 @@ import {
   withTransaction,
   getMigrationStatus,
   getDbPath,
+  getAgents,
+  getRunners,
+  resetDb,
+  rollbackMigration,
 } from "./database.js";
 import { TaskStatus, normalizeStatus } from "./types.js";
+import { claimRuleFor } from "./catalog.js";
 import {
   getClaimableStatuses,
-  getClaimTransition,
-  getEffectiveRole,
   addConversation,
   addActivity,
   normalizeStatusInput,
@@ -202,37 +205,23 @@ describe("Soft Delete (8.2)", () => {
 });
 
 describe("Workflow Refactor (8.3)", () => {
-  it("getClaimableStatuses returns planner statuses", () => {
-    const statuses = getClaimableStatuses("planner");
-    expect(statuses).toContain(TaskStatus.PlanRequested);
-    expect(statuses).toContain(TaskStatus.PlanChangesRequested);
+  it("getClaimableStatuses returns the plan role's statuses", () => {
+    const statuses = getClaimableStatuses(["plan"]);
+    expect(statuses.sort()).toEqual([TaskStatus.PlanRequested, TaskStatus.PlanChangesRequested].sort());
   });
 
-  it("getClaimableStatuses returns compound senior statuses", () => {
-    const statuses = getClaimableStatuses("senior");
+  it("getClaimableStatuses joins the statuses of several roles", () => {
+    const statuses = getClaimableStatuses(["plan", "code", "review"]);
     expect(statuses).toContain(TaskStatus.PlanRequested);
     expect(statuses).toContain(TaskStatus.ReadyForCode);
     expect(statuses).toContain(TaskStatus.CodeReviewRequested);
+    expect(statuses).not.toContain(TaskStatus.Approved);
   });
 
-  it("getClaimTransition maps planner to Planning", () => {
-    const result = getClaimTransition(TaskStatus.PlanRequested, "planner");
-    expect(result).toBe(TaskStatus.Planning);
-  });
-
-  it("getClaimTransition maps implementer to Coding", () => {
-    const result = getClaimTransition(TaskStatus.ReadyForCode, "implementer");
-    expect(result).toBe(TaskStatus.Coding);
-  });
-
-  it("getEffectiveRole resolves senior to planner for plan tasks", () => {
-    const role = getEffectiveRole(TaskStatus.PlanRequested, "senior");
-    expect(role).toBe("planner");
-  });
-
-  it("getEffectiveRole resolves senior to implementer for code tasks", () => {
-    const role = getEffectiveRole(TaskStatus.ReadyForCode, "senior");
-    expect(role).toBe("implementer");
+  it("claimRuleFor names the role and the active status of a claim", () => {
+    expect(claimRuleFor(TaskStatus.PlanRequested)).toMatchObject({ role: "plan", to: TaskStatus.Planning });
+    expect(claimRuleFor(TaskStatus.ChangesRequested)).toMatchObject({ role: "code", to: TaskStatus.Coding });
+    expect(claimRuleFor(TaskStatus.Approved)).toMatchObject({ role: "pr", to: TaskStatus.Merging });
   });
 
   it("normalizeStatusInput handles legacy ready for code", () => {
@@ -498,6 +487,7 @@ describe("Migration Status", () => {
       "021_subtasks_plan_submission",
       "022_runner_roles_builder",
       "023_pull_requests",
+      "024_phase_roles",
     ]) {
       expect(names).toContain(n);
     }
@@ -649,5 +639,42 @@ describe("Schema Validation — SteerDetails & Guardrails", () => {
       guardrails: ["Updated"],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// Last in the file: it swaps the in-memory database for a file-backed one to re-run a migration.
+describe("024_phase_roles", () => {
+  it("turns legacy runner roles into role lists and renames agent roles", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentq-roles-"));
+    const previous = process.env.AGENTQ_DB_PATH;
+    try {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      rollbackMigration("024_phase_roles");
+      const d = getDbHandle();
+      const now = new Date().toISOString();
+      const insert = d.prepare(
+        "INSERT INTO runners (id, name, tool, role, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?)",
+      );
+      for (const role of ["senior", "architect", "qa", "builder", "reviewer"]) insert.run(role, role, role, now, now);
+      d.prepare(
+        "INSERT INTO agents (id, tool_name, version, model, role, session_id) VALUES ('legacy', 't', '1', 'm', 'implementer', 's')",
+      ).run();
+
+      resetDb(); // reopening runs the pending migration
+      expect(Object.fromEntries(getRunners().map((r) => [r.id, r.roles]))).toEqual({
+        senior: ["refine", "plan", "plan_review", "code", "review", "pr"],
+        architect: ["plan", "plan_review", "review"],
+        qa: ["verify", "review"],
+        builder: ["code", "pr"],
+        reviewer: ["review"],
+      });
+      expect(getAgents().find((a) => a.id === "legacy")?.role).toBe("code");
+    } finally {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = previous;
+      // Windows may keep the file locked a moment after close.
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
   });
 });

@@ -30,6 +30,7 @@ import type { Tone } from "../lib/status";
 import { TONE_SOFT, TOOL_TONE } from "../lib/status";
 import { formatDateTime, formatDuration, formatRelative, pluralize } from "../lib/format";
 import { cn } from "../lib/cn";
+import { ROLE_INFO, type Role } from "@agentq/shared/catalog";
 import { useSSE } from "../hooks/useSSE";
 import { Alert } from "../components/Alert";
 import { Badge, Dot, JobStatusBadge } from "../components/Badge";
@@ -86,6 +87,19 @@ function MonoChip({ children, tone = "neutral" }: { children: ReactNode; tone?: 
     >
       {children}
     </span>
+  );
+}
+
+/** One badge per role the runner works. */
+function RoleBadges({ roles }: { roles: Role[] }) {
+  return (
+    <>
+      {roles.map((r) => (
+        <Badge key={r} title={ROLE_INFO[r].description}>
+          {r}
+        </Badge>
+      ))}
+    </>
   );
 }
 
@@ -276,7 +290,7 @@ function JobsDrawer({ runner, onClose }: { runner: Runner; onClose: () => void }
             </p>
           </div>
           <Badge tone={TOOL_TONE[runner.tool] ?? "neutral"}>{runner.tool}</Badge>
-          <Badge>{runner.role}</Badge>
+          <RoleBadges roles={runner.roles} />
         </>
       }
     >
@@ -434,7 +448,7 @@ function RunnerCard({
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="mr-0.5 truncate text-sm font-semibold text-text">{runner.name}</span>
             <Badge tone={TOOL_TONE[runner.tool] ?? "neutral"}>{runner.tool}</Badge>
-            <Badge>{runner.role}</Badge>
+            <RoleBadges roles={runner.roles} />
             {runner.permissionMode === "full" && (
               <Badge tone="warning" icon={FullAccessIcon}>
                 full access
@@ -635,11 +649,11 @@ export function RunnersPage() {
         <VerifierStatus />
         {runners.length > 0 && (
           <div className="space-y-5">
-            {runners.filter((r) => ["reviewer", "senior", "architect", "qa"].includes(r.role)).length === 1 && (
+            {runners.filter((r) => r.roles.includes("review")).length === 1 && (
               <Alert tone="info" title="Reviews need a second agent">
                 With autonomy L1 or higher, code goes to an AI review without a click, but a runner never
-                reviews code it wrote. Add a second runner that can review (reviewer, architect or senior),
-                ideally on a different model; otherwise unclaimed reviews go to you after a while.
+                reviews code it wrote. Add a second runner with the review role, ideally on a different
+                model; otherwise unclaimed reviews go to you after a while.
               </Alert>
             )}
             <div className="grid grid-cols-3 gap-3">
