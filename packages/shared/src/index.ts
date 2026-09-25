@@ -196,7 +196,19 @@ export {
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
 
-export { buildTaskBrief, previousPhase, renderPrBody, type TaskBrief } from "./brief.js";
+export {
+  buildTaskBrief,
+  buildIndependentBrief,
+  buildAgentBrief,
+  isIndependentPhase,
+  INDEPENDENT_PHASES,
+  previousPhase,
+  renderPrBody,
+  type TaskBrief,
+  type IndependentBrief,
+  type IndependentPhase,
+  type FindingToVerify,
+} from "./brief.js";
 export { computeMetrics, HUMAN_DECISIONS, type FlowMetrics, type MetricsFilter } from "./metrics.js";
 export { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 

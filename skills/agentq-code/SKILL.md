@@ -104,10 +104,12 @@ Commit your changes in the worktree BEFORE calling `submit_code` — it only rec
 ```
 
 - `evidence.summary` holds the relevant output lines, not the whole log.
-- `criteria` is your view; the verifier and the reviewer check it.
+- `criteria` is your view; the verifier and the reviewer check every criterion themselves without seeing it. Evidence and criteria go into the pull request body for people.
 - `findingResolutions` is required for every open finding (none on the first round).
 
-`context` is required too (see Context Handoff in `agentq-claim`). For the reviewer, include: what to look at first, known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
+`context` is required too (see Context Handoff in `agentq-claim`). It is for the coder of the next round and the person who merges: known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
+
+The verifier and the reviewer check your work independently: they never see your `message`, `context`, `evidence` or `criteria`, only the task, the diff and the commands they run. Make the code, the tests and the commit messages speak for themselves. The only words of yours a reviewer reads are the `resolution` of a `wontfix` finding, so give the real reason there.
 
 It stores the worktree path and the evidence and releases the task. When the project has commands, the AgentQ verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output, and deleted, skipped or weakened tests count as a failure. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
@@ -155,7 +157,7 @@ Before `submit_code`:
 - **DO NOT** modify files outside the assigned worktree
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
 - **DO NOT** call `submit_code` with uncommitted changes - commit in the worktree first
-- **DO NOT** call `submit_code` without `context` handoff notes for the reviewer
+- **DO NOT** call `submit_code` without `context` handoff notes
 - **DO NOT** run `git push` outside the merging phase
 - **DO NOT** commit in the main working directory - commits live in the task worktree
 - **DO NOT** force-push (`git push --force` / `-f`)

@@ -22,6 +22,7 @@ export interface CommandContext {
   taskId: string;
   /** The role the claim acts as (exported as AGENTQ_ROLE). */
   role: string;
+  /** Model id as typed on the runner; blank means the tool's own default (no model flag). */
   model: string | null;
   /** Reasoning effort; only claude, codex and opencode receive it. */
   effort: string | null;
@@ -155,6 +156,7 @@ export function geminiSettings(mcp: McpServerLaunch, systemPath = geminiSystemSe
 
 export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltCommand {
   const extra = ctx.extraArgs ?? [];
+  const model = ctx.model?.trim();
   switch (tool) {
     case "claude": {
       const cmd = ["claude", "-p", ctx.prompt, "--output-format", "json", "--mcp-config", ctx.mcpConfigFile];
@@ -163,7 +165,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       } else {
         cmd.push("--permission-mode", "acceptEdits", "--allowedTools", ...CLAUDE_SAFE_TOOLS);
       }
-      if (ctx.model) cmd.push("--model", ctx.model);
+      if (model) cmd.push("--model", model);
       if (ctx.effort) cmd.push("--effort", ctx.effort);
       cmd.push(...extra);
       return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
@@ -174,7 +176,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
         ctx.permissionMode === "full" ? "--dangerously-bypass-approvals-and-sandbox" : "--full-auto",
       );
       cmd.push("-C", ctx.cwd, "--skip-git-repo-check", ...codexMcpOverrides(ctx.mcp));
-      if (ctx.model) cmd.push("-m", ctx.model);
+      if (model) cmd.push("-m", model);
       // `-c` values are parsed as TOML, so the string must be quoted.
       if (ctx.effort) cmd.push("-c", `model_reasoning_effort="${ctx.effort}"`);
       cmd.push(...extra, ctx.prompt);
@@ -182,7 +184,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
     }
     case "opencode": {
       const cmd = ["opencode", "run", "--dir", ctx.cwd, "--format", "json", "--auto"];
-      if (ctx.model) cmd.push("-m", ctx.model);
+      if (model) cmd.push("-m", model);
       if (ctx.effort) cmd.push("--variant", ctx.effort);
       cmd.push(...extra, ctx.prompt);
       const content = opencodeConfigContent(ctx.mcp, process.env.OPENCODE_CONFIG_CONTENT);
@@ -190,7 +192,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
     }
     case "gemini": {
       const cmd = ["gemini", "-p", ctx.prompt, "--yolo"];
-      if (ctx.model) cmd.push("-m", ctx.model);
+      if (model) cmd.push("-m", model);
       cmd.push(...extra);
       const settingsFile = ctx.mcpConfigFile.replace(/(\.mcp)?\.json$/, ".gemini-settings.json");
       return {

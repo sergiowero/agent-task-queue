@@ -1032,6 +1032,65 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(got.task.lastReview).toMatchObject({ verdict: "request_changes", round: 1 });
   });
 
+  it("the reviewer's session never sees the coder's context: claim, brief, get_task, list_tasks, comments, resource", async () => {
+    const task = createTask({
+      title: "independent review",
+      description: "d",
+      projectId,
+      priority: 95,
+      acceptanceCriteria: ["export works $ bun test export"],
+    });
+    const coder = await connect();
+    const reviewer = await connect();
+    parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "ic1", projectId }));
+    parse(await call(coder, "post_comment", { taskId: task.id, message: "CODER-COMMENT" }));
+    const coded = parse(
+      await call(coder, "submit_code", {
+        taskId: task.id,
+        message: "CODER-MESSAGE",
+        worktree: "/w",
+        context: "CODER-NOTE",
+        decisions: ["CODER-DECISION"],
+        evidence: [{ kind: "command", criterionId: "AC1", command: "bun test export", exitCode: 0, summary: "CODER-EVIDENCE" }],
+        criteria: [{ id: "AC1", status: "met" }],
+      }),
+    );
+    expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
+    const leaks = (value: unknown) =>
+      ["CODER-COMMENT", "CODER-MESSAGE", "CODER-NOTE", "CODER-DECISION", "CODER-EVIDENCE"].filter((m) => JSON.stringify(value).includes(m));
+
+    const claimed = parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "ir1", projectId }));
+    expect(claimed.task).toMatchObject({ id: task.id, independent: true, worktreePath: "/w", project: { id: projectId } });
+    expect(claimed.task.contexts).toBeUndefined();
+    expect(claimed.brief).toMatchObject({ independent: true, phase: "review" });
+    expect(claimed.brief.criteria).toEqual([{ id: "AC1", text: "export works", verify: { kind: "command", command: "bun test export" } }]);
+    expect(leaks(claimed)).toEqual([]);
+
+    const got = parse(await call(reviewer, "get_task", { taskId: task.id }));
+    expect(got).toMatchObject({ success: true, independent: true, brief: { phase: "review" } });
+    expect(got.message).toContain("Independent review");
+    expect(leaks(got)).toEqual([]);
+    expect(leaks(parse(await call(reviewer, "get_task_brief", { taskId: task.id })))).toEqual([]);
+    const listed = parse(await call(reviewer, "list_tasks", { projectId }));
+    expect(leaks(listed.tasks.find((t: { id: string }) => t.id === task.id))).toEqual([]);
+    expect(leaks(parse(await call(reviewer, "post_comment", { taskId: task.id, message: "looking" })))).toEqual([]);
+    const resource = await reviewer.readResource({ uri: `agentq://task/${task.id}` });
+    expect(leaks(resourceText(resource.contents[0]))).toEqual([]);
+
+    // A runner job holding the review claim is isolated the same way.
+    const job = await connect({ claims: { [task.id]: claimed.claimToken } });
+    expect(parse(await call(job, "get_task", { taskId: task.id })).independent).toBe(true);
+
+    // Anyone not holding the review (a person's session, the coder) still reads the whole task.
+    const other = parse(await call(coder, "get_task", { taskId: task.id }));
+    expect(other.independent).toBeUndefined();
+    expect(leaks(other)).toEqual(["CODER-COMMENT", "CODER-MESSAGE", "CODER-NOTE", "CODER-DECISION", "CODER-EVIDENCE"]);
+
+    // Once the review is submitted, the reviewer no longer holds the task.
+    parse(await call(reviewer, "submit_review", { taskId: task.id, verdict: "approve", message: "ok", context: "c" }));
+    expect(parse(await call(reviewer, "get_task", { taskId: task.id })).independent).toBeUndefined();
+  });
+
   it("heartbeat extends a hand-opened session's lease", async () => {
     createTask({ title: "long work", description: "d", projectId });
     const client = await connect();
