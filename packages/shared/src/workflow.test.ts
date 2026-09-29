@@ -16,7 +16,7 @@ import {
   patchTask,
   updateProject,
 } from "./database.js";
-import { getEvidence, getFindings } from "./records.js";
+import { addFindings, getEvidence, getFindings } from "./records.js";
 import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
 import { DEFAULT_ROLES, type Role } from "./catalog.js";
@@ -859,6 +859,88 @@ describe("evidence, validation plans and findings by id", () => {
       expect(out.newStatus).toBe(round === 1 ? TaskStatus.ChangesRequested : TaskStatus.NeedsHuman);
     }
     expect(getTaskById(task.id)!.blocker?.reason).toContain("disagree on R1-1");
+  });
+
+  it("a blocker or major finding the coder answered closes only when a reviewer verifies it", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "trust me", description: "d", projectId });
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    let r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "request_changes",
+      message: "m",
+      claimToken: r.claimToken,
+      findings: [
+        { severity: "blocker", text: "drops data" },
+        { severity: "major", text: "no test" },
+      ],
+    });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, {
+      message: "c",
+      worktree: "/w",
+      claimToken: c.claimToken,
+      findingResolutions: [
+        { id: "R1-1", status: "fixed", resolution: "trust me" },
+        { id: "R1-2", status: "wontfix", resolution: "not needed" },
+      ],
+    });
+    r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    expect(() => submitReview(task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken })).toThrow(
+      "open blocker or major findings: R1-1 (fixed), R1-2 (wontfix)",
+    );
+    const out = submitReview(task.id, {
+      verdict: "approve",
+      message: "ok",
+      claimToken: r.claimToken,
+      verifiedFindings: [
+        { id: "R1-1", status: "verified" },
+        { id: "R1-2", status: "verified" },
+      ],
+    });
+    expect(out.newStatus).toBe(TaskStatus.Approved);
+    expect(getFindings(task.id).map((f) => f.status)).toEqual(["verified", "verified"]);
+  });
+
+  it("submit_code answers only open code findings: not plan findings, not verified ones", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "answers", description: "d", projectId });
+    addFindings(task.id, "P", 1, [{ severity: "major", text: "plan gap" }], "critic");
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    expect(() =>
+      submitCode(task.id, {
+        message: "c",
+        worktree: "/w",
+        claimToken: c.claimToken,
+        findingResolutions: [{ id: "P1-1", status: "fixed", resolution: "done" }],
+      }),
+    ).toThrow("Finding P1-1 is not an open code finding (plan finding)");
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    let r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, { verdict: "request_changes", message: "m", claimToken: r.claimToken, findings: [{ severity: "minor", text: "a" }] });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken, findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "done" }] });
+    r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "request_changes",
+      message: "m",
+      claimToken: r.claimToken,
+      verifiedFindings: [{ id: "R1-1", status: "verified" }],
+      findings: [{ severity: "minor", text: "b" }],
+    });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    expect(() =>
+      submitCode(task.id, {
+        message: "c",
+        worktree: "/w",
+        claimToken: c.claimToken,
+        findingResolutions: [
+          { id: "R1-1", status: "fixed", resolution: "again" },
+          { id: "R2-1", status: "fixed", resolution: "done" },
+        ],
+      }),
+    ).toThrow("Finding R1-1 is not an open code finding (verified)");
   });
 
   it("a person's edit of the criteria keeps the ids of unchanged ones", () => {

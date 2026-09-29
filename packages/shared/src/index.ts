@@ -183,6 +183,7 @@ export {
   getFinding,
   getFindings,
   getOpenFindings,
+  getUnverifiedFindings,
   updateFinding,
   addEvidence,
   getEvidence,

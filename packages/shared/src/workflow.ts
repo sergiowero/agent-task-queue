@@ -32,6 +32,7 @@ import {
   addHandoff,
   getFinding,
   getOpenFindings,
+  getUnverifiedFindings,
   updateFinding,
   type NewEvidence,
   type NewFinding,
@@ -1131,10 +1132,11 @@ export function submitPlanReview(taskId: string, input: SubmitPlanReviewInput): 
       }
       addFindings(taskId, "P", round, input.findings ?? [], critic);
       const open = getOpenFindings(taskId, "plan");
-      const blocking = open.filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
+      // An answered (fixed/wontfix) blocker or major finding still needs the critic to verify it.
+      const blocking = getUnverifiedFindings(taskId, "plan").filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
       if (input.verdict === "approve" && blocking.length) {
         throw new WorkflowError(
-          `Cannot approve a plan with open blocker or major findings: ${blocking.map((f) => f.id).join(", ")}.`,
+          `Cannot approve a plan with open blocker or major findings: ${blocking.map((f) => `${f.id} (${f.status})`).join(", ")}. Pass fixed/wontfix ones in verifiedFindings as verified, or request changes.`,
         );
       }
       if (input.verdict === "request_changes" && open.length === 0) {
@@ -1499,7 +1501,14 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
         );
       }
       for (const r of resolutions.values()) {
-        if (!getFinding(taskId, r.id)) throw new WorkflowError(`Unknown finding ${r.id}.`);
+        const finding = getFinding(taskId, r.id);
+        if (!finding) throw new WorkflowError(`Unknown finding ${r.id}.`);
+        // Only code findings a reviewer has not closed yet: never a plan finding, never a verified one.
+        if (finding.phase !== "code" || finding.status === "verified") {
+          throw new WorkflowError(
+            `Finding ${r.id} is not an open code finding (${finding.phase === "code" ? finding.status : "plan finding"}); answer only the open code findings.`,
+          );
+        }
         updateFinding(taskId, r.id, { status: r.status, resolution: r.resolution.trim() });
       }
 
@@ -1796,11 +1805,12 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
       }
       addFindings(taskId, "R", round, input.findings ?? [], reviewer);
       const open = getOpenFindings(taskId, "code");
-      const blocking = open.filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
+      // The coder's "fixed" or "wontfix" is a claim: a blocker or major finding closes only when a reviewer verifies it.
+      const blocking = getUnverifiedFindings(taskId, "code").filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
 
       if (input.verdict === "approve" && blocking.length) {
         throw new WorkflowError(
-          `Cannot approve with open blocker or major findings: ${blocking.map((f) => f.id).join(", ")}. Verify them or request changes.`,
+          `Cannot approve with open blocker or major findings: ${blocking.map((f) => `${f.id} (${f.status})`).join(", ")}. Pass fixed/wontfix ones in verifiedFindings as verified, or request changes.`,
         );
       }
       if (input.verdict === "request_changes" && open.length === 0) {
