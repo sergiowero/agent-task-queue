@@ -247,6 +247,30 @@ export function policyFor(task: Task): GatePolicy {
   return resolvePolicy(task.projectId ? getProjectById(task.projectId) : null, task);
 }
 
+/**
+ * The round a handoff written in `phase` belongs to, read from the task before
+ * the change: a plan and its critique share round k (the critique's findings
+ * are P<k>), and so do a code submission, its verification and its review
+ * (evidence of round k, findings R<k>). A merge follows the last review round;
+ * a refinement comes before any round. People's notes and claims take the
+ * round of the phase they feed.
+ */
+function handoffRound(task: Pick<Task, "planRound" | "codeRound">, phase: Phase): number {
+  switch (phase) {
+    case "plan":
+    case "plan_review":
+      return task.planRound + 1;
+    case "code":
+    case "verify":
+    case "review":
+      return task.codeRound + 1;
+    case "merge":
+      return task.codeRound;
+    case "refine":
+      return 0;
+  }
+}
+
 function minutesFromNow(minutes: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
@@ -356,7 +380,12 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       const context = input.context?.trim();
       if (context) {
         appendJson(candidate.id, "contexts", context);
-        addHandoff(candidate.id, { phase: "claim", round: candidate.codeRound, agentId: agent.id, summary: context });
+        addHandoff(candidate.id, {
+          phase: "claim",
+          round: handoffRound(candidate, STATUS_INFO[newStatus].phase ?? "code"),
+          agentId: agent.id,
+          summary: context,
+        });
       }
       // A runner watches its process; a hand-opened session keeps its claim by staying active.
       if (!input.runnerId) {
@@ -526,7 +555,7 @@ export function reportBlocker(taskId: string, input: ReportBlockerInput): Submit
     if (input.context?.trim()) {
       addHandoff(taskId, {
         phase: blocker.phase ?? "code",
-        round: task.codeRound,
+        round: handoffRound(task, blocker.phase ?? "code"),
         agentId: raisedBy,
         summary: input.context,
       });
@@ -564,7 +593,7 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     if (answer) {
       addHandoff(taskId, {
         phase: "human",
-        round: task.codeRound,
+        round: handoffRound(task, task.blocker?.phase ?? "code"),
         agentId: actor,
         summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
       });
@@ -648,14 +677,15 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
   });
 }
 
-function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
+/** A person's change request, for the agent of `phase` (the round it will work). */
+function humanHandoff(taskId: string, phase: Phase, summary: string | undefined, actor = "user"): void {
   const task = getTaskById(taskId);
-  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
+  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: handoffRound(task, phase), agentId: actor, summary });
 }
 
 export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
-  humanHandoff(taskId, message, input.actor);
+  humanHandoff(taskId, "plan", message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
@@ -690,7 +720,7 @@ export function requestCodeChanges(taskId: string, input: RequestCodeChangesInpu
     if (message && input.asFinding !== false) {
       addFindings(taskId, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
     }
-    humanHandoff(taskId, message, actor);
+    humanHandoff(taskId, "code", message, actor);
     const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
     return transitionTask(task, TaskStatus.ChangesRequested, {
       actor,
@@ -952,7 +982,7 @@ function submit(
     if (input.context?.trim()) {
       addHandoff(taskId, {
         phase: spec.phase,
-        round: spec.phase === "plan" ? updated.planRound : updated.codeRound,
+        round: handoffRound(task, spec.phase),
         agentId: task.assignedAgent?.agentId ?? author,
         summary: input.context,
         decisions: input.decisions,

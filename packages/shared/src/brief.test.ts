@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from "bun:test";
 import { createProject, getTaskById, setAppState } from "./database.js";
 import { buildAgentBrief, buildTaskBrief, type IndependentBrief } from "./brief.js";
 import { checkDefinitionOfReady } from "./dor.js";
-import { getHandoffs } from "./records.js";
+import { getEvidence, getHandoffs } from "./records.js";
 import { TaskStatus } from "./catalog.js";
 import {
   addUserComment,
@@ -15,6 +15,7 @@ import {
   resolveBlocker,
   submitCode,
   submitPlan,
+  submitPlanReview,
   submitReview,
 } from "./workflow.js";
 
@@ -123,6 +124,69 @@ describe("task brief", () => {
     requestCodeChanges(task.id, { message: "Rename the flag." });
     expect(buildTaskBrief(task.id)!.handoffs.at(-1)).toMatchObject({ phase: "human", summary: "Rename the flag." });
     expect(buildTaskBrief(task.id)!.humanNotes.map((h) => h.message)).toEqual(["Rename the flag."]);
+  });
+});
+
+describe("handoff rounds", () => {
+  it("a submission and the check of it share a round: plan k and critique k, code k and review k (its evidence round)", () => {
+    const pid = `brief-rounds-${Date.now()}`;
+    createProject({ id: pid, displayName: "Rounds", workingDirectory: "/tmp/brief", autonomy: 2 });
+    const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "rounds-planner" };
+    const critic = { toolName: "Critic", version: "1", model: "k", sessionId: "rounds-critic" };
+    const task = createTaskForProject({
+      title: "rounds",
+      description: "Users can export their data as CSV from the settings page.",
+      projectId: pid,
+      requiresPlan: true,
+      risk: "low",
+      acceptanceCriteria: ["export works $ bun test export"],
+    });
+    const validationPlan = { items: [{ criterionId: "AC1", how: "test", command: "bun test export" }], regressionCommands: [] };
+    const plan = (round: number, findingResolutions: { id: string; status: "fixed"; resolution: string }[] = []) => {
+      const c = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+      submitPlan(task.id, { message: `plan ${round}`, claimToken: c.claimToken, context: `plan ${round}`, validationPlan, findingResolutions });
+    };
+    const critique = (round: number, verdict: "approve" | "request_changes", extra: Record<string, unknown>) => {
+      const c = claimNextTask({ roles: ["plan_review"], agent: critic, projectId: pid })!;
+      submitPlanReview(task.id, { verdict, message: `critique ${round}`, claimToken: c.claimToken, context: `critique ${round}`, ...extra });
+    };
+    const code = (round: number, findingResolutions: { id: string; status: "fixed"; resolution: string }[] = []) => {
+      const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+      submitCode(task.id, {
+        message: `code ${round}`,
+        worktree: "/w",
+        claimToken: c.claimToken,
+        context: `code ${round}`,
+        evidence: [{ kind: "command", criterionId: "AC1", command: "bun test export", exitCode: 0, summary: "ok" }],
+        findingResolutions,
+      });
+    };
+    const review = (round: number, verdict: "approve" | "request_changes", extra: Record<string, unknown>) => {
+      const c = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
+      submitReview(task.id, { verdict, message: `review ${round}`, claimToken: c.claimToken, context: `review ${round}`, ...extra });
+    };
+
+    plan(1);
+    critique(1, "request_changes", { findings: [{ severity: "major", text: "AC1 needs an empty-account case" }] });
+    plan(2, [{ id: "P1-1", status: "fixed", resolution: "added" }]);
+    critique(2, "approve", { verifiedFindings: [{ id: "P1-1", status: "verified" }] });
+    code(1);
+    review(1, "request_changes", { findings: [{ severity: "major", text: "no empty-account test" }] });
+    code(2, [{ id: "R1-1", status: "fixed", resolution: "added" }]);
+    review(2, "approve", { verifiedFindings: [{ id: "R1-1", status: "verified" }] });
+
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.Approved);
+    expect(getHandoffs(task.id).map((h) => [h.summary, h.round])).toEqual([
+      ["plan 1", 1],
+      ["critique 1", 1],
+      ["plan 2", 2],
+      ["critique 2", 2],
+      ["code 1", 1],
+      ["review 1", 1],
+      ["code 2", 2],
+      ["review 2", 2],
+    ]);
+    expect(getEvidence(task.id).map((e) => e.round)).toEqual([1, 2]);
   });
 });
 
