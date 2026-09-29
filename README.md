@@ -111,6 +111,8 @@ bun run start
 
 Open **http://localhost:3000**. The API and the dashboard share that single port.
 
+The API has no login, so it only serves you: the server listens on `127.0.0.1`, and it refuses requests another web page could send it (a foreign `Origin`, a `Host` that is not this machine, a body that is not JSON). To reach it from other machines, set `AGENTQ_HOST=0.0.0.0` and list the names you use in `AGENTQ_ALLOWED_HOSTS`; anyone who can reach the port can then drive AgentQ.
+
 ### Your first task in two minutes
 
 1. **Projects → New project.** Give it a name and the absolute path of a local git repository.
@@ -246,7 +248,7 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 - **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
 - **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
-- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`.
+- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`.
 
 Everything is also available over REST (`/api/runners`). See [docs/runner.md](docs/runner.md) for the exact commands, environment variables and a scripted demo.
 
@@ -290,6 +292,9 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | Port for the API and the dashboard |
+| `AGENTQ_HOST` | `127.0.0.1` | Address the server listens on (`0.0.0.0` for every interface: anyone who reaches it can drive AgentQ) |
+| `AGENTQ_ALLOWED_HOSTS` | none | Comma-separated host names the API answers to besides `localhost` and IP addresses (e.g. `my-mac.local`) |
+| `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv: tool `custom`, or `extraArgs` on any tool |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database used by the server, the MCP server and every runner job |
 | `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
@@ -362,7 +367,7 @@ No. The merge phase pushes the feature branch and opens a pull request into the 
 <details>
 <summary><b>Can I use a model or tool that is not listed?</b></summary>
 
-Yes. Any MCP client can use the `agentq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want.
+Yes. Any MCP client can use the `agentq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want (start the server with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1` to allow it).
 </details>
 
 ## Documentation
