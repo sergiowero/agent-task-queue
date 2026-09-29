@@ -129,8 +129,8 @@ A unit of work assigned to an agent. Contains:
 - **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons; evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
-- **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
-- **Workflow**: requiresPlan flag (immutable), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
+- **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact, with the identities and model keys of every round), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
+- **Workflow**: requiresPlan flag (immutable), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, identities, modelKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
 - **Archive**: archivedAt, archivePath (the summary file; the detailed record sits next to it)
@@ -193,7 +193,7 @@ The task lifecycle moves through these states:
 
 **waiting_code_review** → Code waiting for a person: under L0 after every submit; under L1+ only when an AI approval is high risk or sampled, or no reviewer picked it up. Can trigger an on-demand AI review.
 
-**code_review_requested** → Waiting for an AI reviewer: under L1+ right after `submit_code`, under L0 when a person requests it. Never claimed by the session that wrote the code.
+**code_review_requested** → Waiting for an AI reviewer: under L1+ right after `submit_code`, under L0 when a person requests it. Never claimed by an agent that wrote the code in any round.
 
 **reviewing** → Agent is actively reviewing the submitted code.
 
@@ -213,11 +213,11 @@ The task lifecycle moves through these states:
 
 **refining** → An agent with the `refine` role is writing the criteria, risk and scope.
 
-**plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never the planner's own session).
+**plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never an agent that wrote the plan).
 
 **split** → The plan split the task into subtasks; it completes when they all finish.
 
-**verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier.
+**verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier (never an agent that wrote the code).
 
 **verifying** → The verifier is running the project's commands in the task's worktree.
 

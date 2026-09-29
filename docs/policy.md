@@ -145,17 +145,45 @@ must answer by id.
 
 ## Separation of duties
 
-Nobody reviews code they wrote. Each claim carries a `sessionKey`:
-`runner:<runnerId>` for runner claims (stable across jobs), `mcp:<instance>` for
-agents that claim through their own MCP session. Every submit records who
-produced the artifact (`task.producers`), and a claim of `code_review_requested`
-skips tasks whose code was produced under the same `sessionKey`; a claim of
-`plan_review_requested` skips plans the same session wrote. With
-`requireDifferentModel`, the reviewer's model must also differ from the coder's.
+Nobody critiques their own plan, or verifies or reviews their own code. Each
+claim carries its identities (`assignedAgent.identities`, the primary one also as
+`sessionKey`):
+
+- a runner claim is its runner, `runner:<runnerId>`, the same for all its jobs;
+- a claim through MCP is its conversation, `session:<tool>:<sessionId>` (the tool
+  name in one spelling, so `Claude Code` and `claude` are one tool), plus the MCP
+  server process it came through, `mcp:<instance>`. A restarted or resumed MCP
+  server is therefore still the same agent, and so is a server whose agent passed
+  another sessionId. A placeholder sessionId (`unknown`, `<sessionId>`, `n/a`, all
+  zeros…) names no conversation and is left out, so it does not lump every such
+  session together; the claim is then only its server process.
+
+Every submit records who produced the artifact (`task.producers`), adding to the
+producers of the earlier rounds. A claim of `plan_review_requested` skips plans,
+and a claim of `verify_requested` or `code_review_requested` skips code, that any
+of the claim's identities produced in any round: the round-1 coder does not
+review round 2 after someone else fixed it, since its commits are still on the
+branch. The built-in verifier (`runner:builtin:verifier`) never produces code, so
+it always may verify.
+
+With `requireDifferentModel`, the checker's model must also differ from the model
+of every producer. Models are compared as model keys: case, provider prefixes
+(`anthropic/`, `us.anthropic.`), date and version suffixes and context tags
+(`[1m]`) are dropped, and a Claude model counts as its family (`opus`,
+`claude-opus-4-5` and `anthropic/Opus` are one model). A blank or `default` model
+is the tool's own default, so it is tool-scoped: a Claude runner and a Codex
+runner with no model may check each other.
 
 With a single runner that has both `code` and `review` on an L1+ project, reviews
-therefore wait for a second runner with the `review` role, and go to
-a person after `reviewStarvationMin`.
+therefore wait for a second runner with the `review` role (on another model under
+`requireDifferentModel`), and go to
+a person after `reviewStarvationMin`. The Runners page warns, per project, when no
+enabled runner may take the review of some runner's code or the critique of its
+plans.
+
+A runner job's MCP server starts out holding the job's claim and does not offer
+`claim_task`: a claim from it would not carry the runner's identity, so the job
+could otherwise take the review of the code it just submitted.
 
 ### Independent checks
 
@@ -189,7 +217,7 @@ verdict (the planner or the coder).
 | `maxPlanRounds` | 2 | Plan critiques that may ask for changes before a person decides |
 | `maxReviewRounds` | 3 | AI reviews that may ask for changes before a person decides |
 | `maxVerifyFailures` | 2 | Consecutive red verifications before a person decides |
-| `requireDifferentModel` | false | The reviewer must use a different model than the coder |
+| `requireDifferentModel` | false | The plan critic, verifier and reviewer must use a different model than whoever wrote the plan or code (see Separation of duties) |
 | `humanSampleEvery` | 0 | Every Nth AI approval in the project also goes to a person (0 = never) |
 | `reviewStarvationMin` | 20 | Minutes a review may wait for an eligible reviewer (0 = never hand it over) |
 | `leaseMin` | 90 | Minutes a hand-opened agent session may stay silent before its claim expires |
