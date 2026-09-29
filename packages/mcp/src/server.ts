@@ -212,7 +212,8 @@ const submitContextSchema = z
 export interface AgentQMcpServerOptions {
   /**
    * Claims this server starts out holding (taskId → claimToken). A runner job's
-   * server gets its task's claim through AGENTQ_TASK_ID / AGENTQ_CLAIM_TOKEN.
+   * server gets its task's claim through AGENTQ_TASK_ID / AGENTQ_CLAIM_TOKEN;
+   * a server that starts with a claim is a runner job's and has no claim_task.
    */
   claims?: Record<string, string>;
 }
@@ -226,6 +227,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
   // For separation of duties a claim is its conversation (the agent's sessionId) and
   // this process (the instance id), so a restart or a changed sessionId is not a new agent.
   const claims = new Map<string, string>(Object.entries(opts.claims ?? {}));
+  const runnerJob = claims.size > 0;
   const instanceId = randomUUID();
   const auth = (input: { taskId: string; claimToken?: string; agentId?: string }) => ({
     claimToken: input.claimToken || claims.get(input.taskId),
@@ -253,7 +255,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     return phase ? independentTask(task, buildIndependentBrief(task, phase)!) : withProject(task);
   };
 
-  server.registerTool(
+  const claimTask = server.registerTool(
     "claim_task",
     {
       title: "Claim next task",
@@ -340,6 +342,9 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         };
       }),
   );
+  // The runner already claimed a job's task. A claim from the job's server would not
+  // carry the runner's identity, so the job could take the review of its own code.
+  if (runnerJob) claimTask.remove();
 
   server.registerTool(
     "submit_plan",

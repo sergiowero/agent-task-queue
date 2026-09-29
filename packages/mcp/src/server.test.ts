@@ -985,6 +985,19 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(out.isError).toBeFalsy();
   });
 
+  it("a runner job's server has no claim_task: the job cannot claim more work, such as its own review", async () => {
+    const task = createTask({ title: "job claim", description: "d", projectId, requiresPlan: true });
+    const claimer = await connect();
+    const claimed = parse(await call(claimer, "claim_task", { ...agent, roles: ["plan"], sessionId: "s2j", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const job = await connect({ claims: { [task.id]: claimed.claimToken } });
+    const names = (await job.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("claim_task");
+    for (const tool of RUNNER_MCP_TOOLS) expect(names).toContain(tool);
+    const denied = await call(job, "claim_task", { ...agent, roles: ["plan_review"], sessionId: "s2j", projectId });
+    expect(denied.isError).toBe(true);
+  });
+
   it("a conversation stays the same agent after its MCP server restarts", async () => {
     const restartProject = `${projectId}-restart`;
     createProject({ id: restartProject, displayName: "Restart", workingDirectory: "/tmp/restart" });
