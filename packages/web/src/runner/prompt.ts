@@ -77,6 +77,7 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       openQuestions: [{ text: "<question for a person>", blocking: false }],
       suggestedRisk: "<low | medium | high>",
       touchedPaths: ["<paths the plan changes>"],
+      findingResolutions: [{ id: "<P1-1>", status: "<fixed | wontfix>", resolution: "<how, or why not>" }],
       context: CONTEXT_ARG,
       ...HANDOFF_ARGS,
     },

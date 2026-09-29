@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { createProject, getSubtasks, getTaskById } from "./database.js";
 import { DEFAULT_ROLES, TaskStatus, getClaimableStatuses } from "./index.js";
 import { getFindings } from "./records.js";
+import { buildIndependentBrief } from "./brief.js";
 import {
   approvePlan,
   cancelTask,
@@ -76,7 +77,11 @@ describe("plan critique (L2)", () => {
     ).toBe(TaskStatus.PlanChangesRequested);
     expect(getFindings(task.id).map((f) => [f.id, f.phase])).toEqual([["P1-1", "plan"]]);
     const again = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
-    submitPlan(task.id, { message: "v2", claimToken: again.claimToken });
+    submitPlan(task.id, {
+      message: "v2",
+      claimToken: again.claimToken,
+      findingResolutions: [{ id: "P1-1", status: "fixed", resolution: "added a test" }],
+    });
     const second = critique(pid, {
       verdict: "request_changes",
       message: "still",
@@ -84,6 +89,81 @@ describe("plan critique (L2)", () => {
     });
     expect(second.newStatus).toBe(TaskStatus.NeedsHuman);
     expect(getTaskById(task.id)!.blocker?.reason).toContain("limit 2");
+  });
+
+  it("the planner answers every open plan finding by id; the critic sees the answers and verifies them", () => {
+    const pid = project({ profile: { dorMode: "off" } });
+    const { task, claimToken } = planned(pid, { risk: "low" });
+    submitPlan(task.id, { message: "v1", claimToken });
+    critique(pid, { verdict: "request_changes", message: "no test", findings: [{ severity: "major", text: "AC1 has no check" }] });
+    const again = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    expect(() => submitPlan(task.id, { message: "v2", claimToken: again.claimToken })).toThrow(
+      "Answer every open plan finding in findingResolutions (fixed, or wontfix with a reason): P1-1.",
+    );
+    expect(() =>
+      submitPlan(task.id, {
+        message: "v2",
+        claimToken: again.claimToken,
+        findingResolutions: [{ id: "P9-9", status: "fixed", resolution: "x" }],
+      }),
+    ).toThrow("P1-1");
+    // Nothing was written by the refused submits.
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.Planning);
+    expect(getFindings(task.id)[0]).toMatchObject({ id: "P1-1", status: "open" });
+
+    submitPlan(task.id, {
+      message: "v2",
+      claimToken: again.claimToken,
+      findingResolutions: [{ id: "P1-1", status: "wontfix", resolution: "AC1 is checked by hand, see the plan" }],
+    });
+    const brief = buildIndependentBrief(task.id, "plan_review")!;
+    expect(brief.openFindings).toMatchObject([
+      { id: "P1-1", status: "wontfix", wontfixReason: "AC1 is checked by hand, see the plan" },
+    ]);
+    const out = critique(pid, { verdict: "approve", message: "fine", verifiedFindings: [{ id: "P1-1", status: "verified" }] });
+    expect(out.newStatus).toBe(TaskStatus.ReadyForCode);
+    expect(getFindings(task.id)[0].status).toBe("verified");
+  });
+
+  it("a planner cannot answer a finding the critic already verified", () => {
+    const pid = project({ policy: { maxPlanRounds: 3 } });
+    const { task, claimToken } = planned(pid);
+    submitPlan(task.id, { message: "v1", claimToken });
+    critique(pid, { verdict: "request_changes", message: "m", findings: [{ severity: "minor", text: "typo" }, { severity: "major", text: "no test" }] });
+    const second = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    submitPlan(task.id, {
+      message: "v2",
+      claimToken: second.claimToken,
+      findingResolutions: [
+        { id: "P1-1", status: "fixed", resolution: "fixed the typo" },
+        { id: "P1-2", status: "fixed", resolution: "added one" },
+      ],
+    });
+    critique(pid, {
+      verdict: "request_changes",
+      message: "m",
+      verifiedFindings: [{ id: "P1-1", status: "verified" }, { id: "P1-2", status: "open" }],
+    });
+    const third = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    expect(() =>
+      submitPlan(task.id, {
+        message: "v3",
+        claimToken: third.claimToken,
+        findingResolutions: [
+          { id: "P1-1", status: "wontfix", resolution: "changed my mind" },
+          { id: "P1-2", status: "fixed", resolution: "now with a test" },
+        ],
+      }),
+    ).toThrow("Finding P1-1 is not an open plan finding (verified)");
+    submitPlan(task.id, {
+      message: "v3",
+      claimToken: third.claimToken,
+      findingResolutions: [{ id: "P1-2", status: "fixed", resolution: "now with a test" }],
+    });
+    expect(getFindings(task.id).map((f) => [f.id, f.status])).toEqual([
+      ["P1-1", "verified"],
+      ["P1-2", "fixed"],
+    ]);
   });
 
   it("the critic cannot approve with open blocker/major plan findings", () => {

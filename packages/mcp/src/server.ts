@@ -341,6 +341,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             suggestedRisk: input.suggestedRisk,
             proposedSubtasks: input.proposedSubtasks,
             touchedPaths: input.touchedPaths,
+            findingResolutions: input.findingResolutions,
             author: input.author,
             context: input.context,
             decisions: input.decisions,

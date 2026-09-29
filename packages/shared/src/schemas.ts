@@ -205,6 +205,15 @@ export const findingInputSchema = z.object({
 
 export const verifiedFindingSchema = z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) });
 
+/** The author's answer to an open finding (a coder to R…/H…, a planner to P…). */
+function findingResolutionSchema(example: string) {
+  return z.object({
+    id: z.string().min(1).describe(`Finding id, e.g. ${example}`),
+    status: z.enum(["fixed", "wontfix"]),
+    resolution: z.string().min(1).describe("How you fixed it, or why not"),
+  });
+}
+
 export const openQuestionSchema = z.object({ text: z.string().min(1), blocking: z.boolean().default(false) });
 
 export const validationPlanSchema = z.object({
@@ -234,6 +243,10 @@ export const submitPlanFields = {
   suggestedRisk: riskSchema.optional().describe("Your risk estimate (can only raise the task's risk)"),
   proposedSubtasks: z.array(z.string()).max(20).optional().describe("Subtask titles (create them with create_subtask)"),
   touchedPaths: z.array(z.string()).max(200).optional().describe("Paths the plan will touch; protected ones raise the risk"),
+  findingResolutions: z
+    .array(findingResolutionSchema("P1-2"))
+    .default([])
+    .describe("Required when revising: an answer for every open plan finding (P…)"),
   author: authorSchema,
   ...handoffFields,
 };
@@ -249,13 +262,7 @@ export const submitCodeFields = {
     .default([])
     .describe("Your view of each acceptance criterion"),
   findingResolutions: z
-    .array(
-      z.object({
-        id: z.string().min(1).describe("Finding id, e.g. R1-2"),
-        status: z.enum(["fixed", "wontfix"]),
-        resolution: z.string().min(1).describe("How you fixed it, or why not"),
-      }),
-    )
+    .array(findingResolutionSchema("R1-2"))
     .default([])
     .describe("Required: an answer for every open review finding"),
   author: authorSchema,

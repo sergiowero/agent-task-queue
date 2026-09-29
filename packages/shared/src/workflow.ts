@@ -985,6 +985,36 @@ export interface SubmitPlanInput extends SubmitInput {
   proposedSubtasks?: string[];
   /** Paths the plan expects to touch; protected ones raise the risk to high. */
   touchedPaths?: string[];
+  /** An answer for every open plan finding (P…): fixed, or wontfix with the reason. */
+  findingResolutions?: { id: string; status: "fixed" | "wontfix"; resolution: string }[];
+}
+
+/**
+ * The planner answers the critic's open findings by id, as the coder answers a
+ * review: every open plan finding needs one, and only plan findings the critic
+ * has not verified yet can be answered. The critic then checks each answer.
+ */
+function answerPlanFindings(taskId: string, answers: SubmitPlanInput["findingResolutions"] = []): void {
+  const resolutions = new Map(answers.map((r) => [r.id, r]));
+  const missing = getOpenFindings(taskId, "plan").filter((f) => !resolutions.has(f.id)).map((f) => f.id);
+  if (missing.length) {
+    throw new WorkflowError(
+      `Answer every open plan finding in findingResolutions (fixed, or wontfix with a reason): ${missing.join(", ")}.`,
+    );
+  }
+  for (const r of resolutions.values()) {
+    const finding = getFinding(taskId, r.id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${r.id}.`);
+    if (finding.phase !== "plan" || finding.status === "verified") {
+      throw new WorkflowError(
+        `Finding ${r.id} is not an open plan finding (${finding.phase === "plan" ? finding.status : "code finding"}); answer only the open plan findings.`,
+      );
+    }
+    if (r.status !== "fixed" && r.status !== "wontfix") {
+      throw new WorkflowError(`Finding ${r.id}: the answer must be fixed or wontfix.`);
+    }
+    updateFinding(taskId, r.id, { status: r.status, resolution: r.resolution.trim() });
+  }
 }
 
 function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
@@ -1007,6 +1037,7 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
     { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
     (task, policy) => {
+      answerPlanFindings(taskId, input.findingResolutions);
       const project = task.projectId ? getProjectById(task.projectId) : null;
       const protectedPaths = resolveProfile(project?.profile).protectedPaths;
       const questions = (input.openQuestions ?? []).map((q) => ({ text: q.text.trim(), blocking: !!q.blocking })).filter((q) => q.text);
