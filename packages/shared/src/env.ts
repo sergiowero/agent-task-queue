@@ -6,6 +6,8 @@ const envSchema = z.object({
     .default("3000")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().positive().int().max(65535)),
+  // Address the web server listens on: loopback unless set (e.g. 0.0.0.0 for every interface).
+  AGENTQ_HOST: z.string().trim().min(1).default("127.0.0.1"),
   AGENTQ_DB_PATH: z.string().default("~/.agentq/agentq.db"),
 });
 
