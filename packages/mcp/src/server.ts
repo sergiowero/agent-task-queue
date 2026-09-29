@@ -157,9 +157,14 @@ function phaseSkillOf(status: Task["status"]) {
  * size stays flat. get_task still returns all of it.
  */
 function taskHeader(task: Task) {
-  const { conversation: _c, history: _h, contexts: _x, ...rest } = withProject(task);
-  return { ...rest, acceptanceCriteria: task.acceptanceCriteria.map(({ id, text, verify, status }) => ({ id, text, verify, status })) };
+  const header = Object.entries(withProject(task)).filter(([key]) => !GROWING_FIELDS.has(key));
+  return {
+    ...Object.fromEntries(header),
+    acceptanceCriteria: task.acceptanceCriteria.map(({ id, text, verify, status }) => ({ id, text, verify, status })),
+  };
 }
+
+const GROWING_FIELDS = new Set(["conversation", "history", "contexts"]);
 
 /** A task in a listing: enough to pick it (get_task has the rest). */
 function taskSummary(task: Task) {
