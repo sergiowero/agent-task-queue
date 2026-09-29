@@ -144,10 +144,14 @@ export interface Verification {
   /** Why it was skipped, or the infrastructure problem that stopped it. */
   note: string | null;
   tampering: string[];
-  /** Verifications (so far) that found test tampering. */
+  /** Verifications (so far) that found test tampering; a person's answer resets them. */
   tamperStrikes: number;
+  /** Test changes a person ruled legitimate: later checks of the (cumulative) diff do not flag them again. */
+  acceptedTampering?: string[];
   verifiedSha: string | null;
   at: string;
+  /** The evidence this verification recorded (older records have none: their round's evidence is used). */
+  evidenceIds?: string[];
 }
 
 /** What the planner said beyond the plan text. */

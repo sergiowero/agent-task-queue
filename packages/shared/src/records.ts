@@ -88,9 +88,14 @@ export function getFindings(taskId: string, filter: { phase?: "plan" | "code"; s
   return getDbHandle().prepare(sql).all(...params).map(rowToFinding);
 }
 
-/** Findings a reviewer still has to see fixed: open ones, plus fixed/wontfix ones not yet verified. */
+/** Findings the coder (or planner) still has to answer: status open. */
 export function getOpenFindings(taskId: string, phase?: "plan" | "code"): Finding[] {
   return getFindings(taskId, { phase, status: ["open"] });
+}
+
+/** Findings a reviewer still has to close: open, or answered (fixed/wontfix) but not yet verified. */
+export function getUnverifiedFindings(taskId: string, phase?: "plan" | "code"): Finding[] {
+  return getFindings(taskId, { phase, status: ["open", "fixed", "wontfix"] });
 }
 
 export function updateFinding(

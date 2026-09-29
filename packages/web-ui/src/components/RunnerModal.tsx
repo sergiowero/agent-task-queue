@@ -336,8 +336,8 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
           required={isCustomTool}
           hint={
             isCustomTool
-              ? "Argv to run; the prompt is appended as the last argument and exposed as $AGENTQ_PROMPT."
-              : "Appended to the generated command. Quoted or JSON array."
+              ? "Argv to run; the prompt is appended as the last argument and exposed as $AGENTQ_PROMPT. Needs the server started with AGENTQ_ALLOW_CUSTOM_RUNNERS=1."
+              : "Appended to the generated command. Quoted or JSON array. Needs the server started with AGENTQ_ALLOW_CUSTOM_RUNNERS=1."
           }
         >
           <Input

@@ -71,7 +71,7 @@ import {
 import { FindingsList } from "../components/FindingsList";
 import { HandoffTimeline } from "../components/HandoffTimeline";
 import { Alert } from "../components/Alert";
-import { ApprovedPlanCard, CriteriaList, VerificationCard } from "../components/EvidencePanel";
+import { ApprovedPlanCard, CriteriaList, ProposedValidationCard, VerificationCard } from "../components/EvidencePanel";
 import { formatCriterionLine } from "@agentq/shared/criteria";
 import { Select } from "../components/Select";
 
@@ -894,6 +894,9 @@ export function TaskDetailPage() {
             )}
             {task.verification && <VerificationCard task={task} evidence={evidence} />}
             {task.approvedPlan && <ApprovedPlanCard plan={task.approvedPlan} criteria={task.acceptanceCriteria} />}
+            {!task.approvedPlan && task.validationPlan && (
+              <ProposedValidationCard validation={task.validationPlan} criteria={task.acceptanceCriteria} />
+            )}
             {findings.length > 0 && (
               <div className="card mb-4 p-4">
                 <h2 className="eyebrow mb-3">Review findings</h2>

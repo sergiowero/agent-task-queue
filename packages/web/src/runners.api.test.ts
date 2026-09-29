@@ -16,6 +16,9 @@ import { startServer } from "./index.js";
 // Set test DB before the first DB call (resolved lazily in getDb()).
 process.env.AGENTQ_DB_PATH = ":memory:";
 
+// Most runners below are custom argv runners, which need the server-side opt-in.
+const previousAllowCustom = process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+
 type Server = ReturnType<typeof startServer>;
 
 let server: Server;
@@ -97,6 +100,7 @@ async function collectSSE(
 }
 
 beforeAll(async () => {
+  process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = "1";
   // No outer transaction here: runner start/stop uses transactions itself.
   // Everything created below is hard-deleted in afterAll.
   server = startServer({ port: 0, dev: false });
@@ -112,6 +116,8 @@ afterAll(async () => {
   for (const id of createdTaskIds) deleteTask(id);
   deleteProject(projectId);
   server.stop(true);
+  if (previousAllowCustom === undefined) delete process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+  else process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = previousAllowCustom;
 });
 
 describe("GET /api/runners/tools", () => {
@@ -242,6 +248,45 @@ describe("runners CRUD", () => {
     const runner = await createRunnerViaApi({ name: "subroutes" });
     expect((await api(`/api/runners/${runner.id}/nope`)).status).toBe(404);
     expect((await api(`/api/runners/${runner.id}/jobs/${randomUUID()}/log`)).status).toBe(404);
+  });
+});
+
+describe("custom argv runners need AGENTQ_ALLOW_CUSTOM_RUNNERS=1", () => {
+  it("refuses to create, turn into or start one without the opt-in", async () => {
+    const custom = await createRunnerViaApi({ name: "made while allowed" });
+    const plain = await createRunnerViaApi({ name: "plain", tool: "claude", extraArgs: null });
+
+    delete process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+    try {
+      let res = await json("/api/runners", "POST", { name: "x", tool: "custom", roles: ["plan"], extraArgs: ["bash", "-c", "id"] });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain("AGENTQ_ALLOW_CUSTOM_RUNNERS=1");
+      // Extra arguments on a known tool can start any command too (an inline --mcp-config, a Codex -c override).
+      res = await json("/api/runners", "POST", { name: "x", tool: "claude", roles: ["plan"], extraArgs: ["--mcp-config", "{}"] });
+      expect(res.status).toBe(400);
+      expect(getRunners().some((r) => r.name === "x")).toBe(false);
+
+      res = await json(`/api/runners/${plain.id}`, "PUT", { extraArgs: ["--verbose"] });
+      expect(res.status).toBe(400);
+      res = await json(`/api/runners/${plain.id}`, "PUT", { tool: "custom" });
+      expect(res.status).toBe(400);
+      res = await json(`/api/runners/${custom.id}/start`, "POST");
+      expect(res.status).toBe(400);
+      res = await json(`/api/runners/${custom.id}`, "PUT", { enabled: true });
+      expect(res.status).toBe(400);
+      expect(getRunners().find((r) => r.id === custom.id)!.enabled).toBe(false);
+
+      // Built-in tools without extra arguments, renaming, and clearing the argv stay possible.
+      res = await json("/api/runners", "POST", { name: "claude-ok", tool: "claude", roles: ["plan"], extraArgs: [] });
+      expect(res.status).toBe(201);
+      createdRunnerIds.push((await res.json()).id);
+      res = await json(`/api/runners/${custom.id}`, "PUT", { name: "renamed while locked" });
+      expect(res.status).toBe(200);
+      res = await json(`/api/runners/${plain.id}`, "PUT", { extraArgs: null, enabled: false });
+      expect(res.status).toBe(200);
+    } finally {
+      process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = "1";
+    }
   });
 });
 

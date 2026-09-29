@@ -1,4 +1,4 @@
-import type { AcceptanceCriterion, Evidence, Task } from "../lib/api";
+import type { AcceptanceCriterion, Evidence, Task, ValidationPlan } from "../lib/api";
 import type { Tone } from "../lib/status";
 import { CheckIcon, CloseIcon, PendingIcon, PlanIcon, VerifyIcon } from "../lib/icons";
 import { formatRelative } from "../lib/format";
@@ -60,10 +60,18 @@ export function CriteriaList({ criteria, evidence }: { criteria: AcceptanceCrite
   );
 }
 
+/** The evidence of the task's latest verification (older records: the verifier's rows of its round). */
+export function verificationEvidence(task: Task, evidence: Evidence[]): Evidence[] {
+  const v = task.verification;
+  if (!v) return [];
+  const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
+  return evidence.filter((e) => (ids ? ids.has(e.id) : e.round === v.round && e.producedBy === "runner:verify"));
+}
+
 /** The latest verification: result, tampering, diff size, risk changes and each command's output. */
 export function VerificationCard({ task, evidence }: { task: Task; evidence: Evidence[] }) {
   const v = task.verification!;
-  const latest = evidence.filter((e) => e.round === v.round && e.producedBy === "runner:verify");
+  const latest = verificationEvidence(task, evidence);
   return (
     <div className="card mb-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -126,6 +134,68 @@ export function VerificationCard({ task, evidence }: { task: Task; evidence: Evi
   );
 }
 
+/**
+ * How each acceptance criterion will be verified, and the commands that must
+ * keep passing. Criteria the validation plan does not cover are flagged.
+ */
+export function ValidationTable({ validation, criteria }: { validation: ValidationPlan; criteria: AcceptanceCriterion[] }) {
+  const text = new Map(criteria.map((c) => [c.id, c.text]));
+  const covered = new Set(validation.items.map((i) => i.criterionId));
+  const uncovered = criteria.filter((c) => c.status !== "waived" && !covered.has(c.id));
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead className="text-xs text-text-muted">
+          <tr>
+            <th className="py-1 pr-3">Criterion</th>
+            <th className="py-1 pr-3">How</th>
+            <th className="py-1">Command</th>
+          </tr>
+        </thead>
+        <tbody>
+          {validation.items.map((item, i) => (
+            <tr key={`${item.criterionId}-${i}`} className="border-t border-border-light align-top">
+              <td className="py-1 pr-3">
+                <span className="font-mono text-xs text-text-muted">{item.criterionId}</span> {text.get(item.criterionId)}
+              </td>
+              <td className="py-1 pr-3 text-text-secondary">{item.how}</td>
+              <td className="py-1 font-mono text-xs">{item.command ?? "manual"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {uncovered.length > 0 && (
+        <Alert tone="warning" title="Criteria without a check" className="mt-2">
+          {uncovered.map((c) => `${c.id} ${c.text}`).join("; ")}
+        </Alert>
+      )}
+      {validation.regressionCommands.length > 0 && (
+        <p className="mt-2 text-xs text-text-muted">
+          Must keep passing (besides the project's commands):{" "}
+          {validation.regressionCommands.map((c) => (
+            <code key={c} className="mr-2 font-mono">
+              {c}
+            </code>
+          ))}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The validation plan of a plan still waiting for approval, so a person approves what the verifier will run. */
+export function ProposedValidationCard({ validation, criteria }: { validation: ValidationPlan; criteria: AcceptanceCriterion[] }) {
+  return (
+    <div className="card mb-4 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <PlanIcon aria-hidden className="h-4 w-4 text-text-muted" />
+        <h2 className="eyebrow">Proposed validation</h2>
+      </div>
+      <ValidationTable validation={validation} criteria={criteria} />
+    </div>
+  );
+}
+
 /** The plan as it was approved, with its validation plan per criterion. */
 export function ApprovedPlanCard({
   plan,
@@ -134,7 +204,6 @@ export function ApprovedPlanCard({
   plan: NonNullable<Task["approvedPlan"]>;
   criteria: AcceptanceCriterion[];
 }) {
-  const text = new Map(criteria.map((c) => [c.id, c.text]));
   return (
     <details className="card mb-4 p-4">
       <summary className="flex cursor-pointer items-center gap-2">
@@ -145,38 +214,8 @@ export function ApprovedPlanCard({
         </span>
       </summary>
       {plan.validation && (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-xs text-text-muted">
-              <tr>
-                <th className="py-1 pr-3">Criterion</th>
-                <th className="py-1 pr-3">How</th>
-                <th className="py-1">Command</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plan.validation.items.map((item) => (
-                <tr key={item.criterionId} className="border-t border-border-light align-top">
-                  <td className="py-1 pr-3">
-                    <span className="font-mono text-xs text-text-muted">{item.criterionId}</span>{" "}
-                    {text.get(item.criterionId)}
-                  </td>
-                  <td className="py-1 pr-3 text-text-secondary">{item.how}</td>
-                  <td className="py-1 font-mono text-xs">{item.command ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {plan.validation.regressionCommands.length > 0 && (
-            <p className="mt-2 text-xs text-text-muted">
-              Must keep passing:{" "}
-              {plan.validation.regressionCommands.map((c) => (
-                <code key={c} className="mr-2 font-mono">
-                  {c}
-                </code>
-              ))}
-            </p>
-          )}
+        <div className="mt-3">
+          <ValidationTable validation={plan.validation} criteria={criteria} />
         </div>
       )}
       <div className="mt-3">
