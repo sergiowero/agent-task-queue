@@ -13,6 +13,7 @@ import {
   getEvidence,
   getProjectById,
   getTaskById,
+  patchTask,
   setAppState,
   submitCode,
   submitReview,
@@ -199,6 +200,25 @@ describe.skipIf(!hasGit)("verification", () => {
     git(worktree, "branch", "base", "HEAD");
     commit(worktree, { "vitest.config.ts": "export default { coverage: { lines: 50 } };\n" });
     expect(analyzeDiff(worktree, "base")!.tampering).toEqual(["coverage lines lowered from 90 to 50 in vitest.config.ts"]);
+  });
+
+  it("a test the approved plan promised but the coder did not add fails its criterion", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    const task = coded(pid, worktree, { acceptanceCriteria: [{ text: "exports", verify: { kind: "test" } }] });
+    patchTask(task.id, {
+      approvedPlan: {
+        markdown: "plan",
+        validation: { items: [{ criterionId: "AC1", how: "unit test", newTests: ["src/b.test.ts", "src/a.test.ts"] }], regressionCommands: [] },
+        approvedBy: "user",
+        at: new Date().toISOString(),
+      },
+    });
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.ChangesRequested);
+    const missing = getEvidence(verified.id).filter((e) => e.exitCode === 1);
+    expect(missing.map((e) => [e.criterionId, e.summary])).toEqual([["AC1", "Planned test src/b.test.ts was not added."]]);
+    expect(verified.acceptanceCriteria[0].status).toBe("failed");
   });
 
   it("touching protected paths or a large diff raises the risk to high, so a person reviews", async () => {

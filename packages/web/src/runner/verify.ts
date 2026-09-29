@@ -14,8 +14,8 @@ import {
   claimNextTask,
   getProjectById,
   getTaskById,
-  matchesAny,
   profileCommands,
+  protectedFiles,
   resolveProfile,
   revertClaim,
   setAppState,
@@ -188,12 +188,21 @@ export async function runVerification(
   }
 
   const diff = analyzeDiff(cwd, task.mergeBranch);
+  // The approved plan's new tests must exist: a criterion whose planned test is missing fails.
+  for (const item of task.approvedPlan?.validation?.items ?? []) {
+    for (const path of item.newTests ?? []) {
+      const file = path.trim().replace(/^\.\//, "");
+      if (!file || existsSync(join(cwd, file))) continue;
+      evidence.push({ kind: "manual", criterionId: item.criterionId, exitCode: 1, summary: `Planned test ${file} was not added.` });
+      passed = false;
+    }
+  }
   return {
     passed,
     evidence,
     tampering: diff?.tampering ?? [],
     diffStats: diff?.diffStats ?? null,
-    touchedProtected: diff ? diff.changedFiles.filter((f) => matchesAny(f, profile.protectedPaths)) : [],
+    touchedProtected: diff ? protectedFiles(diff.changedFiles, profile) : [],
     verifiedSha: diff?.headSha ?? null,
   };
 }

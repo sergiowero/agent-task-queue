@@ -246,7 +246,7 @@ export {
 } from "./skills.js";
 
 export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./git.js";
-export { analyzeDiff, type DiffAnalysis } from "./diff.js";
+export { analyzeDiff, protectedFiles, type DiffAnalysis } from "./diff.js";
 
 export {
   archiveTask,
