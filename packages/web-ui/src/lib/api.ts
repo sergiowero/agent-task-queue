@@ -94,6 +94,8 @@ export interface PullRequest {
   mergedBy: string | null;
   /** GitHub users whose latest review asks for changes. */
   changesRequestedBy: string[];
+  /** Everyone who asked for changes at any point (absent on old tasks). */
+  changesEverRequestedBy?: string[];
   checks: "pending" | "success" | "failure" | null;
   checkedAt: string | null;
 }

@@ -111,7 +111,8 @@ export function computeMetrics(filter: MetricsFilter = {}): FlowMetrics {
       const humanSentBack = events.some(
         (e) => e.actor === "user" && e.eventType === "code_changes_requested" && e.createdAt >= firstApproval,
       );
-      if (humanSentBack || (task.pullRequest?.changesRequestedBy.length ?? 0) > 0) rejectedAfterAi++;
+      const pr = task.pullRequest;
+      if (humanSentBack || (pr?.changesEverRequestedBy ?? pr?.changesRequestedBy ?? []).length > 0) rejectedAfterAi++;
     }
 
     const done = task.history.find((h) => h.new_status === TaskStatus.Complete);

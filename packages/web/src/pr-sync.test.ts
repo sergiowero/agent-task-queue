@@ -88,6 +88,27 @@ describe("parsePullRequest", () => {
     expect(parsePullRequest({ state: "OPEN" }, null, "t").checks).toBeNull();
   });
 
+  it("uses each reviewer's latest review: an approval after a change request clears it, a comment does not", () => {
+    const review = (login: string, state: string, submittedAt: string) => ({ author: { login }, state, submittedAt });
+    const parse = (reviews: object[], previous: PullRequest | null = null) => parsePullRequest({ state: "OPEN", reviews }, previous, "t");
+
+    const approved = parse([review("b", "CHANGES_REQUESTED", "2026-09-01T10:00:00Z"), review("b", "APPROVED", "2026-09-01T11:00:00Z")]);
+    expect(approved.changesRequestedBy).toEqual([]);
+    expect(approved.changesEverRequestedBy).toEqual(["b"]);
+
+    const commented = parse([review("b", "CHANGES_REQUESTED", "2026-09-01T10:00:00Z"), review("b", "COMMENTED", "2026-09-01T11:00:00Z")]);
+    expect(commented.changesRequestedBy).toEqual(["b"]);
+
+    // Out of order from gh: the submission time decides.
+    const reordered = parse([review("c", "APPROVED", "2026-09-01T12:00:00Z"), review("c", "CHANGES_REQUESTED", "2026-09-01T13:00:00Z")]);
+    expect(reordered.changesRequestedBy).toEqual(["c"]);
+
+    // A dismissed review stops blocking; the earlier sync already counted it for the metric.
+    const dismissed = parse([review("d", "DISMISSED", "2026-09-01T10:00:00Z")], commented);
+    expect(dismissed.changesRequestedBy).toEqual([]);
+    expect(dismissed.changesEverRequestedBy).toEqual(["b"]);
+  });
+
   it("finds the PR by URL, then number, then branch", () => {
     const id = prOpenTask(project());
     const task = getTaskById(id)!;
@@ -199,6 +220,20 @@ describe("syncPullRequests", () => {
         expect(merges(calls, url)).toEqual([]);
         expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
       });
+    });
+
+    it("merges once the person who asked for changes approved the PR", async () => {
+      const url = "https://github.com/org/repo/pull/81";
+      const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 81 } });
+      const reviews = [
+        { state: "CHANGES_REQUESTED", author: { login: "p" }, submittedAt: "2026-09-01T10:00:00Z" },
+        { state: "APPROVED", author: { login: "p" }, submittedAt: "2026-09-01T11:00:00Z" },
+      ];
+      const { gh, calls } = fakeGh({ [url]: green(url, { reviews }) });
+      await syncPullRequests({ gh });
+      expect(merges(calls, url)).toHaveLength(1);
+      expect(getTaskById(id)!.status).toBe(TaskStatus.Complete);
+      expect(getTaskById(id)!.pullRequest?.changesEverRequestedBy).toEqual(["p"]);
     });
 
     it("keeps the task in pr_open when the merge fails", async () => {

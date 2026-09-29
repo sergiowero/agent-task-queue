@@ -97,12 +97,37 @@ export function prRef(task: Task): string {
   return pr?.url ?? (pr?.number ? String(pr.number) : null) ?? pr?.branch ?? task.realBranch ?? task.recommendedBranch;
 }
 
+/** A review as `gh pr view --json reviews` returns it. */
+export interface GhReview {
+  state?: string | null;
+  author?: { login?: string | null } | null;
+  body?: string | null;
+  submittedAt?: string | null;
+}
+
+/** Review states that decide something; a comment-only review leaves a change request standing, as on GitHub. */
+const DECIDING = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
+
+/** Each reviewer's latest deciding review (approved, changes requested or dismissed), by login. */
+export function latestReviews(reviews: GhReview[] | null | undefined): Map<string, GhReview & { state: string }> {
+  const latest = new Map<string, GhReview & { state: string }>();
+  const ordered = [...(reviews ?? [])].sort((a, b) => (a.submittedAt ?? "").localeCompare(b.submittedAt ?? ""));
+  for (const review of ordered) {
+    const login = review.author?.login;
+    const state = String(review.state ?? "").toUpperCase();
+    if (login && DECIDING.has(state)) latest.set(login, { ...review, state });
+  }
+  return latest;
+}
+
 export function parsePullRequest(json: any, previous: PullRequest | null, now: string): PullRequest {
   const state = String(json.state ?? "").toUpperCase();
-  const reviewers = (json.reviews ?? [])
-    .filter((r: any) => String(r.state).toUpperCase() === "CHANGES_REQUESTED")
-    .map((r: any) => r.author?.login)
-    .filter(Boolean);
+  const reviews: GhReview[] = Array.isArray(json.reviews) ? json.reviews : [];
+  const reviewers = [...latestReviews(reviews)].filter(([, r]) => r.state === "CHANGES_REQUESTED").map(([login]) => login);
+  const everRequested = reviews
+    .filter((r) => String(r.state ?? "").toUpperCase() === "CHANGES_REQUESTED")
+    .map((r) => r.author?.login)
+    .filter((login): login is string => !!login);
   return {
     url: json.url ?? previous?.url ?? null,
     number: json.number ?? previous?.number ?? null,
@@ -110,7 +135,10 @@ export function parsePullRequest(json: any, previous: PullRequest | null, now: s
     branch: json.headRefName ?? previous?.branch ?? null,
     mergedAt: json.mergedAt ?? null,
     mergedBy: json.mergedBy?.login ?? null,
-    changesRequestedBy: [...new Set<string>(reviewers)],
+    changesRequestedBy: reviewers,
+    changesEverRequestedBy: [
+      ...new Set([...(previous?.changesEverRequestedBy ?? previous?.changesRequestedBy ?? []), ...everRequested, ...reviewers]),
+    ],
     checks: checksOf(json.statusCheckRollup),
     checkedAt: now,
   };
@@ -163,7 +191,7 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
     }
     recordPullRequest(task.id, pr);
 
-    // L3: a green, low-risk PR nobody asked changes on merges itself.
+    // L3: a green, low-risk PR whose reviewers' latest reviews ask no changes merges itself.
     const policy = policyFor(task);
     if (
       policy.level === 3 &&

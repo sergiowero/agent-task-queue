@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 import { TaskStatus } from "./catalog.js";
-import { addActivityEvent, createProject, createTask, patchTask } from "./database.js";
+import { addActivityEvent, createProject, createTask, getTaskById, patchTask } from "./database.js";
 import { computeMetrics } from "./metrics.js";
 import type { StatusHistoryEntry } from "./types.js";
 
@@ -93,6 +93,10 @@ describe("computeMetrics", () => {
         checkedAt: null,
       },
     });
+    expect(computeMetrics({ projectId: pid }).humanRejectionAfterAiApproval).toBe(1);
+
+    // The reviewer approved later: the PR no longer waits on them, but the rejection still counts.
+    patchTask(id, { pullRequest: { ...getTaskById(id)!.pullRequest!, changesRequestedBy: [], changesEverRequestedBy: ["reviewer"] } });
     expect(computeMetrics({ projectId: pid }).humanRejectionAfterAiApproval).toBe(1);
   });
 

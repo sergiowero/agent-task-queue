@@ -1697,6 +1697,8 @@ export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
           mergedAt: null,
           mergedBy: null,
           changesRequestedBy: [],
+          // Kept across PRs of the task: a reopened PR still counts the earlier change requests.
+          changesEverRequestedBy: task.pullRequest?.changesEverRequestedBy ?? task.pullRequest?.changesRequestedBy ?? [],
           checks: null,
           checkedAt: null,
         },

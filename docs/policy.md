@@ -118,7 +118,10 @@ merged** on the task page.
 
 **L3 auto-merge.** With `autonomy: 3` and `autoMerge: true`, the sync merges a PR
 itself (`gh pr merge --squash`) when the task is **low risk**, every check is green and
-no one asked for changes on GitHub. Anything else waits for a person.
+no reviewer's latest review asks for changes (only each reviewer's newest approve,
+request-changes or dismissal counts; a later comment does not clear a change request).
+Anything else waits for a person. The metrics still count a change request that was
+approved later.
 
 ## What needs you
 

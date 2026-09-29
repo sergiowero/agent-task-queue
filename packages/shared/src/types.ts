@@ -156,8 +156,13 @@ export interface PullRequest {
   branch: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
-  /** People who asked for changes on GitHub (for the "human rejection after AI approval" metric). */
+  /** GitHub users whose latest review asks for changes (it holds back the L3 auto-merge). */
   changesRequestedBy: string[];
+  /**
+   * Everyone who asked for changes on the task's PR at any point, even if they
+   * approved later (for the "human rejection after AI approval" metric). Absent on old tasks.
+   */
+  changesEverRequestedBy?: string[];
   checks: "pending" | "success" | "failure" | null;
   checkedAt: string | null;
 }
