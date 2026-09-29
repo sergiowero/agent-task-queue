@@ -1015,6 +1015,9 @@ describe("AgentQ MCP claims and blockers", () => {
     const claimed = parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "r1", projectId }));
     expect(claimed.task.id).toBe(task.id);
     expect(claimed).toMatchObject({ autonomy: 2, round: { codeRound: 0, maxReviewRounds: 3 } });
+    // The claim's round is the brief's: every budget, with what is left of it.
+    expect(claimed.round).toEqual(claimed.brief.round);
+    expect(claimed.round).toMatchObject({ remainingReviewRounds: 3, remainingPlanRounds: 2, remainingVerifyFailures: 2 });
 
     expect(validationError(await call(reviewer, "submit_review", { taskId: task.id, message: "m", context: "c" }))).toContain("verdict");
     const out = parse(

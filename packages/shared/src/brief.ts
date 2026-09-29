@@ -13,7 +13,7 @@ import { getProjectById, getTaskById } from "./database.js";
 import { STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
 import { getEvidence, getFindings, getHandoffs, latestHandoffs } from "./records.js";
 import { resolveProfile, type ProjectCommands } from "./profile.js";
-import { resolvePolicy, reviewRoundsUsed } from "./policy.js";
+import { planRoundsUsed, resolvePolicy, reviewRoundsUsed } from "./policy.js";
 import type {
   AcceptanceCriterion,
   ApprovedPlan,
@@ -44,6 +44,8 @@ export interface TaskBrief {
     mergeBranch: string;
     worktreePath: string | null;
     headSha: string | null;
+    /** What still keeps the task from being ready (Definition of Ready); a refiner fixes these. */
+    dorIssues: string[];
   };
   project: { id: string; displayName: string; workingDirectory: string } | null;
   /** What to do differently for this type of task. */
@@ -55,18 +57,32 @@ export interface TaskBrief {
   approvedPlan: ApprovedPlan | null;
   /** The latest plan while no plan is approved yet (planner revisions, plan reviews). */
   latestPlan: string | null;
+  /** The latest plan's validation plan while no plan is approved yet (a planner revising it). */
+  validationPlan: ValidationPlan | null;
+  /** What the planner declared with the latest plan (open questions, risk, subtasks, paths) while none is approved. */
+  planSubmission: PlanSubmission | null;
   /** Findings not yet verified as fixed, newest round last. */
   openFindings: Finding[];
   /** The newest handoff of each phase. */
   handoffs: Handoff[];
   /** What people wrote since the last agent submission (change requests, answers, comments). */
   humanNotes: { author: string; at: string; message: string }[];
+  /**
+   * Where the task stands against the project's limits. A remaining count of 1
+   * means the next rejection (critique, review or red verification) goes to a person.
+   */
   round: {
     planRound: number;
     codeRound: number;
+    planRoundsUsed: number;
+    maxPlanRounds: number;
+    remainingPlanRounds: number;
     reviewRoundsUsed: number;
     maxReviewRounds: number;
     remainingReviewRounds: number;
+    verifyFailures: number;
+    maxVerifyFailures: number;
+    remainingVerifyFailures: number;
   };
   verification: (Verification & { failing: Pick<Evidence, "command" | "exitCode" | "summary">[] }) | null;
   /** What a person answered to the last blocker, if the task was blocked. */
@@ -85,6 +101,7 @@ function briefBasics(task: Task) {
   const profile = resolveProfile(project?.profile);
   const policy = resolvePolicy(project, task);
   const used = reviewRoundsUsed(task);
+  const planUsed = planRoundsUsed(task);
 
   const lastSubmission = task.conversation.map((e, i) => (SUBMISSIONS.has(e.messageType) ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
   const humanNotes = task.conversation
@@ -108,6 +125,7 @@ function briefBasics(task: Task) {
       mergeBranch: task.mergeBranch,
       worktreePath: task.worktreePath,
       headSha: task.headSha,
+      dorIssues: task.dorIssues,
     },
     project: project
       ? { id: project.id, displayName: project.displayName, workingDirectory: project.workingDirectory }
@@ -119,9 +137,15 @@ function briefBasics(task: Task) {
     round: {
       planRound: task.planRound,
       codeRound: task.codeRound,
+      planRoundsUsed: planUsed,
+      maxPlanRounds: policy.maxPlanRounds,
+      remainingPlanRounds: Math.max(0, policy.maxPlanRounds - planUsed),
       reviewRoundsUsed: used,
       maxReviewRounds: policy.maxReviewRounds,
       remainingReviewRounds: Math.max(0, policy.maxReviewRounds - used),
+      verifyFailures: task.verifyFailures,
+      maxVerifyFailures: policy.maxVerifyFailures,
+      remainingVerifyFailures: Math.max(0, policy.maxVerifyFailures - task.verifyFailures),
     },
   };
 }
@@ -151,6 +175,8 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
     criteria: task.acceptanceCriteria,
     approvedPlan: task.approvedPlan,
     latestPlan: task.approvedPlan ? null : latestPlanOf(task),
+    validationPlan: task.approvedPlan ? null : task.validationPlan,
+    planSubmission: task.approvedPlan ? null : task.planSubmission,
     openFindings: getFindings(task.id).filter((f) => f.status !== "verified"),
     handoffs: latestHandoffs(task.id),
     humanNotes,

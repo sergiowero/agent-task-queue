@@ -17,7 +17,9 @@ import {
   submitPlan,
   submitPlanReview,
   submitReview,
+  submitVerification,
 } from "./workflow.js";
+import { forceStatus } from "./testing.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
 
@@ -97,6 +99,68 @@ describe("task brief", () => {
     expect(brief.round).toMatchObject({ codeRound: 1, reviewRoundsUsed: 1, maxReviewRounds: 3, remainingReviewRounds: 2 });
     expect(brief.typeGuidance).toContain("tests");
     expect(JSON.stringify(brief)).not.toContain("MARKER-ROUND-1");
+  });
+
+  it("shows the plan-critique and verification budgets, and a revising planner its own validation plan", () => {
+    const l2 = `brief-budget-${Date.now()}`;
+    createProject({ id: l2, displayName: "Budget", workingDirectory: "/tmp/brief", autonomy: 2 });
+    const task = createTaskForProject({
+      title: "budget",
+      description: "Users can export their data as CSV from the settings page.",
+      projectId: l2,
+      requiresPlan: true,
+      acceptanceCriteria: ["export works $ bun test export"],
+    });
+    expect(buildTaskBrief(task.id)!.round).toMatchObject({
+      planRoundsUsed: 0,
+      maxPlanRounds: 2,
+      remainingPlanRounds: 2,
+      verifyFailures: 0,
+      maxVerifyFailures: 2,
+      remainingVerifyFailures: 2,
+    });
+    const validationPlan = { items: [{ criterionId: "AC1", how: "test", command: "bun test export" }], regressionCommands: ["bun test"] };
+    let c = claimNextTask({ roles: ["plan"], agent: coder, projectId: l2 })!;
+    submitPlan(task.id, {
+      message: "## Plan v1",
+      claimToken: c.claimToken,
+      context: "c",
+      validationPlan,
+      openQuestions: [{ text: "Dates in UTC?", blocking: false }],
+      touchedPaths: ["src/export.ts"],
+    });
+    c = claimNextTask({ roles: ["plan_review"], agent: reviewer, projectId: l2 })!;
+    submitPlanReview(task.id, {
+      verdict: "request_changes",
+      message: "m",
+      claimToken: c.claimToken,
+      context: "c",
+      findings: [{ severity: "major", text: "no empty case" }],
+    });
+    claimNextTask({ roles: ["plan"], agent: coder, projectId: l2 });
+    const revising = buildTaskBrief(task.id)!;
+    expect(revising.round).toMatchObject({ planRound: 1, planRoundsUsed: 1, remainingPlanRounds: 1 });
+    expect(revising.latestPlan).toBe("## Plan v1");
+    expect(revising.validationPlan).toEqual(validationPlan);
+    expect(revising.planSubmission).toMatchObject({ openQuestions: [{ text: "Dates in UTC?", blocking: false }], touchedPaths: ["src/export.ts"] });
+
+    const coded = createTaskForProject({ title: "red", description: "Users can export their data as CSV.", projectId: l2 });
+    const v = forceStatus(coded.id, TaskStatus.Verifying);
+    submitVerification(coded.id, {
+      passed: false,
+      evidence: [{ kind: "command", command: "bun test", exitCode: 1, summary: "1 fail" }],
+      claimToken: v.claimToken!,
+    });
+    const afterRed = buildTaskBrief(coded.id)!;
+    expect(afterRed.round).toMatchObject({ verifyFailures: 1, maxVerifyFailures: 2, remainingVerifyFailures: 1 });
+    expect(afterRed.validationPlan).toBeNull();
+    expect(afterRed.planSubmission).toBeNull();
+  });
+
+  it("the task summary carries what still keeps a draft from being ready", () => {
+    const task = createTaskForProject({ title: "rough", description: "export", projectId, draft: true });
+    expect(buildTaskBrief(task.id)!.task.dorIssues).toEqual(getTaskById(task.id)!.dorIssues);
+    expect(buildTaskBrief(task.id)!.task.dorIssues.length).toBeGreaterThan(0);
   });
 
   it("records people's change requests and answers as handoffs", () => {
