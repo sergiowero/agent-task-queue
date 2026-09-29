@@ -154,6 +154,29 @@ describe("a plan sent on by resolving its blocker", () => {
     expect(resolved.approvedPlan).toMatchObject({ markdown: "## Plan", approvedBy: "user" });
   });
 
+  it("a re-plan without subtasks goes to coding; the dropped subtasks of the old plan stay out", () => {
+    const pid = project();
+    const { parent, first, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
+    requestPlanChanges(parent.id, { message: "one task is enough" });
+    const c = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    expect(getTaskById(first.id)!.status).toBe(TaskStatus.Canceled);
+    submitPlan(parent.id, { message: "## One task", claimToken: c.claimToken });
+    expect(getTaskById(parent.id)!.planSubmission!.sizeWarnings).toEqual([]);
+    expect(approvePlan(parent.id).status).toBe(TaskStatus.ReadyForCode);
+  });
+
+  it("a subtask after one a person canceled before the approval goes to a person when released", () => {
+    const pid = project();
+    const { parent, first, second, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
+    cancelTask(first.id);
+    expect(getTaskById(second.id)!.status).toBe(TaskStatus.ReadyForCode);
+    expect(approvePlan(parent.id).status).toBe(TaskStatus.Split);
+    expect(getTaskById(second.id)).toMatchObject({ status: TaskStatus.NeedsHuman, held: false });
+    expect(getTaskById(second.id)!.blocker!.reason).toContain("which was canceled");
+  });
+
   it("a revision without a validation plan clears the previous one", () => {
     const pid = project();
     const task = createTaskForProject({ title: "revise me", description: DESCRIPTION, projectId: pid, requiresPlan: true });

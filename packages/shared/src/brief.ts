@@ -313,7 +313,7 @@ export function buildIndependentBrief(taskOrId: Task | string, phase: Independen
     planSubmission: critique ? task.planSubmission : null,
     subtasks: critique
       ? getSubtasks(task.id)
-          .filter((c) => c.held)
+          .filter((c) => c.held && c.status !== TaskStatus.Canceled)
           .map(({ id, title, risk, requiresPlan, blockedBy }) => ({ id, title, risk, requiresPlan, blockedBy }))
       : null,
     openFindings,

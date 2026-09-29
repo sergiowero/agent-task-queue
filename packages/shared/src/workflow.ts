@@ -242,26 +242,40 @@ function cancelSubtasks(parentId: string): void {
  */
 function surfaceDependents(dependency: Pick<Task, "id" | "title">, what: string): void {
   for (const dependent of getDependents(dependency.id)) {
-    if (dependent.held || !canTransition(dependent.status, TaskStatus.NeedsHuman)) continue;
+    if (dependent.held) continue;
     if (dependent.parentId && getTaskById(dependent.parentId)?.status === TaskStatus.Canceled) continue;
-    const blocker: Blocker = {
-      reason: `It starts after "${dependency.title}" (${dependency.id}), which ${what}: it will never complete.`,
-      question: "Send the task on without that dependency (it is dropped when you resolve), or cancel it.",
-      phase: STATUS_INFO[dependent.status].phase,
-      fromStatus: dependent.status,
-      raisedBy: "system",
-      at: new Date().toISOString(),
-    };
-    transitionTask(dependent, TaskStatus.NeedsHuman, {
-      actor: "system",
-      author: "system",
-      message: `**Blocked:** ${blocker.reason}`,
-      messageType: "system",
-      event: "task_blocked",
-      details: blocker.reason,
-      patch: { blocker },
-    });
+    blockOnDependency(dependent, `"${dependency.title}" (${dependency.id}), which ${what}`);
   }
+}
+
+/** Sends a queued task to a person because a task it starts after (`which`) will never complete. */
+function blockOnDependency(dependent: Task, which: string): void {
+  if (!canTransition(dependent.status, TaskStatus.NeedsHuman)) return;
+  const blocker: Blocker = {
+    reason: `It starts after ${which}: it will never complete.`,
+    question: "Send the task on without that dependency (it is dropped when you resolve), or cancel it.",
+    phase: STATUS_INFO[dependent.status].phase,
+    fromStatus: dependent.status,
+    raisedBy: "system",
+    at: new Date().toISOString(),
+  };
+  transitionTask(dependent, TaskStatus.NeedsHuman, {
+    actor: "system",
+    author: "system",
+    message: `**Blocked:** ${blocker.reason}`,
+    messageType: "system",
+    event: "task_blocked",
+    details: blocker.reason,
+    patch: { blocker },
+  });
+}
+
+/** A released subtask whose dependency was canceled or deleted while it was held goes to a person. */
+function blockOnDeadDependency(child: Task): void {
+  const dead = child.blockedBy.find((id) => !dependencyAlive(id));
+  if (!dead) return;
+  const dep = getTaskById(dead);
+  blockOnDependency(child, dep ? `"${dep.title}" (${dead}), which was ${dep.deletedAt ? "deleted" : "canceled"}` : `${dead}, which was deleted`);
 }
 
 /** A person deleted a task: the tasks that start after it go to a person (see surfaceDependents). */
@@ -320,9 +334,11 @@ function completeParentIfDone(parentId: string): void {
  * released and the parent waits for them; otherwise the task goes to coding.
  */
 function planApprovedTarget(task: Task): TaskStatus {
-  const held = getSubtasks(task.id).filter((c) => c.held);
+  // Subtasks of an earlier plan (dropped by the re-plan) or canceled by a person stay out.
+  const held = getSubtasks(task.id).filter((c) => c.held && c.status !== TaskStatus.Canceled);
   if (!held.length) return TaskStatus.ReadyForCode;
   for (const child of held) patchTask(child.id, { held: false });
+  for (const child of held) blockOnDeadDependency(getTaskById(child.id)!);
   return TaskStatus.Split;
 }
 
@@ -1183,7 +1199,7 @@ function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
  */
 function planSizeWarnings(task: Task, touched: string[], proposed: string[]): string[] {
   const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
-  const created = getSubtasks(task.id).filter((c) => c.held).length;
+  const created = getSubtasks(task.id).filter((c) => c.held && c.status !== TaskStatus.Canceled).length;
   const warnings: string[] = [];
   if (!created && touched.length > profile.maxPlanFiles) {
     warnings.push(`The plan touches ${touched.length} files (the project's limit is ${profile.maxPlanFiles}) and creates no subtasks.`);
