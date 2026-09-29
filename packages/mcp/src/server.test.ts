@@ -201,7 +201,10 @@ describe("AgentQ MCP server", () => {
       tool: "TestAgent",
       model: "test-model",
       agentId: "testagent@1.0|test-model",
-      sessionKey: expect.stringMatching(/^mcp:/),
+      // The conversation, then this server process.
+      sessionKey: "session:testagent:session-mcp",
+      identities: ["session:testagent:session-mcp", expect.stringMatching(/^mcp:/)],
+      modelKey: "test-model",
     });
     // The token comes back once, to the claimer; the task itself never shows it.
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
@@ -980,6 +983,25 @@ describe("AgentQ MCP claims and blockers", () => {
     const job = await connect({ claims: { [task.id]: claimed.claimToken } });
     const out = await call(job, "submit_plan", { taskId: task.id, message: "plan", context: "c" });
     expect(out.isError).toBeFalsy();
+  });
+
+  it("a conversation stays the same agent after its MCP server restarts", async () => {
+    const restartProject = `${projectId}-restart`;
+    createProject({ id: restartProject, displayName: "Restart", workingDirectory: "/tmp/restart" });
+    const task = createTask({ title: "restart", description: "d", projectId: restartProject });
+    const before = await connect();
+    const roles = ["code", "review"];
+    parse(await call(before, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    const coded = parse(await call(before, "submit_code", { taskId: task.id, message: "c", worktree: "/w", context: "c" }));
+    expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
+
+    // Claude Code resumed the conversation with a new server process.
+    const after = await connect();
+    const own = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    expect(own.reason).toBe("no_tasks_available");
+    const other = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-2", projectId: restartProject }));
+    expect(other.task).toMatchObject({ id: task.id, status: TaskStatus.Reviewing });
+    removeProjectTasks(restartProject);
   });
 
   it("report_blocker moves the task to needs_human and releases it", async () => {

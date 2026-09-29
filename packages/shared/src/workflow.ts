@@ -54,9 +54,12 @@ import {
   canTransition,
   claimRuleFor,
   isRole,
+  modelKey,
   resolveTargets,
+  sessionIdentity,
   statusLabel,
   maxRisk,
+  toolKey,
   type CriterionStatus,
   type Phase,
   type Risk,
@@ -272,10 +275,11 @@ export interface ClaimNextTaskInput {
   /** Set when a runner claims: its id is the stable identity of the claim. */
   runnerId?: string;
   /**
-   * Stable identity for separation of duties, when neither a runner id nor the
-   * agent's sessionId says it well (the MCP server passes its own instance id).
+   * Identity of the process the claim comes through (the MCP server passes
+   * `mcp:<instance>`). It keeps separation of duties within that process when
+   * the agent's sessionId changes or is a placeholder.
    */
-  sessionKey?: string;
+  instanceKey?: string;
 }
 
 export interface ClaimNextTaskResult {
@@ -293,15 +297,16 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
   }
   const claimableStatuses = getClaimableStatuses(input.roles);
 
-  const sessionKey =
-    input.sessionKey ?? (input.runnerId ? `runner:${input.runnerId}` : `session:${input.agent.sessionId}`);
+  const identities = claimIdentities(input);
+  const sessionKey = identities[0];
+  const claimModel = modelKey(input.agent.toolName, input.agent.model);
   return withTransaction(() => {
     const candidates = getClaimableTasks(
       claimableStatuses,
       input.projectId,
       MAX_CLAIM_ATTEMPTS,
       input.excludeTaskIds ?? [],
-      { sessionKey, model: input.agent.model },
+      { identities, modelKey: claimModel, model: input.agent.model },
     );
     for (const candidate of candidates) {
       const rule = claimRuleFor(candidate.status);
@@ -314,6 +319,8 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
         ...buildAgentRef(input.agent.toolName, input.agent.model),
         agentId,
         sessionKey,
+        identities,
+        modelKey: claimModel,
         ...(input.runnerId ? { runnerId: input.runnerId } : {}),
         claimedAt: new Date().toISOString(),
       };
@@ -367,6 +374,23 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
     }
     return null;
   });
+}
+
+/**
+ * Who a claim is, for separation of duties, the primary identity first. A runner
+ * claim is its runner (`runner:<id>`, the same for all its jobs). Any other claim
+ * is its conversation (`session:<tool>:<sessionId>`, which survives restarts of
+ * the MCP server) and the process it came through (`instanceKey`).
+ */
+function claimIdentities(input: ClaimNextTaskInput): string[] {
+  const primary = input.runnerId
+    ? `runner:${input.runnerId}`
+    : sessionIdentity(input.agent.toolName, input.agent.sessionId);
+  const identities = [...new Set([primary, input.instanceKey].filter((k): k is string => !!k))];
+  // A placeholder sessionId with nothing else to go on still names the claim.
+  return identities.length > 0
+    ? identities
+    : [`session:${toolKey(input.agent.toolName)}:${input.agent.sessionId.trim()}`];
 }
 
 /** Mirrors createAgent's id so the claim can record it before the agent row exists. */
@@ -904,13 +928,27 @@ interface SubmitSpec {
   done: string;
 }
 
-function producerOf(task: Task): Producer {
+/**
+ * Who produced a phase's artifact: the claim that submits it, plus the identities
+ * and models of the earlier rounds' producers (`previous`), since their work is
+ * still in the artifact.
+ */
+function producerOf(task: Task, previous?: Producer): Producer {
   const agent = task.assignedAgent;
+  const keyOf = (p: { tool?: string | null; model?: string | null } | undefined) =>
+    p?.model ? modelKey(p.tool, p.model) : null;
+  const union = (...lists: (string | null | undefined)[][]) =>
+    [...new Set(lists.flat().filter((v): v is string => !!v))];
   return {
     sessionKey: agent?.sessionKey ?? null,
+    identities: union(
+      previous?.identities ?? [previous?.sessionKey],
+      agent?.identities ?? [agent?.sessionKey],
+    ),
     agentId: agent?.agentId ?? null,
     tool: agent?.tool ?? null,
     model: agent?.model ?? null,
+    modelKeys: union(previous?.modelKeys ?? [keyOf(previous)], [agent?.modelKey ?? keyOf(agent ?? undefined)]),
     at: new Date().toISOString(),
   };
 }
@@ -946,7 +984,7 @@ function submit(
       patch: {
         ...out.patch,
         revertStreak: 0,
-        producers: { ...task.producers, [spec.phase]: producerOf(task) },
+        producers: { ...task.producers, [spec.phase]: producerOf(task, task.producers[spec.phase]) },
       },
     });
     if (input.context?.trim()) {

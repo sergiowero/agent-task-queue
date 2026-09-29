@@ -222,8 +222,9 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
   );
-  // Each MCP session runs its own server process, so this map is the session's claims
-  // and this id is the session's identity for separation of duties.
+  // Each MCP session runs its own server process, so this map is the session's claims.
+  // For separation of duties a claim is its conversation (the agent's sessionId) and
+  // this process (the instance id), so a restart or a changed sessionId is not a new agent.
   const claims = new Map<string, string>(Object.entries(opts.claims ?? {}));
   const instanceId = randomUUID();
   const auth = (input: { taskId: string; claimToken?: string; agentId?: string }) => ({
@@ -269,7 +270,12 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           .describe(
             `The phases you work, one or more; each claims tasks in these statuses: ${CLAIM_RULES.map((r) => `${r.role} (${r.from.join(", ")})`).join("; ")}. Omit for all but verify.`,
           ),
-        sessionId: z.string().min(1).describe("Session ID (UUID) for audit traceability"),
+        sessionId: z
+          .string()
+          .min(1)
+          .describe(
+            "Your tool's session (conversation) ID. Pass the same one on every claim: it keeps you off checking your own work, also after this server restarts",
+          ),
         host: z.string().optional().describe("Host path or machine name"),
         projectId: z.string().optional().describe("Only claim tasks from this project"),
         skillsVersion: z
@@ -304,7 +310,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           },
           context: input.context,
           projectId: input.projectId,
-          sessionKey: `mcp:${instanceId}`,
+          instanceKey: `mcp:${instanceId}`,
         });
         if (!result) {
           return {

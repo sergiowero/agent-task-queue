@@ -6,14 +6,19 @@ import {
   REVERT_FALLBACK,
   RESOLVE_TARGETS,
   ROLES,
+  SEPARATION,
   STATUS_INFO,
   TRANSITIONS,
   TaskStatus,
   UNBLOCK_TARGET,
   canTransition,
   claimRuleFor,
+  isPlaceholderSessionId,
+  modelKey,
   normalizeRoles,
   normalizeStatus,
+  sessionIdentity,
+  toolKey,
 } from "./catalog.js";
 
 describe("status catalog", () => {
@@ -78,5 +83,79 @@ describe("status catalog", () => {
 
   it("maps the legacy ready-for-code spelling", () => {
     expect(normalizeStatus("ready for code")).toBe(TaskStatus.ReadyForCode);
+  });
+});
+
+describe("identities for separation of duties", () => {
+  it("keeps whoever produced a plan or code off its critique, verification and review", () => {
+    expect(SEPARATION).toEqual({
+      [TaskStatus.PlanReviewRequested]: "plan",
+      [TaskStatus.VerifyRequested]: "code",
+      [TaskStatus.CodeReviewRequested]: "code",
+    });
+    for (const status of Object.keys(SEPARATION) as TaskStatus[]) expect(STATUS_INFO[status].kind).toBe("queued");
+  });
+
+  it("spells each tool one way", () => {
+    expect(["claude", "Claude Code", "claude-code", " CLAUDE_CODE "].map(toolKey)).toEqual(Array(4).fill("claude"));
+    expect(["gemini-cli", "codex-cli", "opencode", "Kimi"].map(toolKey)).toEqual(["gemini", "codex", "opencode", "kimi"]);
+    expect(toolKey("")).toBe("unknown");
+  });
+
+  it("normalizes models; a model-less claim is its tool's default", () => {
+    const table: [string, string | null, string][] = [
+      ["claude", null, "claude:default"],
+      ["claude", "", "claude:default"],
+      ["Claude Code", "default", "claude:default"],
+      ["codex", "default", "codex:default"],
+      ["agentq-verifier", "none", "agentq-verifier:default"],
+      ["claude", "sonnet", "claude-sonnet"],
+      ["claude", "Sonnet", "claude-sonnet"],
+      ["opencode", "anthropic/sonnet", "claude-sonnet"],
+      ["claude", "claude-sonnet-5", "claude-sonnet"],
+      ["claude", "claude-sonnet-4-5-20250929", "claude-sonnet"],
+      ["claude", "claude-sonnet-4@20250514", "claude-sonnet"],
+      ["claude", "claude-3-5-sonnet-latest", "claude-sonnet"],
+      ["custom", "us.anthropic.claude-sonnet-4-20250514-v1:0", "claude-sonnet"],
+      ["claude", "opus", "claude-opus"],
+      ["claude", "claude-opus-4-5[1m]", "claude-opus"],
+      ["claude", "haiku", "claude-haiku"],
+      ["claude", "opusplan", "opusplan"],
+      ["codex", "gpt-5", "gpt-5"],
+      ["opencode", "openai/GPT-5", "gpt-5"],
+      ["codex", "gpt-5-codex", "gpt-5-codex"],
+      ["codex", "gpt-4o-2024-08-06", "gpt-4o"],
+      ["gemini", "models/gemini-2.5-pro", "gemini-2.5-pro"],
+    ];
+    for (const [tool, model, key] of table) {
+      expect({ tool, model, key: modelKey(tool, model) }).toEqual({ tool, model, key });
+      // A key is its own key, so producers' keys and new claims compare alike.
+      expect(modelKey(tool, key)).toBe(key);
+    }
+  });
+
+  it("names a conversation by tool and sessionId, unless the sessionId is a placeholder", () => {
+    expect(sessionIdentity("Claude Code", " 3f2a-c9 ")).toBe("session:claude:3f2a-c9");
+    expect(sessionIdentity("codex", "3f2a-c9")).toBe("session:codex:3f2a-c9");
+    const placeholders = [
+      "",
+      " ",
+      "unknown",
+      "N/A",
+      "none",
+      "session",
+      "session-id",
+      "sessionId",
+      "<sessionId>",
+      "{sessionId}",
+      "${SESSION_ID}",
+      "00000000-0000-0000-0000-000000000000",
+      "current",
+    ];
+    for (const id of placeholders) {
+      expect({ id, placeholder: isPlaceholderSessionId(id) }).toEqual({ id, placeholder: true });
+      expect(sessionIdentity("claude", id)).toBeNull();
+    }
+    for (const id of ["session-mcp", "abc", "0b1c", "7d9e2c4a-1f"]) expect(isPlaceholderSessionId(id)).toBe(false);
   });
 });

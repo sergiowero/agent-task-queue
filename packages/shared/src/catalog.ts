@@ -514,12 +514,73 @@ export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
 
 /**
  * Separation of duties: claiming a task in these statuses is refused to whoever
- * produced the named phase's artifact (nobody reviews their own code).
+ * produced the named phase's artifact, in any round (nobody critiques their own
+ * plan, or verifies or reviews their own code).
  */
 export const SEPARATION: Partial<Record<TaskStatus, Phase>> = {
   [TaskStatus.CodeReviewRequested]: "code",
   [TaskStatus.PlanReviewRequested]: "plan",
+  [TaskStatus.VerifyRequested]: "code",
 };
+
+// ─── Identities (separation of duties) ────────────────────────────────
+
+/** Other spellings of the runner tools' names. */
+const TOOL_ALIASES: Record<string, string> = {
+  "claude-code": "claude",
+  "gemini-cli": "gemini",
+  "codex-cli": "codex",
+};
+
+/** A coding tool's name in one spelling: "Claude Code", "claude-code" and "claude" are one tool. */
+export function toolKey(tool: string | null | undefined): string {
+  const key = (tool ?? "").trim().toLowerCase().replace(/[\s_]+/g, "-") || "unknown";
+  return TOOL_ALIASES[key] ?? key;
+}
+
+/** Model names that name no model: the tool runs its own default. */
+const DEFAULT_MODEL_NAMES = new Set(["", "default", "auto", "none", "unknown"]);
+
+/**
+ * One spelling per model, compared under `requireDifferentModel`. Provider
+ * prefixes (`anthropic/`, `us.anthropic.`), date and version suffixes
+ * (`-20250514`, `@20250514`, `-v1:0`, `-latest`) and context tags (`[1m]`) are
+ * dropped. A Claude model counts as its family (`opus` and `claude-opus-4-5` are
+ * `claude-opus`), because the tools' short aliases name a family, not a version.
+ * A blank or `default` model is the tool's own default, so it stays tool-scoped:
+ * `claude:default` is not `codex:default`.
+ */
+export function modelKey(tool: string | null | undefined, model: string | null | undefined): string {
+  let m = (model ?? "").trim().toLowerCase();
+  m = m
+    .slice(m.lastIndexOf("/") + 1)
+    .replace(/^(?:[a-z]{2,4}\.)?(?:anthropic|openai|google|meta|mistral|amazon)\./, "")
+    .replace(/\[[^\]]*\]$/, "")
+    .replace(/-v\d+(?::\d+)?$/, "")
+    .replace(/[-@](?:\d{8}|\d{4}-\d{2}-\d{2}|latest)$/, "");
+  if (DEFAULT_MODEL_NAMES.has(m)) return `${toolKey(tool)}:default`;
+  const claude = m.match(/^(?:claude-(?:\d[\d.-]*-)?)?(opus|sonnet|haiku)(?:-|$)/);
+  return claude ? `claude-${claude[1]}` : m;
+}
+
+/** A sessionId that names no conversation: an agent that could not find its own. */
+export function isPlaceholderSessionId(sessionId: string | null | undefined): boolean {
+  const id = (sessionId ?? "").trim().toLowerCase();
+  return (
+    /^[<{[$]/.test(id) ||
+    /^[0-]*$/.test(id) ||
+    /^(?:unknown|none|null|undefined|n\/?a|default|session|session[-_ ]?id|current(?:[-_ ]session)?)$/.test(id)
+  );
+}
+
+/**
+ * The identity of an agent's conversation, `session:<tool>:<sessionId>`: the same
+ * across restarts of its MCP server. Null for a placeholder sessionId, which
+ * would lump every conversation of the tool together.
+ */
+export function sessionIdentity(tool: string, sessionId: string | null | undefined): string | null {
+  return isPlaceholderSessionId(sessionId) ? null : `session:${toolKey(tool)}:${sessionId!.trim()}`;
+}
 
 // ─── Autonomy, risk and task types ────────────────────────────────────
 
