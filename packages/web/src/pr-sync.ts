@@ -10,6 +10,7 @@ import {
   archiveTask,
   completeFromPullRequest,
   getProjectById,
+  getTaskById,
   getTasks,
   policyFor,
   pullRequestClosed,
@@ -23,16 +24,52 @@ export interface GhResult {
   stderr: string;
 }
 
-export type GhRunner = (args: string[], cwd: string) => GhResult;
+/** Runs `gh` with these arguments; async, so a slow GitHub never blocks the web server. */
+export type GhRunner = (args: string[], cwd: string) => Promise<GhResult>;
 
-export const defaultGh: GhRunner = (args, cwd) => {
-  try {
-    const proc = Bun.spawnSync(["gh", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    return { exitCode: proc.exitCode ?? 1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
-  } catch (e: any) {
-    return { exitCode: 127, stdout: "", stderr: e?.message ?? String(e) };
-  }
-};
+/** Milliseconds one `gh` call may run before it is killed (AGENTQ_PR_SYNC_TIMEOUT_SEC, default 30 s). */
+export function ghTimeoutMs(): number {
+  const sec = Number(process.env.AGENTQ_PR_SYNC_TIMEOUT_SEC ?? "30");
+  return (Number.isFinite(sec) && sec > 0 ? sec : 30) * 1000;
+}
+
+/**
+ * A GhRunner that spawns `command ...args` without waiting on it synchronously
+ * and kills it after `timeoutMs` (exit code 124, like timeout(1)). A killed
+ * process whose children still hold its output does not hold the sync either.
+ */
+export function ghRunner(command: string[] = ["gh"], timeoutMs = ghTimeoutMs()): GhRunner {
+  return async (args, cwd) => {
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn([...command, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    } catch (e) {
+      return { exitCode: 127, stdout: "", stderr: e instanceof Error ? e.message : String(e) };
+    }
+    const done = Promise.all([
+      new Response(proc.stdout as ReadableStream).text().catch(() => ""),
+      new Response(proc.stderr as ReadableStream).text().catch(() => ""),
+      proc.exited,
+    ]).then(([stdout, stderr, exitCode]) => ({ exitCode, stdout, stderr }));
+    let timer: Timer | undefined;
+    const timeout = new Promise<GhResult>((resolve) => {
+      timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {}
+        resolve({ exitCode: 124, stdout: "", stderr: `${command[0]} timed out after ${timeoutMs / 1000}s` });
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([done, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+/** `gh` with the timeout from the environment (read on every call). */
+export const defaultGh: GhRunner = (args, cwd) => ghRunner()(args, cwd);
 
 export interface SyncResult {
   checked: string[];
@@ -79,8 +116,13 @@ export function parsePullRequest(json: any, previous: PullRequest | null, now: s
   };
 }
 
-/** One pass over every task in pr_open. */
-export function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): SyncResult {
+/** Whether the task is still in pr_open: a person may move it while `gh` runs. */
+function stillOpen(taskId: string): boolean {
+  return getTaskById(taskId)?.status === TaskStatus.PrOpen;
+}
+
+/** One pass over every task in pr_open, one `gh` call at a time. */
+export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): Promise<SyncResult> {
   const gh = opts.gh ?? defaultGh;
   const now = (opts.now ?? new Date()).toISOString();
   const result: SyncResult = { checked: [], merged: [], closed: [], autoMerged: [], errors: [] };
@@ -89,7 +131,8 @@ export function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): Sync
     const project = task.projectId ? getProjectById(task.projectId) : null;
     if (!project) continue;
     const ref = prRef(task);
-    const view = gh(["pr", "view", ref, "--json", FIELDS], project.workingDirectory);
+    const view = await gh(["pr", "view", ref, "--json", FIELDS], project.workingDirectory);
+    if (!stillOpen(task.id)) continue;
     if (view.exitCode !== 0) {
       result.errors.push({ taskId: task.id, error: (view.stderr || view.stdout).trim().split("\n")[0] || `gh exited ${view.exitCode}` });
       continue;
@@ -129,11 +172,13 @@ export function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): Sync
       pr.checks === "success" &&
       pr.changesRequestedBy.length === 0
     ) {
-      const merge = gh(["pr", "merge", ref, "--squash"], project.workingDirectory);
+      const merge = await gh(["pr", "merge", ref, "--squash"], project.workingDirectory);
       if (merge.exitCode === 0) {
         addActivity(task.id, "pr_auto_merged", "system", pr.url ?? ref);
-        completeFromPullRequest(task.id, { ...pr, state: "merged", mergedAt: now, mergedBy: "agentq-auto-merge" });
-        result.autoMerged.push(task.id);
+        if (stillOpen(task.id)) {
+          completeFromPullRequest(task.id, { ...pr, state: "merged", mergedAt: now, mergedBy: "agentq-auto-merge" });
+          result.autoMerged.push(task.id);
+        }
       } else {
         result.errors.push({ taskId: task.id, error: `auto-merge failed: ${(merge.stderr || merge.stdout).trim().split("\n")[0]}` });
       }
@@ -145,6 +190,7 @@ export function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): Sync
 /** Periodic sync, started by the web server when `gh` is installed. */
 export class PrSync {
   private timer: Timer | null = null;
+  private running: Promise<SyncResult> | null = null;
   lastRunAt: string | null = null;
   lastErrors: SyncResult["errors"] = [];
   readonly available: boolean;
@@ -160,11 +206,7 @@ export class PrSync {
   start(): void {
     if (!this.available || this.timer) return;
     const tick = () => {
-      try {
-        this.runOnce();
-      } catch (e) {
-        console.error("[pr-sync]", e);
-      }
+      this.runOnce().catch((e) => console.error("[pr-sync]", e));
     };
     tick();
     this.timer = setInterval(tick, this.intervalMs);
@@ -175,8 +217,16 @@ export class PrSync {
     this.timer = null;
   }
 
-  runOnce(): SyncResult {
-    const result = syncPullRequests({ gh: this.gh });
+  /** One pass. While a pass runs (gh can be slow), another call joins it instead of starting a second one. */
+  runOnce(): Promise<SyncResult> {
+    this.running ??= this.pass().finally(() => {
+      this.running = null;
+    });
+    return this.running;
+  }
+
+  private async pass(): Promise<SyncResult> {
+    const result = await syncPullRequests({ gh: this.gh });
     this.lastRunAt = new Date().toISOString();
     this.lastErrors = result.errors;
     for (const id of [...result.checked, ...result.autoMerged]) {

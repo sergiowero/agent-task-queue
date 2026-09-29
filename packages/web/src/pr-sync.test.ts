@@ -7,10 +7,10 @@ import { join } from "path";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 import type { AutonomyLevel, PolicySettings, ProjectProfile, PullRequest, Risk } from "@agentq/shared";
-import { TaskStatus, createProject, createTask, getActivityEvents, getTaskById, patchTask } from "@agentq/shared";
+import { TaskStatus, cancelTask, createProject, createTask, getActivityEvents, getTaskById, patchTask } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import type { GhResult, GhRunner } from "./pr-sync";
-import { parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
+import { PrSync, ghRunner, parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
 
 const root = mkdtempSync(join(tmpdir(), "agentq-pr-sync-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -48,7 +48,7 @@ const ok = (json: object): GhResult => ({ exitCode: 0, stdout: JSON.stringify(js
 /** A fake `gh` answering `pr view` per task ref and recording every call. */
 function fakeGh(views: Record<string, GhResult | object>, merge: GhResult = { exitCode: 0, stdout: "", stderr: "" }) {
   const calls: string[][] = [];
-  const gh: GhRunner = (args) => {
+  const gh: GhRunner = async (args) => {
     calls.push(args);
     if (args[1] === "merge") return merge;
     const view = views[args[2]];
@@ -99,11 +99,11 @@ describe("parsePullRequest", () => {
 });
 
 describe("syncPullRequests", () => {
-  it("completes a task whose PR was merged on GitHub, crediting the merger", () => {
+  it("completes a task whose PR was merged on GitHub, crediting the merger", async () => {
     const id = prOpenTask(project());
     const url = "https://github.com/org/repo/pull/7";
     const { gh } = fakeGh({ [url]: open({ state: "MERGED", mergedAt: "2026-09-24T10:00:00Z", mergedBy: { login: "alice" } }) });
-    const result = syncPullRequests({ gh });
+    const result = await syncPullRequests({ gh });
     expect(result.merged).toContain(id);
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.Complete);
@@ -113,20 +113,20 @@ describe("syncPullRequests", () => {
     expect(task.archivedAt).toBeNull();
   });
 
-  it("archives the merged task when the project archives automatically", () => {
+  it("archives the merged task when the project archives automatically", async () => {
     const id = prOpenTask(project({ profile: { autoArchive: true } }), { pr: { url: "https://github.com/org/repo/pull/70", number: 70 } });
     const { gh } = fakeGh({ "https://github.com/org/repo/pull/70": open({ state: "MERGED", url: "https://github.com/org/repo/pull/70", number: 70 }) });
-    syncPullRequests({ gh });
+    await syncPullRequests({ gh });
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.Complete);
     expect(task.archivedAt).not.toBeNull();
     expect(task.archivePath).toStartWith(join(root, "archive"));
   });
 
-  it("sends a task whose PR was closed without merging to a person", () => {
+  it("sends a task whose PR was closed without merging to a person", async () => {
     const id = prOpenTask(project(), { pr: { url: "https://github.com/org/repo/pull/71", number: 71 } });
     const { gh } = fakeGh({ "https://github.com/org/repo/pull/71": open({ state: "CLOSED", url: "https://github.com/org/repo/pull/71" }) });
-    const result = syncPullRequests({ gh });
+    const result = await syncPullRequests({ gh });
     expect(result.closed).toContain(id);
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.NeedsHuman);
@@ -134,17 +134,17 @@ describe("syncPullRequests", () => {
     expect(task.blocker!.reason).toContain("closed without merging");
   });
 
-  it("leaves the task alone when gh fails, and reports the error", () => {
+  it("leaves the task alone when gh fails, and reports the error", async () => {
     const id = prOpenTask(project(), { pr: { url: "https://github.com/org/repo/pull/72", number: 72 } });
     const { gh } = fakeGh({ "https://github.com/org/repo/pull/72": { exitCode: 4, stdout: "", stderr: "gh: To get started, run: gh auth login\nmore" } });
-    const result = syncPullRequests({ gh });
+    const result = await syncPullRequests({ gh });
     expect(result.errors).toContainEqual({ taskId: id, error: "gh: To get started, run: gh auth login" });
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.PrOpen);
     expect(task.pullRequest?.checkedAt).toBeNull();
   });
 
-  it("finds a PR by the task's branch when submit_pr recorded no URL, and keeps what it saw", () => {
+  it("finds a PR by the task's branch when submit_pr recorded no URL, and keeps what it saw", async () => {
     const id = prOpenTask(project(), { pr: null });
     patchTask(id, { realBranch: `feat/${id}` });
     const { gh, calls } = fakeGh({
@@ -156,7 +156,7 @@ describe("syncPullRequests", () => {
         statusCheckRollup: [{ conclusion: "FAILURE" }],
       }),
     });
-    syncPullRequests({ gh });
+    await syncPullRequests({ gh });
     expect(calls.some((c) => c[2] === `feat/${id}`)).toBe(true);
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.PrOpen);
@@ -169,11 +169,11 @@ describe("syncPullRequests", () => {
       open({ url, statusCheckRollup: [{ conclusion: "SUCCESS" }], reviews: [], ...extra });
     const merges = (calls: string[][], url: string) => calls.filter((c) => c[1] === "merge" && c[2] === url);
 
-    it("merges a green, low-risk PR nobody asked changes on, and completes the task", () => {
+    it("merges a green, low-risk PR nobody asked changes on, and completes the task", async () => {
       const url = "https://github.com/org/repo/pull/80";
       const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 80 } });
       const { gh, calls } = fakeGh({ [url]: green(url) });
-      const result = syncPullRequests({ gh });
+      const result = await syncPullRequests({ gh });
       expect(merges(calls, url)).toEqual([["pr", "merge", url, "--squash"]]);
       expect(result.autoMerged).toContain(id);
       const task = getTaskById(id)!;
@@ -191,23 +191,84 @@ describe("syncPullRequests", () => {
       ["a person asked for changes", { autonomy: 3, autoMerge: true, risk: "low", view: { reviews: [{ state: "CHANGES_REQUESTED", author: { login: "p" } }] } }],
     ];
     cases.forEach(([name, c], i) => {
-      it(`does not merge: ${name}`, () => {
+      it(`does not merge: ${name}`, async () => {
         const url = `https://github.com/org/repo/pull/${90 + i}`;
         const id = prOpenTask(project({ autonomy: c.autonomy, policy: { autoMerge: c.autoMerge } }), { risk: c.risk, pr: { url, number: 90 + i } });
         const { gh, calls } = fakeGh({ [url]: green(url, c.view) });
-        syncPullRequests({ gh });
+        await syncPullRequests({ gh });
         expect(merges(calls, url)).toEqual([]);
         expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
       });
     });
 
-    it("keeps the task in pr_open when the merge fails", () => {
+    it("keeps the task in pr_open when the merge fails", async () => {
       const url = "https://github.com/org/repo/pull/99";
       const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 99 } });
       const { gh } = fakeGh({ [url]: green(url) }, { exitCode: 1, stdout: "", stderr: "Pull request is not mergeable" });
-      const result = syncPullRequests({ gh });
+      const result = await syncPullRequests({ gh });
       expect(result.errors).toContainEqual({ taskId: id, error: "auto-merge failed: Pull request is not mergeable" });
       expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
     });
+  });
+});
+
+describe("gh without blocking the server", () => {
+  const bun = (script: string) => [process.execPath, "-e", script];
+
+  it("runs gh asynchronously and returns its output and exit code", async () => {
+    const run = ghRunner(bun("console.log(process.argv.slice(1).join(' ')); console.error('warn'); process.exit(3)"), 10_000);
+    expect(await run(["pr", "view", "7"], root)).toEqual({ exitCode: 3, stdout: "pr view 7\n", stderr: "warn\n" });
+    expect((await ghRunner(["agentq-no-such-gh"])(["pr"], root)).exitCode).toBe(127);
+  });
+
+  it("kills a gh call that hangs, and the event loop keeps running meanwhile", async () => {
+    let ticks = 0;
+    const ticker = setInterval(() => ticks++, 20);
+    const started = Date.now();
+    const result = await ghRunner(bun("setTimeout(() => {}, 30000)"), 300)(["pr", "view", "1"], root);
+    clearInterval(ticker);
+    expect(result.exitCode).toBe(124);
+    expect(result.stderr).toContain("timed out");
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(ticks).toBeGreaterThan(3);
+  });
+
+  it("leaves a task a person moved while gh was running", async () => {
+    const url = "https://github.com/org/repo/pull/60";
+    const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 60 } });
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[2] === url) cancelTask(id, { message: "not needed" });
+      return ok(open({ url, state: "MERGED" }));
+    };
+    const result = await syncPullRequests({ gh });
+    expect(result.merged).not.toContain(id);
+    expect(getTaskById(id)!.status).toBe(TaskStatus.Canceled);
+    expect(calls.filter((c) => c[1] === "merge")).toEqual([]);
+  });
+
+  it("runs one pass at a time: a second runOnce joins the running one", async () => {
+    const url = "https://github.com/org/repo/pull/61";
+    prOpenTask(project(), { pr: { url, number: 61 } });
+    let views = 0;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const gh: GhRunner = async (args) => {
+      if (args[2] === url) {
+        views++;
+        await gate;
+      }
+      return ok(open({ url }));
+    };
+    const sync = new PrSync(() => {}, 60_000, gh);
+    const first = sync.runOnce();
+    const second = sync.runOnce();
+    expect(second).toBe(first);
+    release();
+    await first;
+    expect(views).toBe(1);
+    await sync.runOnce();
+    expect(views).toBe(2);
   });
 });

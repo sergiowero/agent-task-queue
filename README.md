@@ -294,6 +294,7 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
 | `AGENTQ_PR_SYNC_SEC` | `180` | How often the server asks `gh` about open PRs (`AGENTQ_PR_SYNC=0` turns it off) |
+| `AGENTQ_PR_SYNC_TIMEOUT_SEC` | `30` | Kill a `gh` call of the PR sync that runs longer than this (the sync never blocks the server) |
 
 Point the MCP server at another database with `bun run install:mcp --db <path>`.
 

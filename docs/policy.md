@@ -103,7 +103,9 @@ risk), then calls `submit_pr`: the task waits in `pr_open`. The human review hap
 the PR, where the diff and CI are.
 
 With the `gh` CLI installed and logged in, the web server checks every open PR each
-`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off):
+`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off). Its `gh` calls run in the
+background, one at a time, and each is killed after `AGENTQ_PR_SYNC_TIMEOUT_SEC` (30 s),
+so a slow or stuck GitHub never holds up the server:
 
 | On GitHub | Task |
 |---|---|
