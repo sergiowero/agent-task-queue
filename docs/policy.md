@@ -133,10 +133,21 @@ the sync sees, an L3 auto-merge and **Mark merged**. When archiving fails (for e
 the project folder moved), the task stays complete and its activity shows an
 `archive_failed` event with the reason.
 
+**Only the approved commit ships.** Every approval (the AI reviewer's, a person's
+**Approve code**, or a person answering a review blocker with `approved`) records who
+approved and which commit (`task.approval`: the worktree's `HEAD`, else the submitted
+commit). The `pr` phase gets it as `brief.pr.commit` and never commits leftovers itself.
+A `submit_pr` whose pushed commit is not the approved one (commits nobody verified or
+reviewed) goes to `needs_human` with the PR recorded: send the task back to the coder,
+accept the PR as it is (`pr_open`), or cancel it.
+
 **L3 auto-merge.** With `autonomy: 3` and `autoMerge: true`, the sync merges a PR
-itself (`gh pr merge --squash`) when the task is **low risk**, every check is green and
-no reviewer's latest review asks for changes (only each reviewer's newest approve,
-request-changes or dismissal counts; a later comment does not clear a change request).
+itself (`gh pr merge --squash --match-head-commit <head>`) when the task is **low
+risk**, every check is green, no reviewer's latest review asks for changes (only each
+reviewer's newest approve, request-changes or dismissal counts; a later comment does not
+clear a change request) and the PR's head (`headRefOid`) is the approved commit. A head
+with commits pushed after the approval is reported in the sync's errors and never merged;
+`--match-head-commit` makes GitHub refuse a commit that lands in between.
 Anything else waits for a person. The metrics still count a change request that was
 approved later.
 

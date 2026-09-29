@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { unlinkSync } from "fs";
+import { mkdtempSync, rmSync, unlinkSync } from "fs";
 import {
   createTask,
   getTaskById,
@@ -906,5 +906,94 @@ describe("evidence, validation plans and findings by id", () => {
       ["AC2", "two", "review"],
       ["AC3", "three", "command"],
     ]);
+  });
+});
+
+describe("the approved commit is the one that ships", () => {
+  const root = mkdtempSync(join(tmpdir(), "agentq-approval-"));
+  const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "a-coder" };
+  const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "a-reviewer" };
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  /** A git worktree on a feature branch with one commit; commit() adds another and returns its sha. */
+  function worktree() {
+    const dir = mkdtempSync(join(root, "wt-"));
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args], { stdout: "pipe" });
+    git("init", "-q", "-b", "feat/x");
+    const commit = () => {
+      git("commit", "-q", "--allow-empty", "-m", "change");
+      return git("rev-parse", "HEAD").stdout.toString().trim();
+    };
+    return { dir, head: commit(), commit };
+  }
+
+  /** A task coded in a real worktree, in a project of its own at `autonomy`. */
+  function coded(autonomy: 0 | 2) {
+    const projectId = `approval-${Math.random().toString(36).slice(2)}`;
+    createProject({ id: projectId, displayName: "Approval", workingDirectory: root, autonomy });
+    const task = createTask({ title: "approval", description: "d", projectId });
+    const wt = worktree();
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: wt.dir, claimToken: c.claimToken });
+    return { id: task.id, projectId, wt };
+  }
+
+  function openPr(id: string, projectId: string, commit: string) {
+    const pr = claimNextTask({ roles: ["pr"], agent: coder, projectId })!;
+    expect(pr.task.id).toBe(id);
+    return submitPr(id, { prUrl: "https://github.com/org/repo/pull/9", branch: "main", commit, authors: "a", claimToken: pr.claimToken });
+  }
+
+  it("an AI approval pins the reviewed commit; a PR head with a later commit goes to a person", () => {
+    const { id, projectId, wt } = coded(2);
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
+    const approved = getTaskById(id)!;
+    expect(approved.status).toBe(TaskStatus.Approved);
+    expect(approved.approval).toMatchObject({ sha: wt.head, by: "reviewer@1|opus", human: false, round: 1 });
+    expect(approved.lastReview?.sha).toBe(wt.head);
+    expect(buildTaskBrief(id)!.pr!.commit).toBe(wt.head);
+
+    // The pr phase committed something nobody verified or reviewed.
+    const later = wt.commit();
+    const out = openPr(id, projectId, later);
+    expect(out.newStatus).toBe(TaskStatus.NeedsHuman);
+    expect(out.task.blocker).toMatchObject({ phase: "merge", fromStatus: TaskStatus.Merging, raisedBy: "system" });
+    expect(out.task.blocker!.reason).toContain(`is not the approved commit ${wt.head.slice(0, 12)}`);
+    expect(out.task.pullRequest).toMatchObject({ url: "https://github.com/org/repo/pull/9", headSha: later });
+    expect(getActivityEvents({ taskId: id }).map((e) => e.eventType)).toContain("task_blocked");
+    // A person may accept the PR as it is; the approval does not move.
+    expect(resolveBlocker(id, { answer: "Only a changelog line", targetStatus: TaskStatus.PrOpen }).status).toBe(TaskStatus.PrOpen);
+    expect(getTaskById(id)!.approval?.sha).toBe(wt.head);
+  });
+
+  it("the approved commit, abbreviated or not, opens the PR", () => {
+    const { id, projectId, wt } = coded(2);
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
+    expect(openPr(id, projectId, wt.head.slice(0, 8)).newStatus).toBe(TaskStatus.PrOpen);
+  });
+
+  it("a person's approval pins the worktree's commit, also when answering a review blocker", () => {
+    const { id, wt } = coded(0);
+    expect(getTaskById(id)!.status).toBe(TaskStatus.WaitingCodeReview);
+    expect(approveCode(id).approval).toMatchObject({ sha: wt.head, by: "user", human: true, round: 0 });
+
+    const next = wt.commit();
+    const blocker = { reason: "r", question: "q", phase: "review" as const, fromStatus: TaskStatus.Reviewing, raisedBy: "reviewer", at: "t" };
+    updateTask(id, { status: TaskStatus.NeedsHuman, blocker });
+    expect(resolveBlocker(id, { answer: "Good as it is", targetStatus: TaskStatus.Approved }).approval).toMatchObject({
+      sha: next,
+      human: true,
+    });
+
+    // After a closed PR the code did not change: sending it back to Approved keeps the approval.
+    const moved = wt.commit();
+    updateTask(id, { status: TaskStatus.NeedsHuman, blocker: { ...blocker, phase: "merge", fromStatus: TaskStatus.PrOpen } });
+    const resolved = resolveBlocker(id, { answer: "Open a new PR", targetStatus: TaskStatus.Approved });
+    expect(resolved.approval?.sha).toBe(next);
+    expect(resolved.approval?.sha).not.toBe(moved);
   });
 });

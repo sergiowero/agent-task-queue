@@ -71,8 +71,12 @@ export interface TaskBrief {
   verification: (Verification & { failing: Pick<Evidence, "command" | "exitCode" | "summary">[] }) | null;
   /** What a person answered to the last blocker, if the task was blocked. */
   lastAnswer: string | null;
-  /** For the `pr` role: the pull request body to use (criteria, evidence, review, risk). */
-  pr: { body: string; url: string | null } | null;
+  /**
+   * For the `pr` role: the pull request body to use (criteria, evidence, review,
+   * risk), the task's open PR to update (url), and the approved commit the
+   * pushed branch head must be (commit; null when none was recorded).
+   */
+  pr: { body: string; url: string | null; commit: string | null } | null;
   /** Where the full history is. */
   more: string;
 }
@@ -159,7 +163,7 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
     lastAnswer: answer ? answer.message.replace(/^\*\*Blocker resolved\*\*[^\n]*\n*/, "").trim() || null : null,
     pr:
       [TaskStatus.Approved, TaskStatus.Merging, TaskStatus.PrOpen].includes(task.status)
-        ? { body: renderPrBody(task), url: task.pullRequest?.url ?? null }
+        ? { body: renderPrBody(task), url: task.pullRequest?.url ?? null, commit: task.approval?.sha ?? null }
         : null,
     more: "The full conversation, history and every piece of evidence: call get_task.",
   };

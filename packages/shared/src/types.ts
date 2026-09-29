@@ -62,6 +62,24 @@ export interface LastReview {
   verdict: Verdict;
   by: string;
   at: string;
+  /** The commit the reviewer looked at (absent on old reviews). */
+  sha?: string | null;
+}
+
+/**
+ * The approval that sent the code to the pull request: who approved it and
+ * which commit. The PR and the L3 auto-merge ship only this commit.
+ */
+export interface Approval {
+  /** The approved commit; null when neither the worktree nor the submission named one. */
+  sha: string | null;
+  /** The AI reviewer's agent id, or the person who approved ("user"). */
+  by: string;
+  /** A person approved (on the task page, or answering a blocker), not the AI reviewer. */
+  human: boolean;
+  /** AI code reviews so far when it was approved (task.codeRound). */
+  round: number;
+  at: string;
 }
 
 /** A review finding, tracked by id across rounds ("R2-3" = code review round 2, finding 3). */
@@ -156,6 +174,8 @@ export interface PullRequest {
   branch: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
+  /** The PR's head commit: what submit_pr pushed, then what GitHub reports (absent on old tasks). */
+  headSha?: string | null;
   /** GitHub users whose latest review asks for changes (it holds back the L3 auto-merge). */
   changesRequestedBy: string[];
   /**
@@ -245,6 +265,8 @@ export interface Task {
   /** Hand-opened agent sessions must show activity before this time or lose the claim. */
   leaseExpiresAt: string | null;
   lastReview: LastReview | null;
+  /** Who approved the code for the pull request, and which commit (null until approved). */
+  approval: Approval | null;
   /** The latest plan's validation plan (proposed; approvedPlan holds the approved one). */
   validationPlan: ValidationPlan | null;
   /** Frozen when the plan is approved; the coder may not change it. */

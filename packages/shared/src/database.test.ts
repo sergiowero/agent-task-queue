@@ -488,6 +488,7 @@ describe("Migration Status", () => {
       "022_runner_roles_builder",
       "023_pull_requests",
       "024_phase_roles",
+      "029_task_approval",
     ]) {
       expect(names).toContain(n);
     }

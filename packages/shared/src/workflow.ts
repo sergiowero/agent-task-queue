@@ -63,10 +63,11 @@ import {
   type Role,
   type Verdict,
 } from "./catalog.js";
-import { detectDefaultBranch } from "./git.js";
+import { detectDefaultBranch, git, sameCommit } from "./git.js";
 import type {
   AgentReference,
   Agent,
+  Approval,
   ApprovedPlan,
   PlanSubmission,
   PullRequest,
@@ -548,6 +549,7 @@ export interface ResolveBlockerInput {
 
 /** A person answers a blocked task and sends it on (the answer stays in the conversation). */
 export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task {
+  const head = input.targetStatus === TaskStatus.Approved ? reviewedHead(getTaskById(taskId)) : null;
   return withTransaction(() => {
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.NeedsHuman) {
@@ -561,6 +563,9 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     }
     const actor = input.actor ?? "user";
     const answer = input.answer.trim();
+    // Sending reviewed code on to the PR is a person's approval of it. After a merge
+    // blocker (a closed PR) the code did not change: the approval it had stands.
+    const approves = input.targetStatus === TaskStatus.Approved && task.blocker?.phase !== "merge";
     if (answer) {
       addHandoff(taskId, {
         phase: "human",
@@ -582,6 +587,7 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         blocker: null,
         revertStreak: 0,
         roundBaseline: { plan: task.planRound, code: task.codeRound },
+        ...(approves ? { approval: approvalOf(task, head, actor, true) } : {}),
       },
     });
   });
@@ -648,6 +654,20 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
   });
 }
 
+/**
+ * The commit a review of the task looks at: the worktree's HEAD, else the
+ * submitted commit. Read it before a transaction: git can take a while.
+ */
+function reviewedHead(task: Task | null): string | null {
+  if (!task) return null;
+  const head = task.worktreePath ? git(task.worktreePath, ["rev-parse", "HEAD"]) : null;
+  return head || task.headSha || task.verification?.verifiedSha || null;
+}
+
+function approvalOf(task: Task, sha: string | null, by: string, human: boolean): Approval {
+  return { sha, by, human, round: task.codeRound, at: new Date().toISOString() };
+}
+
 function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
   const task = getTaskById(taskId);
   if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
@@ -659,8 +679,23 @@ export function requestPlanChanges(taskId: string, input: HumanActionInput = {})
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
+/** A person approves the code: the commit in the worktree is the one the PR may ship. */
 export function approveCode(taskId: string, input: HumanActionInput = {}): Task {
-  return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.Approved, "code_approved", input.message?.trim() || "Code approved.", input);
+  const sha = reviewedHead(getTaskById(taskId));
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.WaitingCodeReview) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingCodeReview)} status`);
+    }
+    const actor = input.actor ?? "user";
+    return transitionTask(task, TaskStatus.Approved, {
+      actor,
+      message: input.message?.trim() || "Code approved.",
+      messageType: "user",
+      event: "code_approved",
+      patch: { revertStreak: 0, approval: approvalOf(task, sha, actor, true) },
+    });
+  });
 }
 
 export interface RequestCodeChangesInput extends HumanActionInput {
@@ -1568,6 +1603,8 @@ function approvalsInProject(projectId: string | null): number {
 }
 
 export function submitReview(taskId: string, input: SubmitReviewInput): SubmitResult {
+  // The commit under review, read before the transaction: an approval pins it for the PR.
+  const reviewed = reviewedHead(getTaskById(taskId));
   return submit(
     taskId,
     { from: TaskStatus.Reviewing, phase: "review", messageType: "review", event: "review_submitted", done: `Review submitted (${input.verdict})` },
@@ -1661,7 +1698,8 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
         note,
         patch: {
           codeRound: round,
-          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString() },
+          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString(), sha: reviewed },
+          ...(routing.status === TaskStatus.Approved ? { approval: approvalOf({ ...task, codeRound: round }, reviewed, reviewer, false) } : {}),
           ...(blocker ? { blocker } : {}),
         },
       };
@@ -1687,7 +1725,11 @@ function prNumberOf(url: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** The agent with the `pr` role opened the PR: the task waits in pr_open until it is merged on GitHub. */
+/**
+ * The agent with the `pr` role opened the PR: the task waits in pr_open until
+ * it is merged on GitHub. A pushed commit other than the approved one (commits
+ * nobody verified or reviewed) sends the task to a person instead.
+ */
 export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
   const url = input.prUrl?.trim() || input.message?.match(PR_URL_RE)?.[0];
   // archive.ts parses this format (Branch/Commit/Authors/Worktree/Message).
@@ -1704,28 +1746,47 @@ export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
     taskId,
     { from: TaskStatus.Merging, phase: "merge", messageType: "merge", event: "pr_opened", done: "Pull request recorded" },
     input,
-    (task) => ({
-      to: TaskStatus.PrOpen,
-      message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
-      details: url ?? details,
-      patch: {
-        headSha: input.commit || task.headSha,
-        realBranch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
-        pullRequest: {
-          url: url ?? null,
-          number: input.prNumber ?? prNumberOf(url),
-          state: "open",
-          branch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
-          mergedAt: null,
-          mergedBy: null,
-          changesRequestedBy: [],
-          // Kept across PRs of the task: a reopened PR still counts the earlier change requests.
-          changesEverRequestedBy: task.pullRequest?.changesEverRequestedBy ?? task.pullRequest?.changesRequestedBy ?? [],
-          checks: null,
-          checkedAt: null,
+    (task) => {
+      const approved = task.approval?.sha;
+      const pushed = input.commit.trim();
+      const blocker: Blocker | null =
+        approved && pushed && !sameCommit(approved, pushed)
+          ? {
+              reason: `The pull request's head ${pushed.slice(0, 12)} is not the approved commit ${approved.slice(0, 12)}: it carries commits nobody verified or reviewed.`,
+              question:
+                "Send the task back to the coder (Changes requested) so the extra commits are verified and reviewed, accept the PR as it is (PR open; the L3 auto-merge stays off), or cancel it.",
+              phase: "merge",
+              fromStatus: task.status,
+              raisedBy: "system",
+              at: new Date().toISOString(),
+            }
+          : null;
+      return {
+        to: blocker ? TaskStatus.NeedsHuman : TaskStatus.PrOpen,
+        message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
+        details: url ?? details,
+        ...(blocker ? { note: { message: `**Blocked:** ${blocker.reason}\n\n**Question:** ${blocker.question}`, event: "task_blocked" } } : {}),
+        patch: {
+          headSha: pushed || task.headSha,
+          realBranch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+          pullRequest: {
+            url: url ?? null,
+            number: input.prNumber ?? prNumberOf(url),
+            state: "open",
+            branch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+            headSha: pushed || null,
+            mergedAt: null,
+            mergedBy: null,
+            changesRequestedBy: [],
+            // Kept across PRs of the task: a reopened PR still counts the earlier change requests.
+            changesEverRequestedBy: task.pullRequest?.changesEverRequestedBy ?? task.pullRequest?.changesRequestedBy ?? [],
+            checks: null,
+            checkedAt: null,
+          },
+          ...(blocker ? { blocker } : {}),
         },
-      },
-    }),
+      };
+    },
   );
 }
 

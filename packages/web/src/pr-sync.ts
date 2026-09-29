@@ -17,6 +17,7 @@ import {
   pullRequestClosed,
   recordPullRequest,
   requestPrChanges,
+  sameCommit,
 } from "@agentq/shared";
 
 export interface GhResult {
@@ -82,7 +83,7 @@ export interface SyncResult {
   errors: { taskId: string; error: string }[];
 }
 
-const FIELDS = "state,mergedAt,mergedBy,url,number,reviews,statusCheckRollup,headRefName";
+const FIELDS = "state,mergedAt,mergedBy,url,number,reviews,statusCheckRollup,headRefName,headRefOid";
 
 type Check = { conclusion?: string | null; state?: string | null; status?: string | null };
 
@@ -136,6 +137,7 @@ export function parsePullRequest(json: any, previous: PullRequest | null, now: s
     number: json.number ?? previous?.number ?? null,
     state: state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : "open",
     branch: json.headRefName ?? previous?.branch ?? null,
+    headSha: json.headRefOid ?? previous?.headSha ?? null,
     mergedAt: json.mergedAt ?? null,
     mergedBy: json.mergedBy?.login ?? null,
     changesRequestedBy: reviewers,
@@ -231,7 +233,9 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       continue;
     }
 
-    // L3: a green, low-risk PR whose reviewers' latest reviews ask no changes merges itself.
+    // L3: a green, low-risk PR whose reviewers' latest reviews ask no changes merges itself,
+    // and only while its head is the approved commit (tasks from before approvals were
+    // recorded: the commit submit_pr pushed).
     const policy = policyFor(task);
     if (
       policy.level === 3 &&
@@ -240,7 +244,16 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       pr.checks === "success" &&
       pr.changesRequestedBy.length === 0
     ) {
-      const merge = await gh(["pr", "merge", ref, "--squash"], project.workingDirectory);
+      const approved = task.approval?.sha ?? task.headSha;
+      if (!pr.headSha || !sameCommit(approved, pr.headSha)) {
+        result.errors.push({
+          taskId: task.id,
+          error: `auto-merge skipped: the PR head ${pr.headSha?.slice(0, 12) ?? "(unknown)"} is not the approved commit ${approved?.slice(0, 12) ?? "(none recorded)"}`,
+        });
+        continue;
+      }
+      // --match-head-commit: GitHub refuses the merge if a commit lands in between.
+      const merge = await gh(["pr", "merge", ref, "--squash", "--match-head-commit", pr.headSha], project.workingDirectory);
       if (merge.exitCode === 0) {
         addActivity(task.id, "pr_auto_merged", "system", pr.url ?? ref);
         if (stillOpen(task.id)) {

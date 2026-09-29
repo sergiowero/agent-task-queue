@@ -17,7 +17,7 @@ Follow this skill when you hold a task claimed from `approved` (the review passe
 |--------------|-------|--------|-------------|
 | `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body` (or update the task's open PR), then `submit_pr` | `pr_open` |
 
-The code was committed to the feature branch during coding, verified and reviewed. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; AgentQ sees the merge and completes the task on its own (under L3 with auto-merge, AgentQ merges green low-risk PRs itself — still not you).
+The code was committed to the feature branch during coding, verified and reviewed: the approval pinned that commit (`brief.pr.commit`), and the PR ships exactly it. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; AgentQ sees the merge and completes the task on its own (under L3 with auto-merge, AgentQ merges green low-risk PRs itself — still not you).
 
 Two branches matter:
 - **Head / feature branch** = `task.realBranch` if set, else `task.recommendedBranch` — where the worktree lives.
@@ -37,10 +37,12 @@ cd {task.worktreePath}
 git status
 git branch --show-current       # MUST be the feature branch
 git log --oneline {task.mergeBranch}..HEAD   # at least one commit
+git rev-parse HEAD              # MUST be brief.pr.commit (the approved commit) when it is set
 ```
 
 - No commits on the feature branch → `report_blocker` (there is nothing to open a PR for).
-- Uncommitted changes left by the coder → commit them in the worktree: `git add -A && git commit -m "{task.title} (#{task.id})"`. Never commit in the main repo or on `mergeBranch`.
+- Uncommitted changes left by the coder → `report_blocker` listing the files. **Never commit them yourself**: nobody verified or reviewed them, so they go back through the coder.
+- `HEAD` is not `brief.pr.commit` (commits after the approval) → `report_blocker`; do not push. A PR whose head is not the approved commit sends the task to a person anyway.
 
 ### 2. Push the feature branch
 
@@ -96,11 +98,11 @@ rm .git/agentq-pr-body.md
 | `prUrl` | The URL `gh pr create` printed | Leaving it out: AgentQ then cannot follow the PR |
 | `mergeBranch` | The PR **base** (`task.mergeBranch`) | Passing the feature branch |
 | `headBranch` | The pushed feature branch | — |
-| `commit` | The feature-branch head SHA you pushed | Passing a merge commit (there is none) |
+| `commit` | The feature-branch head SHA you pushed (the approved commit) | Passing a merge commit (there is none), or a commit made after the approval |
 | `authors` | Everyone who wrote the code (implementing agent + human co-authors) | Only the PR-phase agent |
 | `context` | Required handoff: PR URL/number, branches, what to check | Blank (the tool rejects it) |
 
-The task moves to `pr_open` and is released. `Task must be in Merging status.` means the task is no longer yours: stop. Any other error: fix the arguments and call again.
+The task moves to `pr_open` and is released (to `needs_human` instead when `commit` is not the approved commit). `Task must be in Merging status.` means the task is no longer yours: stop. Any other error: fix the arguments and call again.
 
 ## After submitting
 
@@ -124,6 +126,7 @@ Push or PR failure: do not call `submit_pr`. Call `report_blocker` with the erro
 
 - **NEVER** merge the PR, merge locally, or enable auto-merge — a person (or AgentQ under L3) merges
 - **NEVER** force-push, amend or rewrite commits from earlier phases
+- **NEVER** commit in the worktree: the PR ships the approved commit, nothing added after it
 - **DO NOT** open the PR before the branch is pushed, or call `submit_pr` before the PR exists
 - **DO** use `brief.pr.body` as the PR body (`--body-file`), not a body you write from scratch
 - **DO** use `gh` (never raw GitHub API calls)

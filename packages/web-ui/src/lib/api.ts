@@ -44,7 +44,9 @@ export interface Task {
   /** AI code reviews so far. */
   codeRound: number;
   verifyFailures: number;
-  lastReview: { round: number; verdict: Verdict; by: string; at: string } | null;
+  lastReview: { round: number; verdict: Verdict; by: string; at: string; sha?: string | null } | null;
+  /** Who approved the code for the pull request, and the commit the PR ships. */
+  approval: { sha: string | null; by: string; human: boolean; round: number; at: string } | null;
   validationPlan: ValidationPlan | null;
   approvedPlan: { markdown: string; validation: ValidationPlan | null; approvedBy: string; at: string } | null;
   headSha: string | null;
@@ -92,6 +94,8 @@ export interface PullRequest {
   branch: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
+  /** The PR's head commit (absent on old tasks). */
+  headSha?: string | null;
   /** GitHub users whose latest review asks for changes. */
   changesRequestedBy: string[];
   /** Everyone who asked for changes at any point (absent on old tasks). */

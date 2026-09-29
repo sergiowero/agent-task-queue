@@ -17,6 +17,7 @@ export {
   type ProjectProfile,
   type ProjectCommands,
   type LastReview,
+  type Approval,
   type Producer,
   type ConversationEntry,
   type StatusHistoryEntry,
@@ -246,7 +247,7 @@ export {
   type SkillDocument,
 } from "./skills.js";
 
-export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./git.js";
+export { git, isGitRepo, sameCommit, detectDefaultBranch, detectProjectCommands } from "./git.js";
 
 export {
   archiveTask,

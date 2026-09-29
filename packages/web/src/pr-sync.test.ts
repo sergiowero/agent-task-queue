@@ -21,9 +21,16 @@ function project(opts: { autonomy?: AutonomyLevel; policy?: Partial<PolicySettin
   return id;
 }
 
-function prOpenTask(projectId: string, opts: { risk?: Risk; pr?: Partial<PullRequest> | null } = {}) {
+/** The approved commit of the L3 tasks below, and the head GitHub reports for their PRs. */
+const APPROVED = "0123456789abcdef0123456789abcdef01234567";
+
+function prOpenTask(projectId: string, opts: { risk?: Risk; pr?: Partial<PullRequest> | null; approved?: string | null } = {}) {
   const task = createTask({ title: "pr task", description: "d", projectId, risk: opts.risk ?? "medium" });
   forceStatus(task.id, TaskStatus.PrOpen, { claim: false });
+  const approved = opts.approved === undefined ? APPROVED : opts.approved;
+  if (approved) {
+    patchTask(task.id, { headSha: approved, approval: { sha: approved, by: "reviewer@1|m", human: false, round: 1, at: "2026-09-01T10:00:00Z" } });
+  }
   if (opts.pr !== null) {
     patchTask(task.id, {
       pullRequest: {
@@ -240,7 +247,7 @@ describe("syncPullRequests", () => {
 
   describe("L3 auto-merge", () => {
     const green = (url: string, extra: object = {}) =>
-      open({ url, statusCheckRollup: [{ conclusion: "SUCCESS" }], reviews: [], ...extra });
+      open({ url, statusCheckRollup: [{ conclusion: "SUCCESS" }], reviews: [], headRefOid: APPROVED, ...extra });
     const merges = (calls: string[][], url: string) => calls.filter((c) => c[1] === "merge" && c[2] === url);
 
     it("merges a green, low-risk PR nobody asked changes on, and completes the task", async () => {
@@ -248,7 +255,7 @@ describe("syncPullRequests", () => {
       const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 80 } });
       const { gh, calls } = fakeGh({ [url]: green(url) });
       const result = await syncPullRequests({ gh });
-      expect(merges(calls, url)).toEqual([["pr", "merge", url, "--squash"]]);
+      expect(merges(calls, url)).toEqual([["pr", "merge", url, "--squash", "--match-head-commit", APPROVED]]);
       expect(result.autoMerged).toContain(id);
       const task = getTaskById(id)!;
       expect(task.status).toBe(TaskStatus.Complete);
@@ -299,6 +306,28 @@ describe("syncPullRequests", () => {
       expect(merges(calls, url)).toHaveLength(1);
       expect(getTaskById(id)!.status).toBe(TaskStatus.Complete);
       expect(getTaskById(id)!.pullRequest?.changesEverRequestedBy).toEqual(["p"]);
+    });
+
+    it("merges only the approved commit: a PR head with commits pushed after the approval waits for a person", async () => {
+      const url = "https://github.com/org/repo/pull/83";
+      const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 83 } });
+      const { gh, calls } = fakeGh({ [url]: green(url, { headRefOid: "fedcba9876543210fedcba9876543210fedcba98" }) });
+      const result = await syncPullRequests({ gh });
+      expect(merges(calls, url)).toEqual([]);
+      expect(result.errors).toContainEqual({ taskId: id, error: "auto-merge skipped: the PR head fedcba987654 is not the approved commit 0123456789ab" });
+      const task = getTaskById(id)!;
+      expect(task.status).toBe(TaskStatus.PrOpen);
+      expect(task.pullRequest?.headSha).toBe("fedcba9876543210fedcba9876543210fedcba98");
+    });
+
+    it("an abbreviated approved sha matches; a task approved before approvals were recorded uses its pushed commit", async () => {
+      const url = "https://github.com/org/repo/pull/84";
+      const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 84 }, approved: null });
+      patchTask(id, { headSha: APPROVED.slice(0, 7) });
+      const { gh, calls } = fakeGh({ [url]: green(url) });
+      await syncPullRequests({ gh });
+      expect(merges(calls, url)).toEqual([["pr", "merge", url, "--squash", "--match-head-commit", APPROVED]]);
+      expect(getTaskById(id)!.status).toBe(TaskStatus.Complete);
     });
 
     it("keeps the task in pr_open when the merge fails", async () => {
