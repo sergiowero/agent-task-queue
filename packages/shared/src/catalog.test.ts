@@ -69,11 +69,18 @@ describe("status catalog", () => {
     expect(normalizeRoles([])).toEqual([]);
   });
 
-  it("finished tasks go nowhere; needs_human goes only to resolve targets", () => {
+  it("finished tasks go nowhere; needs_human goes only to resolve targets (and split, for a plan sent on)", () => {
     expect(TRANSITIONS[TaskStatus.Complete]).toEqual([]);
     expect(TRANSITIONS[TaskStatus.Canceled]).toEqual([]);
-    const targets = new Set(Object.values(RESOLVE_TARGETS).flat());
+    const targets = new Set([...Object.values(RESOLVE_TARGETS).flat(), TaskStatus.Split]);
     expect(new Set(TRANSITIONS[TaskStatus.NeedsHuman])).toEqual(targets);
+  });
+
+  it("a blocker in coding, verification or review can send the task back to planning", () => {
+    for (const phase of ["code", "verify", "review"] as const) {
+      expect(RESOLVE_TARGETS[phase]).toContain(TaskStatus.PlanChangesRequested);
+    }
+    expect(canTransition(TaskStatus.WaitingCodeReview, TaskStatus.PlanChangesRequested)).toBe(true);
   });
 
   it("maps the legacy ready-for-code spelling", () => {

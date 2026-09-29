@@ -410,7 +410,12 @@ export const UNBLOCK_TARGET: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Refining]: TaskStatus.Draft,
 };
 
-/** Statuses a person may send a `needs_human` task to, by the phase it was blocked in. */
+/**
+ * Statuses a person may send a `needs_human` task to, by the phase it was
+ * blocked in. From coding, verification and review, "Plan changes requested"
+ * sends the task back to planning (a wrong approved plan); the approved plan
+ * stays until a new one is approved.
+ */
 export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
   refine: [TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode, TaskStatus.Canceled],
   plan_review: [
@@ -431,6 +436,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.ChangesRequested,
     TaskStatus.ReadyForCode,
     TaskStatus.WaitingCodeReview,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   verify: [
@@ -438,6 +444,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.ChangesRequested,
     TaskStatus.WaitingCodeReview,
     TaskStatus.CodeReviewRequested,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   review: [
@@ -445,6 +452,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.WaitingCodeReview,
     TaskStatus.ChangesRequested,
     TaskStatus.Approved,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   merge: [TaskStatus.Approved, TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.Canceled],
@@ -479,7 +487,8 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
   add(TaskStatus.Refining, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
   add(TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
   add(TaskStatus.PlanReviewRequested, TaskStatus.WaitingPlanReview);
-  add(TaskStatus.Split, TaskStatus.Complete);
+  // Every subtask finished; if none completed, a person decides what happens to the task.
+  add(TaskStatus.Split, TaskStatus.Complete, TaskStatus.NeedsHuman);
   add(
     TaskStatus.Coding,
     TaskStatus.WaitingCodeReview,
@@ -510,10 +519,16 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.Approved,
     TaskStatus.ChangesRequested,
     TaskStatus.CodeReviewRequested,
+    TaskStatus.PlanChangesRequested,
   );
+  // A task it starts after was canceled or deleted: a person decides (drop it, or cancel).
+  add(TaskStatus.ReadyForCode, TaskStatus.NeedsHuman);
+  add(TaskStatus.PlanRequested, TaskStatus.NeedsHuman);
   // The PR was merged (sync or a person), or closed without merging (a person decides).
   add(TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.NeedsHuman);
   add(TaskStatus.NeedsHuman, ...resolveTargets(null));
+  // A plan blocker sent on to coding approves the plan: its subtasks start and the task waits for them.
+  add(TaskStatus.NeedsHuman, TaskStatus.Split);
   // Escalation and cancellation.
   for (const s of ALL_STATUSES) {
     if (STATUS_INFO[s].kind === "active") add(s, TaskStatus.NeedsHuman);

@@ -5,6 +5,7 @@ import type {
 } from "@agentq/shared";
 import {
   archiveTask,
+  TaskStatus,
   WorkflowError,
   getTasks,
   getTasksUpdatedSince,
@@ -42,6 +43,8 @@ import {
   requestAiReview,
   requestCodeChanges,
   requestPlanChanges,
+  requestReplan,
+  dependencyDeleted,
   resolveBlocker,
   skillsBundleVersion,
   submitCode,
@@ -836,6 +839,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
       }),
     request_ai_review: () => requestAiReview(taskId),
+    request_replan: () => requestReplan(taskId, { message: data.message }),
     complete: () => completeTask(taskId),
     cancel: () => cancelTask(taskId, { message: data.message }),
     unblock: () => unblockTask(taskId),
@@ -874,6 +878,10 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   // A person took the task away from its agent: stop the job still working on it.
   if (["cancel", "unblock", "resolve_blocker"].includes(action)) {
     runnerEngine.abandonTask(taskId, `task ${action.replace("_", " ")} from the portal`);
+  }
+  // Canceling a task cancels its subtasks: stop their jobs too.
+  if (result.status === TaskStatus.Canceled) {
+    for (const child of getSubtasks(taskId)) runnerEngine.abandonTask(child.id, "the parent task was canceled from the portal");
   }
   broadcastSSE("task_updated", result);
   return jsonResponse(result);
@@ -930,10 +938,12 @@ const handleTaskById = wrapHandler(async (req, url) => {
     if (hard) {
       const deleted = deleteTask(taskId);
       if (!deleted) return errorResponse("not found", 404);
+      dependencyDeleted(task);
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
     const ok = softDeleteTask(taskId);
     if (!ok) return errorResponse("not found", 404);
+    dependencyDeleted(task);
     broadcastSSE("task_updated", { id: taskId, deletedAt: new Date().toISOString() });
     return new Response(null, { status: 204, headers: corsHeaders() });
   }

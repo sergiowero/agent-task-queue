@@ -498,6 +498,14 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     await expectTransition(taskId, "request-ai-review", TaskStatus.CodeReviewRequested);
   });
 
+  it("request-replan sends a task in code review back to planning", async () => {
+    const task = await createTaskViaApi({ title: "Replan", requiresPlan: true });
+    await setStatus(task.id, TaskStatus.WaitingCodeReview);
+    const back = await expectTransition(task.id, "request-replan", TaskStatus.PlanChangesRequested, { message: "wrong approach" });
+    expect(back.conversation.at(-1)?.message).toBe("wrong approach");
+    expect((await subAction(task.id, "request-replan")).status).toBe(400);
+  });
+
   it("submit-review requires Reviewing and returns to waiting_code_review", async () => {
     const early = await subAction(taskId, "submit-review", { message: "x" });
     expect(early.status).toBe(400);
@@ -934,6 +942,15 @@ describe("DELETE /api/tasks/:id", () => {
 
     const again = await api(`/api/tasks/${task.id}?hard=true`, { method: "DELETE" });
     expect(again.status).toBe(404);
+  });
+
+  it("sends the tasks that start after a deleted one to a person", async () => {
+    const dep = await createTaskViaApi({ title: "Dependency" });
+    const dependent = createTask({ title: "Dependent", description: "", projectId: testProjectId, blockedBy: [dep.id] });
+    expect((await api(`/api/tasks/${dep.id}`, { method: "DELETE" })).status).toBe(204);
+    const blocked = await getTask(dependent.id);
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker?.reason).toContain("was deleted");
   });
 
   it("hard-deletes an API-created task together with its activity rows", async () => {

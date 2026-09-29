@@ -1161,6 +1161,18 @@ export function getSubtasks(parentId: string): Task[] {
     .map(rowToTask);
 }
 
+/** Live, unfinished tasks that start after `id` (it is in their blockedBy), oldest first. */
+export function getDependents(id: string): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT t.* FROM tasks t, json_each(COALESCE(NULLIF(t.blocked_by, ''), '[]')) dep
+       WHERE dep.value = ? AND t.deleted_at IS NULL AND t.status NOT IN ('complete', 'canceled')
+       ORDER BY t.created_at ASC`,
+    )
+    .all(id)
+    .map(rowToTask);
+}
+
 /** Live tasks; archived ones are left out unless `includeArchived` is set. */
 export function getTasks(projectId?: string, options: { includeArchived?: boolean } = {}): Task[] {
   let sql = "SELECT * FROM tasks WHERE deleted_at IS NULL";

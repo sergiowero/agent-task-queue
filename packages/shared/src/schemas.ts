@@ -139,6 +139,7 @@ export const transitionTaskSchema = z.object({
     "approve_code",
     "request_code_changes",
     "request_ai_review",
+    "request_replan",
     "complete",
     "cancel",
     "comment",

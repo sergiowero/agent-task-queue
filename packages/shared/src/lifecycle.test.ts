@@ -1,12 +1,29 @@
 import { describe, it, expect } from "bun:test";
-import { createProject, getTaskById } from "./database.js";
-import { TaskStatus, criteriaEditable } from "./catalog.js";
+import { createProject, getSubtasks, getTaskById, patchTask, softDeleteTask } from "./database.js";
+import { TaskStatus, criteriaEditable, inboxReason } from "./catalog.js";
 import { forceStatus } from "./testing.js";
-import { approvePlan, claimNextTask, createTaskForProject, editTask, submitPlan } from "./workflow.js";
+import {
+  approvePlan,
+  cancelTask,
+  claimNextTask,
+  completeTask,
+  createSubtask,
+  createTaskForProject,
+  dependencyDeleted,
+  editTask,
+  reportBlocker,
+  requestPlanChanges,
+  requestReplan,
+  resolveBlocker,
+  submitPlan,
+  submitPlanReview,
+} from "./workflow.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "lc-planner" };
+const critic = { toolName: "Critic", version: "1", model: "c", sessionId: "lc-critic" };
+const coder = { toolName: "Coder", version: "1", model: "k", sessionId: "lc-coder" };
 let n = 0;
 
 function project(extra: Record<string, unknown> = {}) {
@@ -33,7 +50,13 @@ function planSubmitted(projectId: string, over: Record<string, unknown> = {}) {
   submitPlan(task.id, {
     message: "## Plan",
     claimToken: c.claimToken,
-    validationPlan: { items: [{ criterionId: "AC1", how: "unit test", command: "bun test export" }], regressionCommands: [] },
+    validationPlan: {
+      items: [
+        { criterionId: "AC1", how: "unit test", command: "bun test export" },
+        { criterionId: "AC2", how: "manual check" },
+      ],
+      regressionCommands: [],
+    },
   });
   return getTaskById(task.id)!;
 }
@@ -86,3 +109,194 @@ describe("editing a task", () => {
     expect(criteriaEditable({ status: TaskStatus.Coding, approvedPlan: null })).toBe(false);
   });
 });
+
+/** A planning task (claimed by the planner) with two subtasks: `second` starts after `first`. */
+function splitting(projectId: string) {
+  const parent = createTaskForProject({ title: "split me", description: DESCRIPTION, projectId, requiresPlan: true });
+  const c = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
+  expect(c.task.id).toBe(parent.id);
+  const first = createSubtask(parent.id, { title: "Backend", description: DESCRIPTION, claimToken: c.claimToken });
+  const second = createSubtask(parent.id, { title: "UI", description: DESCRIPTION, claimToken: c.claimToken, blockedBy: [first.id] });
+  return { parent, first, second, claimToken: c.claimToken };
+}
+
+describe("a plan sent on by resolving its blocker", () => {
+  it("a blocking question answered with Ready for code approves the plan and releases its subtasks", () => {
+    const pid = project();
+    const { parent, first, claimToken } = splitting(pid);
+    submitPlan(parent.id, {
+      message: "## Split",
+      claimToken,
+      validationPlan: { items: [], regressionCommands: ["bun test all"] },
+      openQuestions: [{ text: "CSV or XLSX?", blocking: true }],
+    });
+    expect(getTaskById(parent.id)!.status).toBe(TaskStatus.NeedsHuman);
+
+    const resolved = resolveBlocker(parent.id, { answer: "CSV", targetStatus: TaskStatus.ReadyForCode });
+    expect(resolved.status).toBe(TaskStatus.Split);
+    expect(resolved.approvedPlan).toMatchObject({ markdown: "## Split", approvedBy: "user", validation: { regressionCommands: ["bun test all"] } });
+    expect(getSubtasks(parent.id).every((c) => !c.held)).toBe(true);
+    expect(claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!.task.id).toBe(first.id);
+  });
+
+  it("a plan-critique blocker sent to Ready for code freezes the plan too", () => {
+    const pid = project({ autonomy: 2 });
+    const task = createTaskForProject({ title: "critique me", description: DESCRIPTION, projectId: pid, requiresPlan: true });
+    const p = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    submitPlan(task.id, { message: "## Plan", claimToken: p.claimToken });
+    const r = claimNextTask({ roles: ["plan_review"], agent: critic, projectId: pid })!;
+    submitPlanReview(task.id, { verdict: "needs_human", question: "Is a new table OK?", claimToken: r.claimToken });
+    expect(getTaskById(task.id)!.blocker?.phase).toBe("plan_review");
+
+    const resolved = resolveBlocker(task.id, { answer: "yes", targetStatus: TaskStatus.ReadyForCode });
+    expect(resolved.status).toBe(TaskStatus.ReadyForCode);
+    expect(resolved.approvedPlan).toMatchObject({ markdown: "## Plan", approvedBy: "user" });
+  });
+
+  it("a revision without a validation plan clears the previous one", () => {
+    const pid = project();
+    const task = createTaskForProject({ title: "revise me", description: DESCRIPTION, projectId: pid, requiresPlan: true });
+    let c = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    submitPlan(task.id, { message: "## v1", claimToken: c.claimToken, validationPlan: { items: [], regressionCommands: ["bun test old"] } });
+    requestPlanChanges(task.id, { message: "simpler" });
+    c = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    submitPlan(task.id, { message: "## v2", claimToken: c.claimToken });
+    expect(approvePlan(task.id).approvedPlan).toMatchObject({ markdown: "## v2", validation: null });
+  });
+});
+
+describe("back to planning from coding, verification or review", () => {
+  it("a coder's blocker can send the task back to planning; the next approval replaces the plan", () => {
+    const pid = project();
+    const task = planSubmitted(pid);
+    approvePlan(task.id);
+    const { claimToken } = forceStatus(task.id, TaskStatus.Coding);
+    reportBlocker(task.id, { reason: "export.test.ts cannot exist", question: "Re-plan?", claimToken: claimToken! });
+    forceVerifyFailures(task.id, 2);
+
+    const back = resolveBlocker(task.id, { answer: "re-plan it", targetStatus: TaskStatus.PlanChangesRequested });
+    expect(back.status).toBe(TaskStatus.PlanChangesRequested);
+    expect(back.verifyFailures).toBe(0);
+    expect(back.approvedPlan?.validation?.items[0].command).toBe("bun test export");
+    expect(criteriaEditable(back)).toBe(true);
+
+    const c = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    submitPlan(task.id, {
+      message: "## v2",
+      claimToken: c.claimToken,
+      validationPlan: {
+        items: [
+          { criterionId: "AC1", how: "unit test", command: "bun test csv" },
+          { criterionId: "AC2", how: "manual check" },
+        ],
+        regressionCommands: [],
+      },
+    });
+    expect(approvePlan(task.id).approvedPlan?.validation?.items[0].command).toBe("bun test csv");
+  });
+
+  it("a person reviewing the code can send it back to planning", () => {
+    const pid = project();
+    const task = planSubmitted(pid);
+    approvePlan(task.id);
+    forceStatus(task.id, TaskStatus.WaitingCodeReview);
+    const back = requestReplan(task.id, { message: "the plan misses the API" });
+    expect(back.status).toBe(TaskStatus.PlanChangesRequested);
+    expect(back.approvedPlan).not.toBeNull();
+    expect(() => requestReplan(task.id)).toThrow("Code review");
+  });
+});
+
+describe("canceling", () => {
+  it("a split task's subtasks are canceled with it, claimed ones included", () => {
+    const pid = project();
+    const { parent, first, second } = splitting(pid);
+    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    approvePlan(parent.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(first.id);
+
+    cancelTask(parent.id);
+    expect(getTaskById(first.id)!.status).toBe(TaskStatus.Canceled);
+    expect(getTaskById(first.id)!.claimToken).toBeNull();
+    // Canceled with its parent: not sent to a person for its canceled dependency.
+    expect(getTaskById(second.id)).toMatchObject({ status: TaskStatus.Canceled, blocker: null });
+  });
+
+  it("a task being planned drops the subtasks it proposed", () => {
+    const pid = project();
+    const { parent, first, second } = splitting(pid);
+    cancelTask(parent.id);
+    expect([getTaskById(first.id)!.status, getTaskById(second.id)!.status]).toEqual([TaskStatus.Canceled, TaskStatus.Canceled]);
+  });
+
+  it("a canceled dependency sends its dependents to a person, who can drop it", () => {
+    const pid = project();
+    const { parent, first, second } = splitting(pid);
+    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    approvePlan(parent.id);
+
+    cancelTask(first.id);
+    const blocked = getTaskById(second.id)!;
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker).toMatchObject({ phase: "code", fromStatus: TaskStatus.ReadyForCode, raisedBy: "system" });
+    expect(blocked.blocker!.reason).toContain(first.id);
+    expect(inboxReason(blocked)).not.toBeNull();
+    expect(getTaskById(parent.id)!.status).toBe(TaskStatus.Split);
+
+    const resumed = resolveBlocker(second.id, { answer: "go without it", targetStatus: TaskStatus.ReadyForCode });
+    expect(resumed.blockedBy).toEqual([]);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(second.id);
+
+    // The canceled subtask does not keep the parent from completing.
+    forceStatus(second.id, TaskStatus.PrOpen);
+    completeTask(second.id);
+    expect(getTaskById(parent.id)!.status).toBe(TaskStatus.Complete);
+  });
+
+  it("a deleted dependency sends its dependents to a person too", () => {
+    const pid = project();
+    const { parent, first, second } = splitting(pid);
+    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    approvePlan(parent.id);
+    softDeleteTask(first.id);
+    dependencyDeleted(getTaskById(first.id)!);
+    expect(getTaskById(second.id)!.status).toBe(TaskStatus.NeedsHuman);
+    expect(resolveBlocker(second.id, { answer: "", targetStatus: TaskStatus.ReadyForCode }).blockedBy).toEqual([]);
+  });
+
+  it("a split task whose subtasks were all canceled goes to a person", () => {
+    const pid = project();
+    const { parent, first, second } = splitting(pid);
+    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    approvePlan(parent.id);
+    cancelTask(second.id);
+    cancelTask(first.id);
+    const blocked = getTaskById(parent.id)!;
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker).toMatchObject({ phase: "plan", fromStatus: TaskStatus.Split });
+    expect(resolveBlocker(parent.id, { answer: "", targetStatus: TaskStatus.PlanChangesRequested }).status).toBe(
+      TaskStatus.PlanChangesRequested,
+    );
+  });
+});
+
+describe("subtask dependencies", () => {
+  it("must be earlier subtasks or other live tasks, never the task being split or a canceled one", () => {
+    const pid = project();
+    const { parent, first, claimToken } = splitting(pid);
+    expect(() => createSubtask(parent.id, { title: "x", description: DESCRIPTION, claimToken, blockedBy: [parent.id] })).toThrow(
+      "would never start",
+    );
+    const gone = createTaskForProject({ title: "gone", description: DESCRIPTION, projectId: pid });
+    cancelTask(gone.id);
+    expect(() => createSubtask(parent.id, { title: "x", description: DESCRIPTION, claimToken, blockedBy: [gone.id] })).toThrow("canceled");
+    expect(createSubtask(parent.id, { title: "x", description: DESCRIPTION, claimToken, blockedBy: [first.id] }).blockedBy).toEqual([first.id]);
+  });
+});
+
+function forceVerifyFailures(taskId: string, n: number) {
+  // Failed verifications of the old plan, as the verifier would have counted them.
+  patchTask(taskId, { verifyFailures: n });
+}

@@ -7,6 +7,7 @@ import {
   getAppState,
   getClaimableTasks,
   getDbHandle,
+  getDependents,
   getSubtasks,
   getProjectById,
   getTaskById,
@@ -206,17 +207,104 @@ export function transitionTask(task: Task, to: TaskStatus, opts: TransitionOptio
   const context = opts.context?.trim();
   if (context) appendJson(task.id, "contexts", context);
   if (opts.event) addActivityEvent({ eventType: opts.event, taskId: task.id, actor: author, details: opts.details });
+  if (to === TaskStatus.Canceled) {
+    cancelSubtasks(task.id);
+    surfaceDependents(task, "was canceled");
+  }
   if (task.parentId && (to === TaskStatus.Complete || to === TaskStatus.Canceled)) completeParentIfDone(task.parentId);
   return getTaskById(task.id)!;
 }
 
-/** A split task completes once every subtask is finished (and at least one completed). */
+/** Canceling a task cancels its unfinished subtasks: the work they were split from is dropped. */
+function cancelSubtasks(parentId: string): void {
+  for (const { id } of getSubtasks(parentId)) {
+    const child = getTaskById(id)!;
+    if (!STATUS_INFO[child.status].cancelable) continue;
+    transitionTask(child, TaskStatus.Canceled, {
+      actor: "system",
+      author: "system",
+      message: "The parent task was canceled.",
+      messageType: "system",
+      event: "task_canceled",
+      release: true,
+      patch: { blocker: null },
+    });
+  }
+}
+
+/**
+ * A task that will never complete (canceled or deleted) keeps the tasks that
+ * start after it out of the queue for good. Each one waiting in the queue goes
+ * to a person instead, who drops the dependency (resolving the blocker) or
+ * cancels it. Held subtasks are left alone (a re-plan drops them), and so are
+ * the subtasks of a canceled parent (they are canceled with it).
+ */
+function surfaceDependents(dependency: Pick<Task, "id" | "title">, what: string): void {
+  for (const dependent of getDependents(dependency.id)) {
+    if (dependent.held || !canTransition(dependent.status, TaskStatus.NeedsHuman)) continue;
+    if (dependent.parentId && getTaskById(dependent.parentId)?.status === TaskStatus.Canceled) continue;
+    const blocker: Blocker = {
+      reason: `It starts after "${dependency.title}" (${dependency.id}), which ${what}: it will never complete.`,
+      question: "Send the task on without that dependency (it is dropped when you resolve), or cancel it.",
+      phase: STATUS_INFO[dependent.status].phase,
+      fromStatus: dependent.status,
+      raisedBy: "system",
+      at: new Date().toISOString(),
+    };
+    transitionTask(dependent, TaskStatus.NeedsHuman, {
+      actor: "system",
+      author: "system",
+      message: `**Blocked:** ${blocker.reason}`,
+      messageType: "system",
+      event: "task_blocked",
+      details: blocker.reason,
+      patch: { blocker },
+    });
+  }
+}
+
+/** A person deleted a task: the tasks that start after it go to a person (see surfaceDependents). */
+export function dependencyDeleted(task: Task): void {
+  withTransaction(() => surfaceDependents(task, "was deleted"));
+}
+
+/** Whether a dependency can still complete (it exists, is not deleted and not canceled). */
+function dependencyAlive(id: string): boolean {
+  const dep = getTaskById(id);
+  return !!dep && !dep.deletedAt && dep.status !== TaskStatus.Canceled;
+}
+
+/**
+ * A split task completes once every subtask is finished and at least one
+ * completed. When every one was canceled, a person decides: re-plan it, code it
+ * as one task, or cancel it.
+ */
 function completeParentIfDone(parentId: string): void {
   const parent = getTaskById(parentId);
   if (!parent || parent.status !== TaskStatus.Split) return;
   const children = getSubtasks(parentId);
   const finished = children.every((c) => c.status === TaskStatus.Complete || c.status === TaskStatus.Canceled);
-  if (!finished || !children.some((c) => c.status === TaskStatus.Complete)) return;
+  if (!finished) return;
+  if (!children.some((c) => c.status === TaskStatus.Complete)) {
+    const blocker: Blocker = {
+      reason: `All ${children.length} subtasks were canceled; nothing of this task was done.`,
+      question: "Send it back to planning (Plan changes requested), code it as one task (Ready for code), or cancel it.",
+      phase: "plan",
+      fromStatus: parent.status,
+      raisedBy: "system",
+      at: new Date().toISOString(),
+    };
+    transitionTask(parent, TaskStatus.NeedsHuman, {
+      actor: "system",
+      author: "system",
+      message: `**Blocked:** ${blocker.reason}`,
+      messageType: "system",
+      event: "task_blocked",
+      details: blocker.reason,
+      patch: { blocker },
+    });
+    return;
+  }
   transitionTask(parent, TaskStatus.Complete, {
     actor: "system",
     author: "system",
@@ -547,7 +635,13 @@ export interface ResolveBlockerInput {
   actor?: string;
 }
 
-/** A person answers a blocked task and sends it on (the answer stays in the conversation). */
+/**
+ * A person answers a blocked task and sends it on (the answer stays in the
+ * conversation). Sending a plan or plan-critique blocker on to coding approves
+ * the plan, as approvePlan does: it is frozen and the subtasks it created are
+ * released (the task then waits in `split`). Dependencies that will never
+ * complete (canceled or deleted) are dropped, so the task can be claimed again.
+ */
 export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task {
   return withTransaction(() => {
     const task = requireTask(taskId);
@@ -570,11 +664,17 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
       });
     }
-    return transitionTask(task, input.targetStatus, {
+    let to = input.targetStatus;
+    let approvedPlan: ApprovedPlan | undefined;
+    const planBlocker = task.blocker?.phase === "plan" || task.blocker?.phase === "plan_review";
+    if (planBlocker && to === TaskStatus.ReadyForCode) {
+      if (task.planSubmission) approvedPlan = freezePlan(task, actor);
+      to = planApprovedTarget(task);
+    }
+    const blockedBy = task.blockedBy.filter(dependencyAlive);
+    const updated = transitionTask(task, to, {
       actor,
-      message: answer
-        ? `**Blocker resolved** → ${statusLabel(input.targetStatus)}\n\n${answer}`
-        : `Blocker resolved → ${statusLabel(input.targetStatus)}.`,
+      message: answer ? `**Blocker resolved** → ${statusLabel(to)}\n\n${answer}` : `Blocker resolved → ${statusLabel(to)}.`,
       messageType: "user",
       event: "blocker_resolved",
       details: answer || undefined,
@@ -583,8 +683,14 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         blocker: null,
         revertStreak: 0,
         roundBaseline: { plan: task.planRound, code: task.codeRound },
+        // Back to planning: the verifications of the old plan no longer count.
+        ...(STATUS_INFO[to].phase === "plan" ? { verifyFailures: 0 } : {}),
+        ...(approvedPlan ? { approvedPlan } : {}),
+        ...(blockedBy.length !== task.blockedBy.length ? { blockedBy } : {}),
       },
     });
+    if (approvedPlan) addActivity(taskId, "plan_approved", actor, "Approved by resolving the blocker");
+    return updated;
   });
 }
 
@@ -603,6 +709,7 @@ function humanTransition(
   message: string,
   input: HumanActionInput = {},
   details?: string,
+  patch: TaskPatch = {},
 ): Task {
   return withTransaction(() => {
     const task = requireTask(taskId);
@@ -615,7 +722,7 @@ function humanTransition(
       messageType: "user",
       event,
       details,
-      patch: { revertStreak: 0 },
+      patch: { ...patch, revertStreak: 0 },
     });
   });
 }
@@ -702,6 +809,27 @@ export function requestCodeChanges(taskId: string, input: RequestCodeChangesInpu
       patch: { revertStreak: 0 },
     });
   });
+}
+
+/**
+ * A person reviewing the code sends the task back to planning (the plan itself
+ * is wrong). The approved plan stays until the planner's next one is approved;
+ * the new plan gets fresh rounds and verifications.
+ */
+export function requestReplan(taskId: string, input: HumanActionInput = {}): Task {
+  const message = input.message?.trim();
+  const task = requireTask(taskId);
+  humanHandoff(taskId, message, input.actor);
+  return humanTransition(
+    taskId,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.PlanChangesRequested,
+    "plan_changes_requested",
+    message || "Sent back to planning.",
+    input,
+    message,
+    { verifyFailures: 0, roundBaseline: { plan: task.planRound, code: task.codeRound } },
+  );
 }
 
 export function requestAiReview(taskId: string, input: HumanActionInput = {}): Task {
@@ -1061,7 +1189,8 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
         to: afterPlan({ ...task, risk }, policy, { blockingQuestions: blocking.length > 0 }),
         message: input.message,
         patch: {
-          ...(input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {}),
+          // A revision without a validation plan clears the previous one: approval freezes only this plan's.
+          validationPlan: input.validationPlan ? checkValidationPlan(task, input.validationPlan) : null,
           planSubmission: submission,
           risk,
           riskReasons: [...task.riskReasons, ...reasons.filter((r) => !task.riskReasons.includes(r))],
@@ -1165,7 +1294,7 @@ export interface CreateSubtaskInput extends ClaimAuth {
   type?: Task["type"];
   risk?: Risk;
   requiresPlan?: boolean;
-  /** Tasks (usually earlier subtasks) that must be complete first. */
+  /** Tasks (usually earlier subtasks) that must be complete first; never the parent or a canceled task. */
   blockedBy?: string[];
   author?: string;
 }
@@ -1178,10 +1307,23 @@ export function createSubtask(parentId: string, input: CreateSubtaskInput): Task
   return withTransaction(() => {
     const parent = requireClaim(parentId, TaskStatus.Planning, input);
     const siblings = new Set(getSubtasks(parentId).map((c) => c.id));
+    // The parent (and its own parents) wait for this subtask: depending on them would deadlock.
+    const ancestors = new Set<string>();
+    for (let t: Task | null = parent; t && !ancestors.has(t.id); t = t.parentId ? getTaskById(t.parentId) : null) {
+      ancestors.add(t.id);
+    }
     for (const dep of input.blockedBy ?? []) {
       const other = getTaskById(dep);
-      if (!other || (other.projectId !== parent.projectId && !siblings.has(dep))) {
+      if (!other || other.deletedAt || (other.projectId !== parent.projectId && !siblings.has(dep))) {
         throw new WorkflowError(`blockedBy: unknown task ${dep} (use ids of this project's tasks, e.g. earlier subtasks).`);
+      }
+      if (ancestors.has(dep)) {
+        throw new WorkflowError(
+          `blockedBy: ${dep} is the task being split (or its parent): it waits for its subtasks, so this one would never start. Use ids of earlier subtasks.`,
+        );
+      }
+      if (other.status === TaskStatus.Canceled) {
+        throw new WorkflowError(`blockedBy: ${dep} is canceled and will never complete.`);
       }
     }
     const author = input.author ?? parent.assignedAgent?.agentId ?? "planner";

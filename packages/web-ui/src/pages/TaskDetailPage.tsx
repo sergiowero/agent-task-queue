@@ -90,6 +90,7 @@ type TaskAction =
   | "approveCode"
   | "requestCodeChanges"
   | "requestAiReview"
+  | "requestReplan"
   | "confirmCompletion"
   | "unblock"
   | "resolveBlocker"
@@ -102,6 +103,7 @@ const ACTION_DONE: Record<TaskAction, string> = {
   approveCode: "Code approved",
   requestCodeChanges: "Code changes requested",
   requestAiReview: "AI review requested",
+  requestReplan: "Sent back to planning",
   confirmCompletion: "Marked merged",
   unblock: "Task unblocked",
   resolveBlocker: "Answer sent",
@@ -397,6 +399,15 @@ export function TaskDetailPage() {
                         onClick={() => doAction("requestAiReview")}
                       >
                         AI review
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={PlanIcon}
+                        {...busy("requestReplan")}
+                        title="The plan itself is wrong: a planner revises it (write why in the feedback box)"
+                        onClick={() => doAction("requestReplan", { message: feedback || undefined })}
+                      >
+                        Re-plan
                       </Button>
                     </>
                   )}
