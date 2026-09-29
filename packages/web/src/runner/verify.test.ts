@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import type { Task } from "@agentq/shared";
+import type { SubmitCodeInput, Task } from "@agentq/shared";
 import {
   TaskStatus,
   analyzeDiff,
@@ -18,6 +18,7 @@ import {
   getTaskById,
   patchTask,
   renderPrBody,
+  resolveBlocker,
   setAppState,
   submitCode,
   submitReview,
@@ -105,13 +106,20 @@ async function verify(projectId: string, opts: Parameters<typeof runVerification
   return getTaskById(claimed.task.id)!;
 }
 
-function recode(task: Task, worktree: string, files: Record<string, string | null> = {}) {
+function recode(task: Task, worktree: string, files: Record<string, string | null> = {}, extra: Partial<SubmitCodeInput> = {}) {
   if (Object.keys(files).length) commit(worktree, files);
   const c = claimNextTask({ roles: ["code"], agent: coder, projectId: task.projectId! })!;
   expect(c.task.id).toBe(task.id);
   setAppState("verifier_heartbeat", new Date().toISOString());
-  submitCode(task.id, { message: "again", worktree, claimToken: c.claimToken });
+  submitCode(task.id, { message: "again", worktree, claimToken: c.claimToken, ...extra });
   return getTaskById(task.id)!;
+}
+
+/** An AI review that asks for one (minor) change; returns the finding's id. */
+function requestChanges(projectId: string): string {
+  const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+  submitReview(r.task.id, { verdict: "request_changes", message: "fix", findings: [{ severity: "minor", text: "rename" }], claimToken: r.claimToken });
+  return `R${r.task.codeRound + 1}-1`;
 }
 
 beforeAll(() => {
@@ -163,6 +171,59 @@ describe.skipIf(!hasGit)("verification", () => {
     const second = await verify(pid);
     expect(second.status).toBe(TaskStatus.NeedsHuman);
     expect(second.blocker?.reason).toContain("failed 2 times");
+  });
+
+  it("a person's answer resets the failure count, and the blocker names what failed", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "console.error('boom'); process.exit(1)"` });
+    coded(pid, worktree);
+    recode(await verify(pid), worktree);
+    const blocked = await verify(pid);
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker?.reason).toContain("Failing now:");
+    expect(blocked.blocker?.reason).toContain("❌");
+    expect(blocked.blocker?.reason).toContain("process.exit(1)");
+
+    const resolved = resolveBlocker(blocked.id, { answer: "Fixed the environment, try again.", targetStatus: TaskStatus.ChangesRequested });
+    expect(resolved.verifyFailures).toBe(0);
+    recode(resolved, worktree);
+    const again = await verify(pid);
+    expect(again.status).toBe(TaskStatus.ChangesRequested);
+    recode(again, worktree);
+    expect((await verify(pid)).status).toBe(TaskStatus.NeedsHuman);
+  });
+
+  it("weakened tests a person accepts are not flagged again, and the answer resets the strikes", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const first = coded(pid, worktree);
+    const blocked = recode(first, worktree, { "src/a.ts": "export const a = 2;\n" });
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.verification?.tamperStrikes).toBe(2);
+
+    // The person rules the skip legitimate and sends the code on.
+    const resolved = resolveBlocker(blocked.id, { answer: "The skip is intended.", targetStatus: TaskStatus.CodeReviewRequested });
+    expect(resolved.verification?.tamperStrikes).toBe(0);
+    expect(resolved.verification?.acceptedTampering).toEqual(blocked.verification?.tampering);
+
+    // An unrelated change later: the accepted skip is still in the diff but not flagged.
+    const finding = requestChanges(pid);
+    const recoded = recode(resolved, worktree, { "src/a.ts": "export const a = 3;\n" }, {
+      findingResolutions: [{ id: finding, status: "fixed", resolution: "renamed" }],
+    });
+    expect(recoded.status).toBe(TaskStatus.VerifyRequested);
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(verified.verification?.tampering).toEqual([]);
+
+    // New tampering after the answer is a first strike again: back to the coder, not to a person.
+    const second = requestChanges(pid);
+    const deleted = recode(verified, worktree, { "src/a.test.ts": null }, {
+      findingResolutions: [{ id: second, status: "fixed", resolution: "done" }],
+    });
+    expect(deleted.status).toBe(TaskStatus.ChangesRequested);
+    expect(deleted.verification).toMatchObject({ tamperStrikes: 1, tampering: ["deleted test file src/a.test.ts"] });
   });
 
   it("a command that fails once and then passes is marked flaky", async () => {

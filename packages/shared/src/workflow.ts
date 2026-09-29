@@ -562,6 +562,14 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     }
     const actor = input.actor ?? "user";
     const answer = input.answer.trim();
+    // Sending weakened tests on (not back to the coder) accepts them: the diff is
+    // cumulative, so without this the same lines would be flagged on every later check.
+    const v = task.verification;
+    const accepts =
+      task.blocker?.phase === "verify" &&
+      input.targetStatus !== TaskStatus.ChangesRequested &&
+      input.targetStatus !== TaskStatus.Canceled &&
+      !!v?.tampering.length;
     if (answer) {
       addHandoff(taskId, {
         phase: "human",
@@ -578,11 +586,21 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
       messageType: "user",
       event: "blocker_resolved",
       details: answer || undefined,
-      // A person's answer gives the agents a fresh set of rounds.
+      // A person's answer gives the agents a fresh set of rounds, verifications and tamper strikes.
       patch: {
         blocker: null,
         revertStreak: 0,
         roundBaseline: { plan: task.planRound, code: task.codeRound },
+        verifyFailures: 0,
+        ...(v
+          ? {
+              verification: {
+                ...v,
+                tamperStrikes: 0,
+                acceptedTampering: accepts ? [...new Set([...(v.acceptedTampering ?? []), ...v.tampering])] : v.acceptedTampering,
+              },
+            }
+          : {}),
       },
     });
   });
@@ -1312,6 +1330,7 @@ export function unverifiedRecord(task: Task, note: string, round = task.verifica
     note,
     tampering: [],
     tamperStrikes: task.verification?.tamperStrikes ?? 0,
+    acceptedTampering: task.verification?.acceptedTampering,
     verifiedSha: null,
     at: new Date().toISOString(),
     evidenceIds: [],
@@ -1359,16 +1378,18 @@ function worktreeFacts(task: Task | null, worktree: string | null | undefined): 
 /**
  * The guards every code submission goes through, whether or not the verifier
  * runs: protected paths or a diff over maxDiffLines raise the risk to high
- * (never lower it), and the tampering found is returned for routing.
+ * (never lower it), and the tampering found (less what a person accepted) is
+ * returned for routing.
  */
 function diffGuards(task: Task, facts: DiffFacts | null) {
   const reasons = facts ? diffRiskReasons(facts.touchedProtected, facts.diffStats, profileOf(task)) : [];
   const { riskReasons, added } = mergeDiffReasons(task.riskReasons, reasons);
+  const accepted = new Set(task.verification?.acceptedTampering ?? []);
   return {
     risk: reasons.length ? maxRisk(task.risk, "high") : task.risk,
     riskReasons,
     newReasons: added,
-    tampering: [...new Set(facts?.tampering ?? [])],
+    tampering: [...new Set(facts?.tampering ?? [])].filter((t) => !accepted.has(t)),
   };
 }
 
@@ -1378,6 +1399,8 @@ interface FailedCheck {
   strikes: number;
   /** Consecutive failed verifications, this one included. */
   failures: number;
+  /** What failed this time (markdown list items), shown to the person if it escalates. */
+  failing: string[];
   actor: string;
   now: string;
 }
@@ -1410,7 +1433,7 @@ function afterFailedCheck(task: Task, policy: GatePolicy, risk: Risk, f: FailedC
     return {
       to,
       blocker: blocker(
-        `Verification failed ${f.failures} times in a row.`,
+        [`Verification failed ${f.failures} times in a row.`, ...(f.failing.length ? ["", "Failing now:", ...f.failing] : [])].join("\n"),
         "Look at the failing commands: fix the environment, adjust the plan, or send the task back to the coder.",
       ),
     };
@@ -1491,7 +1514,14 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
       if (guards.tampering.length) {
         const strikes = (task.verification?.tamperStrikes ?? 0) + 1;
         const failures = task.verifyFailures + 1;
-        const routed = afterFailedCheck(task, policy, guards.risk, { tampering: guards.tampering, strikes, failures, actor: author, now });
+        const routed = afterFailedCheck(task, policy, guards.risk, {
+          tampering: guards.tampering,
+          strikes,
+          failures,
+          failing: guards.tampering.map((t) => `- ${t}`),
+          actor: author,
+          now,
+        });
         return {
           to: routed.to,
           message: input.message,
@@ -1514,6 +1544,7 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
               note: "Tests were weakened in the submitted commits; the verification commands did not run.",
               tampering: guards.tampering,
               tamperStrikes: strikes,
+              acceptedTampering: task.verification?.acceptedTampering,
               verifiedSha: facts?.headSha ?? null,
               at: now,
               evidenceIds: [],
@@ -1636,15 +1667,15 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         : undefined;
     const passed = input.passed && tampering.length === 0 && !notVerified;
     const failures = passed ? 0 : notVerified ? task.verifyFailures : task.verifyFailures + 1;
-    const { to, blocker } =
-      passed || notVerified
-        ? { to: afterVerify({ ...task, risk, verifyFailures: failures }, policy, true), blocker: null }
-        : afterFailedCheck(task, policy, risk, { tampering, strikes, failures, actor, now });
-
     const lines = evidence.map(
       (e) =>
         `- ${e.skipped ? "⏭" : e.exitCode === 0 ? "✅" : "❌"} \`${e.command ?? e.summary}\`${e.criterionId ? ` (${e.criterionId})` : ""}${e.flaky ? " — flaky, passed on retry" : ""}${e.skipped ? ` — ${e.summary}` : ""}`,
     );
+    const failing = [...lines.filter((l) => l.includes("❌")), ...tampering.map((t) => `- ${t}`)];
+    const { to, blocker } =
+      passed || notVerified
+        ? { to: afterVerify({ ...task, risk, verifyFailures: failures }, policy, true), blocker: null }
+        : afterFailedCheck(task, policy, risk, { tampering, strikes, failures, failing, actor, now });
     const message = [
       `## Verification ${passed ? "passed" : notVerified ? "skipped" : "failed"}`,
       "",
@@ -1666,6 +1697,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       note: notVerified ?? null,
       tampering,
       tamperStrikes: strikes,
+      acceptedTampering: task.verification?.acceptedTampering,
       verifiedSha,
       at: now,
       evidenceIds: evidence.map((e) => e.id),
