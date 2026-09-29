@@ -29,7 +29,10 @@ Approve sends a **low-risk** plan straight to coding and anything riskier to a
 person; request changes goes back to the planner (at most `maxPlanRounds`, then a
 person); needs_human asks a person. A **blocking open question** in the plan
 sends the task to a person before any critique. The planner's `suggestedRisk` and
-`touchedPaths` can only raise the risk (protected paths make it high).
+`touchedPaths` can only raise the risk (protected paths make it high). A task with
+acceptance criteria needs a `validationPlan` with at least one item per criterion
+(waived ones excepted; an item with only `how` is a manual check); the portal shows it
+while the plan waits for a person, and flags criteria without a check.
 
 ## Subtasks and drafts
 
@@ -56,16 +59,26 @@ reviewer's `submit_review` verdict routes it:
 | `request_changes` | `changes_requested`, with the findings by id — or `needs_human` once the reviewer has asked for changes `maxReviewRounds` times |
 | `needs_human` | `needs_human`, with the reviewer's question |
 
-The server refuses `approve` while a `blocker` or `major` finding is open, and
-`request_changes` without at least one open finding.
+The server refuses `approve` while a `blocker` or `major` finding is open, or answered
+by the coder (`fixed`, `wontfix`) but not yet verified: the reviewer closes those with
+`verifiedFindings` (`verified`) or requests changes. It also refuses `request_changes`
+without at least one open finding. The same holds for a plan critique's `approve`.
 
 ## Verification
 
 Before any review, the built-in verifier runs the project's commands and the approved
 plan's checks in the task's worktree (see [runner.md](runner.md#verification)). Red goes
 back to the coder with the evidence; red `maxVerifyFailures` times in a row, or tests
-weakened twice, goes to a person. Touching protected paths or a large diff raises the
-risk to high. Green continues to the review gate of the level.
+weakened twice, goes to a person. A run where no command that checks the code ran is
+"not verified", never green. Touching protected paths or a large diff raises the risk
+to high. Green continues to the review gate of the level.
+
+The diff guards do not depend on the verifier: on every `submit_code` and
+`submit_verification` the server reads the worktree's diff itself. Protected paths or a
+diff over `maxDiffLines` raise the risk to high, and weakened tests send the code back
+(to a person on the second strike), with or without project commands, with the
+verifier down, and for agent verifiers. Under L3, auto-merge also checks the PR's own
+files on GitHub.
 
 ## Findings
 
@@ -73,7 +86,9 @@ Reviewers submit structured findings: `severity` (`blocker`, `major`, `minor`,
 `nit`), optional `file` and `line`, and text. Each gets an id, `R<round>-<n>`
 (for example `R2-3`), stored in the `task_findings` table and shown on the task
 page. The next review verifies earlier findings by id (`verifiedFindings`:
-`verified` or `open`); the coder answers them by id in the code message.
+`verified` or `open`); the coder answers the open code findings by id
+(`findingResolutions`: `fixed` or `wontfix` with the reason). Plan findings and
+findings already verified cannot be answered again.
 
 ## Escalations
 
@@ -91,8 +106,10 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
-answer in the conversation and resets the round limits, so the agents get a
-fresh set of rounds.
+answer in the conversation and resets the round limits, the consecutive verification
+failures and the tamper strikes, so the agents get a fresh set of rounds. Sending a
+tampering blocker on (to verification or review) accepts those test changes: they are
+not flagged again on later rounds.
 
 ## Pull requests
 

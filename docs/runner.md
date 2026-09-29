@@ -208,30 +208,55 @@ When a coder submits and the project has commands (**Projects → Edit → Comma
 **Detect from the repository**), the task goes to `verify_requested`; the verifier claims
 it, runs the commands in the task's worktree and routes it:
 
-- **Commands**, each once and in order: `install`, then the approved plan's
-  `regressionCommands` (or the project's build, typecheck, lint and test commands when
-  there is no approved plan), then the command of each acceptance criterion (from the
-  validation plan or the criterion's `verify.command`). Each runs with `CI=1` and the
-  project's `verifyTimeoutSec` (600 s); a failing command is retried once and marked
-  **flaky** when the retry passes. Logs go to `<AGENTQ_HOME>/runs/<taskId>/verify-R<n>-<i>.log`;
-  the evidence keeps the last 40 lines.
+- **Clean worktree first**: the verifier refuses a worktree with uncommitted or untracked
+  changes (`git status --porcelain`; gitignored files do not count) or checked out at
+  another commit than the submitted `headSha`. Nothing runs; the code goes back to the
+  coder with the files listed, as a failed verification. Files the commands generate must
+  be gitignored.
+- **Commands**, each once and in order: the project's commands (`install`, build,
+  typecheck, lint, test), then the approved plan's `regressionCommands` (they add to the
+  project's commands, never replace them), then the command of each acceptance criterion
+  (from the validation plan or the criterion's `verify.command`). Each runs with `CI=1`
+  and the project's `verifyTimeoutSec` (600 s) in its own process group: a timeout kills
+  the whole tree (`a && b`, npm scripts, forked test workers), not just the shell. A
+  failing command is retried once and marked **flaky** when the retry passes. Logs go to
+  `<AGENTQ_HOME>/runs/<taskId>/verify-R<round>-<attempt>-<i>.log`; the evidence keeps the
+  last 40 lines.
 - **Trust**: the project's own commands always run. Commands an agent wrote (plan items,
   criteria) run only when a person approved the plan, or when they start with an
   allowlisted prefix (common test runners plus the project's `verifyAllowlist`);
-  otherwise the evidence says "skipped".
-- **Tampering**: the diff against the merge branch is checked for deleted test files,
-  added `.skip`/`.only`/`xit`/`@pytest.mark.skip`/`t.Skip`/`@Disabled`, and lowered
-  coverage thresholds. Tampering counts as a failure; a second time goes to a person.
+  otherwise the evidence says "skipped", and the PR body lists them under the result.
+- **Nothing ran is not green**: when no command that checks the code ran (every one
+  skipped, or only `install`), the result is "not verified" with the skipped commands
+  listed, never a pass; the code goes on to review. The same holds for an agent
+  verifier's report with no command that ran.
+- **Planned tests**: a test file the approved plan's `newTests` names that does not exist
+  fails its criterion.
+- **Tampering**: the diff against the merge branch is checked for deleted test files, test
+  files moved out of the test paths, added `.skip`/`.only`/`.skipIf`/`.todo`/`xit`/
+  `@pytest.mark.skip`/`xfail`/`@unittest.skip`/`t.Skip`/`@Disabled`/`#[ignore]`, and
+  coverage thresholds lowered or removed (JS configs, `package.json`, `bunfig.toml`,
+  `pyproject.toml`, `.coveragerc`, `setup.cfg`, `tox.ini`, `pytest.ini`). The server runs
+  this check itself on every `submit_code` and `submit_verification`, so it holds without
+  commands, with the verifier down, and for agent verifiers: tampering on submit sends the
+  code straight back. Tampering counts as a failure; a second time goes to a person. When
+  the person sends it on (to verification or review, not back to the coder), those lines
+  are accepted and not flagged again.
 - **Risk**: touching `protectedPaths` or a diff larger than `maxDiffLines` raises the
-  task's risk to high (an AI approval then still goes to a person).
+  task's risk to high (an AI approval then still goes to a person). This too is checked on
+  every `submit_code` and `submit_verification`, and again on the PR's files before an L3
+  auto-merge.
 - **Routing**: green → review (AI reviewer under L1+, a person under L0); red →
   `changes_requested` with the evidence; red `maxVerifyFailures` (2) times in a row →
-  `needs_human`. A missing worktree goes to `needs_human` without counting a failure.
+  `needs_human`, with the failing commands in the blocker. A person's answer resets the
+  failure count and the tamper strikes. A missing worktree goes to `needs_human` without
+  counting a failure.
 
-Without commands, or when the verifier is not running (it writes a heartbeat; MCP-only
-setups have no web server), the code goes straight to review and the task notes that it
-was not verified. `AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows
-its status.
+Until the verifier reports, the task shows "Waiting for the verifier", never the previous
+submission's result. Without commands, or when the verifier is not running (it writes a
+heartbeat every 30 s, also while a long verification runs; MCP-only setups have no web
+server), the code goes straight to review and the task notes that it was not verified.
+`AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
 
 ## Environment variables
 

@@ -3,7 +3,7 @@ name: agentq-review
 description: Reviewing phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the agentq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.0.0"
+  version: "6.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -51,7 +51,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 1. `cd` into the worktree (see Worktree Rules) and confirm `git branch --show-current` is the task's branch (`brief.task.realBranch`, or `brief.task.recommendedBranch`) and `git rev-parse HEAD` matches `brief.task.headSha` when it is set
 2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` (each with its `verify` method), `brief.approvedPlan` (the plan and its validation plan), `brief.verification` (what the verifier ran on the submitted commit, with the failing commands), `brief.openFindings`, `brief.humanDecisions` and `brief.humanNotes`
-3. **Verify the previous round first.** For every finding in `brief.openFindings`, check the code: pass it in `verifiedFindings` as `verified` (fixed, or a `wontfix` you accept) or `open` (still not fixed). Do not re-raise it as a new finding
+3. **Verify the previous round first.** For every finding in `brief.openFindings`, check the code: pass it in `verifiedFindings` as `verified` (fixed, or a `wontfix` you accept) or `open` (still not fixed). Do not re-raise it as a new finding. A `blocker` or `major` finding the coder marked `fixed` or `wontfix` stays unverified, and blocks approve, until you pass it as `verified`
 4. Inspect the submitted work read-only: `git log --oneline {mergeBranch}..HEAD`, `git diff {mergeBranch}...HEAD`, `git show <sha>`, and read the changed files (`mergeBranch` is `brief.task.mergeBranch`). Run the project's commands (`brief.commands`) and the validation plan's commands (read-only: do not fix anything)
 5. Check every acceptance criterion yourself: the planned tests exist, test what the criterion says and pass; re-run at least the commands tied to the criteria. Check every guardrail; look for correctness bugs, missing or weakened tests, deviations from the plan and from `brief.task.steerDetails`
 6. Record each new problem as a finding with a severity (see Severity Rubric) and pick the verdict (see Verdict Rules)
@@ -73,7 +73,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 The verdict **routes the task** (under the project's autonomy level):
 
-- `approve` — no open `blocker` or `major` findings (the server refuses approve otherwise). The task moves on toward the PR; a person still sees it when the task is high risk or picked for a spot check.
+- `approve` — no `blocker` or `major` finding left open, or answered (`fixed`/`wontfix`) without your `verified` (the server refuses approve otherwise). The task moves on toward the PR; a person still sees it when the task is high risk or picked for a spot check.
 - `request_changes` — at least one open finding the coder must fix. The task goes back to the coder with your findings by id. After the project's round limit (3 by default) a person decides instead.
 - `needs_human` — you cannot decide (conflicting requirements, a product decision, a risk only a person can accept). Pass `question`: what the person must decide.
 
@@ -96,7 +96,7 @@ New findings get ids `R<round>-<n>`; the coder answers them by id in the next ro
 
 `context` is required (see Context Handoff in `agentq-claim`). For the next agent, include the verdict and, for `request_changes`, the finding ids to fix first and why; for `approve`, anything the merger or the user should know.
 
-On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` or `claimed by another agent session` means the task is no longer yours (stop); `Cannot approve with open blocker or major findings` means verify those findings or request changes; anything else, fix the arguments and call it again.
+On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` or `claimed by another agent session` means the task is no longer yours (stop); `Cannot approve with open blocker or major findings: R1-1 (fixed), ...` means pass the ones you checked in `verifiedFindings` as `verified`, or request changes; anything else, fix the arguments and call it again.
 
 ## Review Template
 
