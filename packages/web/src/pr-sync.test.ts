@@ -7,10 +7,10 @@ import { join } from "path";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 import type { AutonomyLevel, PolicySettings, ProjectProfile, PullRequest, Risk } from "@agentq/shared";
-import { TaskStatus, cancelTask, createProject, createTask, getActivityEvents, getTaskById, patchTask } from "@agentq/shared";
+import { TaskStatus, cancelTask, createProject, createTask, getActivityEvents, getFindings, getTaskById, patchTask } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import type { GhResult, GhRunner } from "./pr-sync";
-import { PrSync, ghRunner, parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
+import { PrSync, ghRunner, newChangeRequests, parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
 
 const root = mkdtempSync(join(tmpdir(), "agentq-pr-sync-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -109,6 +109,20 @@ describe("parsePullRequest", () => {
     expect(dismissed.changesEverRequestedBy).toEqual(["b"]);
   });
 
+  it("new change requests: each reviewer's latest, submitted after the task entered pr_open", () => {
+    const review = (login: string, state: string, submittedAt?: string) => ({ author: { login }, state, submittedAt });
+    const reviews = [
+      review("old", "CHANGES_REQUESTED", "2026-09-01T11:00:00Z"),
+      review("new", "CHANGES_REQUESTED", "2026-09-01T13:00:00Z"),
+      review("fixed", "CHANGES_REQUESTED", "2026-09-01T13:00:00Z"),
+      review("fixed", "APPROVED", "2026-09-01T14:00:00Z"),
+      review("undated", "CHANGES_REQUESTED"),
+    ];
+    expect(newChangeRequests(reviews, "2026-09-01T12:00:00.000Z").map((r) => r.author?.login)).toEqual(["new"]);
+    // Without a pr_open entry in the history nothing tells what is new: nothing is sent.
+    expect(newChangeRequests(reviews, null)).toEqual([]);
+  });
+
   it("finds the PR by URL, then number, then branch", () => {
     const id = prOpenTask(project());
     const task = getTaskById(id)!;
@@ -167,6 +181,31 @@ describe("syncPullRequests", () => {
     expect(task.status).toBe(TaskStatus.NeedsHuman);
     expect(task.blocker).toMatchObject({ phase: "merge", fromStatus: TaskStatus.PrOpen, raisedBy: "github" });
     expect(task.blocker!.reason).toContain("closed without merging");
+  });
+
+  it("sends the task back to the coder when a reviewer asks for changes after the PR was recorded", async () => {
+    const url = "https://github.com/org/repo/pull/75";
+    const id = prOpenTask(project(), { pr: { url, number: 75 } });
+    patchTask(id, {
+      history: [{ pre_status: TaskStatus.Merging, new_status: TaskStatus.PrOpen, timestamp: "2026-09-01T12:00:00.000Z", actor: "agent" }],
+    });
+    const reviews = [
+      { state: "CHANGES_REQUESTED", author: { login: "old" }, body: "Asked in the earlier round", submittedAt: "2026-09-01T11:00:00Z" },
+      { state: "CHANGES_REQUESTED", author: { login: "alice" }, body: "Handle the empty list", submittedAt: "2026-09-01T13:00:00Z" },
+      { state: "COMMENTED", author: { login: "alice" }, body: "see line 4", submittedAt: "2026-09-01T13:30:00Z" },
+    ];
+    const { gh } = fakeGh({ [url]: open({ url, number: 75, reviews }) });
+    const result = await syncPullRequests({ gh });
+    expect(result.sentBack).toContain(id);
+    const task = getTaskById(id)!;
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    expect(task.pullRequest).toMatchObject({ url, state: "open", changesRequestedBy: ["old", "alice"] });
+    expect(task.history.at(-1)).toMatchObject({ pre_status: TaskStatus.PrOpen, new_status: TaskStatus.ChangesRequested, actor: "github:alice" });
+    const [finding] = getFindings(id);
+    expect(finding).toMatchObject({ id: "H1-1", severity: "major", status: "open", raisedBy: "github:alice" });
+    expect(finding.text).toContain(`Changes requested on GitHub (${url})`);
+    expect(finding.text).toContain("@alice: Handle the empty list");
+    expect(finding.text).not.toContain("earlier round");
   });
 
   it("leaves the task alone when gh fails, and reports the error", async () => {

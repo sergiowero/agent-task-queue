@@ -100,6 +100,21 @@ describe("computeMetrics", () => {
     expect(computeMetrics({ projectId: pid }).humanRejectionAfterAiApproval).toBe(1);
   });
 
+  it("counts a person sending the open PR back as a rejection after an AI approval", () => {
+    const pid = randomUUID();
+    createProject({ id: pid, displayName: "Metrics PR send-back", workingDirectory: "/tmp/metrics-pr-back" });
+    seed(
+      "pr sent back",
+      [[TaskStatus.PrOpen, 1], [TaskStatus.ChangesRequested, 2]],
+      [["review_submitted", "agent", "approve"], ["pr_changes_requested", "user"]],
+      1,
+      pid,
+    );
+    const m = computeMetrics({ projectId: pid });
+    expect(m.humanRejectionAfterAiApproval).toBe(1);
+    expect(m.humanClicksPerTask).toBe(1);
+  });
+
   it("treats the old merged status as reaching the PR", () => {
     const pid = randomUUID();
     createProject({ id: pid, displayName: "Metrics legacy", workingDirectory: "/tmp/metrics-legacy" });

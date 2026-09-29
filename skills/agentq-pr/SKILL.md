@@ -3,7 +3,7 @@ name: agentq-pr
 description: Pull-request phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body AgentQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_pr, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "6.0.0"
+  version: "6.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -15,7 +15,7 @@ Follow this skill when you hold a task claimed from `approved` (the review passe
 
 | Claimed from | Phase | Action | Next status |
 |--------------|-------|--------|-------------|
-| `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body`, then `submit_pr` | `pr_open` |
+| `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body` (or update the task's open PR), then `submit_pr` | `pr_open` |
 
 The code was committed to the feature branch during coding, verified and reviewed. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; AgentQ sees the merge and completes the task on its own (under L3 with auto-merge, AgentQ merges green low-risk PRs itself — still not you).
 
@@ -73,7 +73,7 @@ rm .git/agentq-pr-body.md
 
 - Keep the body file inside `.git/` so it is never committed.
 - Capture the **PR URL** printed by `gh pr create`.
-- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate.
+- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file .git/agentq-pr-body.md`) and record it with `submit_pr` as usual.
 - `gh` missing, not authenticated or failing → `report_blocker` with the output. Never call `submit_pr` for a PR that does not exist.
 
 ### 4. Record it with `submit_pr`
@@ -110,7 +110,7 @@ Stop. You do not wait for the merge, re-run checks or poll GitHub. AgentQ syncs 
 |-----------|------|
 | Merged | `complete` (and archived if the project archives automatically) |
 | Closed without merging | `needs_human`: a person decides |
-| Changes requested by a person | Stays in `pr_open`; the person sends it back through AgentQ |
+| Changes requested by a person (on GitHub or on the task page) | `changes_requested`: the coder answers them as findings on the same branch; after verification and review the pr phase runs again and updates the same PR |
 
 ## Failure handling
 

@@ -197,13 +197,13 @@ The task lifecycle moves through these states:
 
 **reviewing** → Agent is actively reviewing the submitted code.
 
-**changes_requested** → A person or the AI reviewer (L1+) asked for changes; the findings are tracked by id. Feedback loop back to coding.
+**changes_requested** → A person or the AI reviewer (L1+) asked for changes, on the code or on the open pull request; the findings are tracked by id. Feedback loop back to coding.
 
 **approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for the pull request.
 
 **merging** → An agent with the `pr` role is pushing the branch and opening the pull request.
 
-**pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. Under L3 with `autoMerge`, a green low-risk PR merges itself. A person can also mark it merged.
+**pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. A change request on the PR (a GitHub review, or **Request changes** on the task page) sends the task back to `changes_requested` with the PR kept: the fix goes through verification and review again and the `pr` phase updates the same PR. Under L3 with `autoMerge`, a green low-risk PR merges itself. A person can also mark it merged.
 
 **complete** → All work finished. Terminal state.
 

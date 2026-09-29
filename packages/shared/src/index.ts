@@ -122,6 +122,7 @@ export {
   requestPlanChanges,
   approveCode,
   requestCodeChanges,
+  requestPrChanges,
   requestAiReview,
   completeTask,
   cancelTask,

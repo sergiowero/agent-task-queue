@@ -396,6 +396,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  requestPrChanges: (id: string, data: { message?: string; findingIds?: string[] }) =>
+    request<Task>(`/tasks/${id}/request-pr-changes`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   requestAiReview: (id: string) =>
     request<Task>(`/tasks/${id}/request-ai-review`, { method: "POST" }),
   confirmCompletion: (id: string) =>

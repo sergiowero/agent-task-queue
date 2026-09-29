@@ -16,6 +16,7 @@ import {
   updateProject,
 } from "./database.js";
 import { getEvidence, getFindings } from "./records.js";
+import { buildTaskBrief } from "./brief.js";
 import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
 import { DEFAULT_ROLES, type Role } from "./catalog.js";
@@ -28,16 +29,19 @@ import {
   completeTask,
   createTaskForProject,
   editTask,
+  pullRequestClosed,
   releaseTask,
   reportBlocker,
   requestAiReview,
   requestCodeChanges,
   requestPlanChanges,
+  requestPrChanges,
   resolveBlocker,
   revertClaim,
   submitCode,
   submitMerge,
   submitPlan,
+  submitPr,
   submitReview,
   touchLease,
   transitionTask,
@@ -480,6 +484,62 @@ describe("workflow actions", () => {
     expect(done.status).toBe(TaskStatus.Complete);
     expect(done.history.at(-1)).toMatchObject({ pre_status: TaskStatus.PrOpen, new_status: TaskStatus.Complete, actor: "user" });
     expect(() => cancelTask(task.id)).toThrow("cannot be canceled");
+  });
+
+  /** A task a person approved at L0, with its PR open. */
+  function prOpen(url: string) {
+    const { task, claimToken } = claimPlan();
+    submitPlan(task.id, { message: "p", claimToken });
+    approvePlan(task.id);
+    const coder = claimNextTask({ roles: ["code"], agent: planner, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: coder.claimToken });
+    approveCode(task.id);
+    const pr = claimNextTask({ roles: ["pr"], agent: planner, projectId })!;
+    submitPr(task.id, { prUrl: url, branch: "main", commit: "abc1234", authors: "a", claimToken: pr.claimToken });
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PrOpen);
+    return task.id;
+  }
+
+  it("a person sends the open PR back to the coder; the fix goes to the same PR", () => {
+    const url = "https://github.com/org/repo/pull/5";
+    const id = prOpen(url);
+    expect(() => requestCodeChanges(id, { message: "x" })).toThrow("Code review");
+
+    const back = requestPrChanges(id, { message: "Handle the empty list" });
+    expect(back.status).toBe(TaskStatus.ChangesRequested);
+    expect(back.pullRequest?.url).toBe(url);
+    expect(back.history.at(-1)).toMatchObject({ pre_status: TaskStatus.PrOpen, new_status: TaskStatus.ChangesRequested, actor: "user" });
+    expect(getFindings(id).find((f) => f.id === "H1-1")).toMatchObject({ severity: "major", text: "Handle the empty list", status: "open" });
+    expect(getActivityEvents({ taskId: id }).map((e) => e.eventType)).toContain("pr_changes_requested");
+    expect(() => requestPrChanges(id, { message: "again" })).toThrow("PR open");
+
+    // The coder answers the request by id, and the code goes through review again.
+    const again = claimNextTask({ roles: ["code"], agent: planner, projectId })!;
+    expect(again.task.id).toBe(id);
+    expect(() => submitCode(id, { message: "c2", worktree: "/w", claimToken: again.claimToken })).toThrow("H1-1");
+    submitCode(id, {
+      message: "c2",
+      worktree: "/w",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "guarded" }],
+      claimToken: again.claimToken,
+    });
+    expect(getTaskById(id)!.status).toBe(TaskStatus.WaitingCodeReview);
+    approveCode(id);
+
+    // The pr phase gets the open PR to update, not a new one.
+    const pr = claimNextTask({ roles: ["pr"], agent: planner, projectId })!;
+    expect(buildTaskBrief(id)!.pr).toMatchObject({ url });
+    submitPr(id, { prUrl: url, branch: "main", commit: "def5678", authors: "a", claimToken: pr.claimToken });
+    expect(getTaskById(id)!.pullRequest).toMatchObject({ url, state: "open" });
+  });
+
+  it("a PR closed on GitHub can also go back to the coder", () => {
+    const id = prOpen("https://github.com/org/repo/pull/6");
+    const closed = pullRequestClosed(id, { ...getTaskById(id)!.pullRequest!, state: "closed" });
+    expect(closed.blocker!.question).toContain("Changes requested");
+    expect(resolveBlocker(id, { answer: "Split the migration first", targetStatus: TaskStatus.ChangesRequested }).status).toBe(
+      TaskStatus.ChangesRequested,
+    );
   });
 
   it("an illegal edge is refused by the state machine", () => {

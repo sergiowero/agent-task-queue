@@ -88,7 +88,7 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
 | Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
-| The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR, or cancel) |
+| The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR or to the coder, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
 answer in the conversation and resets the round limits, so the agents get a
@@ -111,10 +111,22 @@ so a slow or stuck GitHub never holds up the server:
 |---|---|
 | Merged | `complete`, credited to the person who merged it (archived too when the project's `autoArchive` is on) |
 | Closed without merging | `needs_human` |
+| A reviewer asks for changes (their latest review, submitted since the task entered `pr_open`) | `changes_requested`: the review becomes a finding the coder answers by id |
 | Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
 
 Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
 merged** on the task page.
+
+**Changes on the PR.** The PR is where a person reviews the code, so its feedback goes
+back to the coder: a change request on GitHub (picked up by the sync) or **Request
+changes** on the task page (`POST /api/tasks/:id/request-pr-changes`, which works without
+`gh` too) moves the task from `pr_open` to `changes_requested`. The request becomes a
+finding (`H<round>-<n>`) the coder must answer by id, like a change request on the code
+review. The PR stays open and stays on the task: the coder commits on the same branch,
+the code goes through verification and review again, and the `pr` phase pushes to the
+same PR and refreshes its body instead of opening a new one. A request the coder already
+got is not sent again while it stays on GitHub; it keeps holding back the L3 auto-merge
+until the reviewer approves or dismisses it.
 
 With `autoArchive` on, every way a task completes through its PR archives it: a merge
 the sync sees, an L3 auto-merge and **Mark merged**. When archiving fails (for example

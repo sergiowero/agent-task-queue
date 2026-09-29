@@ -88,6 +88,7 @@ type TaskAction =
   | "requestPlanChanges"
   | "approveCode"
   | "requestCodeChanges"
+  | "requestPrChanges"
   | "requestAiReview"
   | "confirmCompletion"
   | "unblock"
@@ -100,6 +101,7 @@ const ACTION_DONE: Record<TaskAction, string> = {
   requestPlanChanges: "Plan changes requested",
   approveCode: "Code approved",
   requestCodeChanges: "Code changes requested",
+  requestPrChanges: "Sent back to the coder",
   requestAiReview: "AI review requested",
   confirmCompletion: "Marked merged",
   unblock: "Task unblocked",
@@ -233,6 +235,7 @@ export function TaskDetailPage() {
   const isActive = hasActions(task.status);
   const reviewingPlan = task.status === "waiting_plan_review";
   const reviewingCode = task.status === "waiting_code_review";
+  const prOpen = task.status === "pr_open";
   const conversation = task.conversation ?? [];
   const history = task.history ?? [];
 
@@ -328,11 +331,15 @@ export function TaskDetailPage() {
                     }
                   />
                 )}
-                {(reviewingPlan || reviewingCode) && (
+                {(reviewingPlan || reviewingCode || prOpen) && (
                   <Field
                     label="Feedback"
                     icon={ConversationIcon}
-                    hint="Sent to the agent when you request changes."
+                    hint={
+                      prOpen
+                        ? "Sent to the coder when you request changes; the fix comes back to the same pull request."
+                        : "Sent to the agent when you request changes."
+                    }
                     className="mt-4"
                   >
                     <Textarea
@@ -399,7 +406,7 @@ export function TaskDetailPage() {
                       </Button>
                     </>
                   )}
-                  {task.status === "pr_open" && (
+                  {prOpen && (
                     <>
                       {task.pullRequest?.url && (
                         <a
@@ -419,6 +426,18 @@ export function TaskDetailPage() {
                         onClick={() => doAction("confirmCompletion")}
                       >
                         Mark merged
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={RequestChangesIcon}
+                        {...busy("requestPrChanges")}
+                        onClick={() =>
+                          doAction("requestPrChanges", {
+                            message: feedback || "Changes requested on the pull request.",
+                          })
+                        }
+                      >
+                        Request changes
                       </Button>
                     </>
                   )}

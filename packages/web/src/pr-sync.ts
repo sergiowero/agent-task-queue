@@ -1,7 +1,8 @@
 /**
  * Keeps tasks in `pr_open` in step with GitHub through the `gh` CLI: a merged
  * PR completes the task (and archives it when the project asks), a closed one
- * goes to a person, and under L3 a green, low-risk PR can merge itself.
+ * goes to a person, a new change request sends the task back to the coder, and
+ * under L3 a green, low-risk PR can merge itself.
  */
 import type { PullRequest, Task } from "@agentq/shared";
 import {
@@ -15,6 +16,7 @@ import {
   policyFor,
   pullRequestClosed,
   recordPullRequest,
+  requestPrChanges,
 } from "@agentq/shared";
 
 export interface GhResult {
@@ -74,6 +76,8 @@ export interface SyncResult {
   checked: string[];
   merged: string[];
   closed: string[];
+  /** Tasks a new change request on GitHub sent back to the coder. */
+  sentBack: string[];
   autoMerged: string[];
   errors: { taskId: string; error: string }[];
 }
@@ -143,6 +147,33 @@ export function parsePullRequest(json: any, previous: PullRequest | null, now: s
   };
 }
 
+/** When the task last entered pr_open (history before 023 says "merged"), or null. */
+function enteredPrOpenAt(task: Task): string | null {
+  const entry = [...task.history].reverse().find((h) => h.new_status === TaskStatus.PrOpen || h.new_status === "merged");
+  return entry?.timestamp ?? null;
+}
+
+/**
+ * Reviewers whose latest deciding review asks for changes and was submitted
+ * after `since` (when the task entered pr_open): a request the coder already
+ * got in an earlier round is not sent again while it stays on GitHub.
+ */
+export function newChangeRequests(reviews: GhReview[] | null | undefined, since: string | null): (GhReview & { state: string })[] {
+  const after = since ? Date.parse(since) : NaN;
+  if (Number.isNaN(after)) return [];
+  return [...latestReviews(reviews).values()].filter((r) => r.state === "CHANGES_REQUESTED" && Date.parse(r.submittedAt ?? "") > after);
+}
+
+/** The change requests as one message for the coder (the review summaries; inline comments stay on the PR). */
+function changeRequestMessage(requests: GhReview[], pr: PullRequest): string {
+  const where = pr.url ?? (pr.number ? `#${pr.number}` : "the pull request");
+  const lines = requests.map((r) => {
+    const body = r.body?.trim();
+    return `@${r.author?.login}: ${body || "no summary; read the review comments on the PR"}`;
+  });
+  return [`Changes requested on GitHub (${where}):`, "", ...lines].join("\n");
+}
+
 /** Whether the task is still in pr_open: a person may move it while `gh` runs. */
 function stillOpen(taskId: string): boolean {
   return getTaskById(taskId)?.status === TaskStatus.PrOpen;
@@ -152,7 +183,7 @@ function stillOpen(taskId: string): boolean {
 export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {}): Promise<SyncResult> {
   const gh = opts.gh ?? defaultGh;
   const now = (opts.now ?? new Date()).toISOString();
-  const result: SyncResult = { checked: [], merged: [], closed: [], autoMerged: [], errors: [] };
+  const result: SyncResult = { checked: [], merged: [], closed: [], sentBack: [], autoMerged: [], errors: [] };
 
   for (const task of getTasks(undefined, { includeArchived: false }).filter((t) => t.status === TaskStatus.PrOpen)) {
     const project = task.projectId ? getProjectById(task.projectId) : null;
@@ -165,8 +196,11 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       continue;
     }
     let pr: PullRequest;
+    let reviews: GhReview[];
     try {
-      pr = parsePullRequest(JSON.parse(view.stdout), task.pullRequest, now);
+      const json = JSON.parse(view.stdout);
+      pr = parsePullRequest(json, task.pullRequest, now);
+      reviews = Array.isArray(json.reviews) ? json.reviews : [];
     } catch (e: any) {
       result.errors.push({ taskId: task.id, error: `unreadable gh output: ${e?.message ?? e}` });
       continue;
@@ -185,6 +219,17 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       continue;
     }
     recordPullRequest(task.id, pr);
+
+    // The person reviewing the PR asked for changes: the coder fixes them on the same branch and PR.
+    const requests = newChangeRequests(reviews, enteredPrOpenAt(task));
+    if (requests.length) {
+      requestPrChanges(task.id, {
+        message: changeRequestMessage(requests, pr),
+        actor: requests.length === 1 ? `github:${requests[0].author?.login}` : "github",
+      });
+      result.sentBack.push(task.id);
+      continue;
+    }
 
     // L3: a green, low-risk PR whose reviewers' latest reviews ask no changes merges itself.
     const policy = policyFor(task);

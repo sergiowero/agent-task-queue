@@ -181,7 +181,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "need-review",
     cancelable: true,
     editable: false,
-    hint: "The pull request is open: review and merge it on GitHub. AgentQ completes the task when it sees the merge.",
+    hint: "The pull request is open: review and merge it on GitHub (AgentQ completes the task when it sees the merge), or request changes to send it back to the coder.",
   },
   [TaskStatus.Complete]: {
     label: "Complete",
@@ -430,7 +430,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.Approved,
     TaskStatus.Canceled,
   ],
-  merge: [TaskStatus.Approved, TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.Canceled],
+  merge: [TaskStatus.Approved, TaskStatus.PrOpen, TaskStatus.ChangesRequested, TaskStatus.Complete, TaskStatus.Canceled],
 };
 
 export function resolveTargets(phase: Phase | null | undefined): TaskStatus[] {
@@ -494,8 +494,9 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.ChangesRequested,
     TaskStatus.CodeReviewRequested,
   );
-  // The PR was merged (sync or a person), or closed without merging (a person decides).
-  add(TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.NeedsHuman);
+  // The PR was merged (sync or a person), closed without merging (a person decides),
+  // or a person asked for changes on it (back to the coder, same branch and PR).
+  add(TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.NeedsHuman, TaskStatus.ChangesRequested);
   add(TaskStatus.NeedsHuman, ...resolveTargets(null));
   // Escalation and cancellation.
   for (const s of ALL_STATUSES) {
@@ -649,6 +650,7 @@ export const EVENT_TYPES: Record<string, string> = {
   pr_merged: "PR merged",
   pr_auto_merged: "PR auto-merged",
   pr_closed: "PR closed without merging",
+  pr_changes_requested: "PR changes requested",
   task_reverted: "Reverted",
   task_archived: "Archived",
   archive_failed: "Archive failed",

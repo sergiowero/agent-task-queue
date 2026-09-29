@@ -675,31 +675,53 @@ export interface RequestCodeChangesInput extends HumanActionInput {
  * id (like a reviewer's), and chosen earlier findings are reopened.
  */
 export function requestCodeChanges(taskId: string, input: RequestCodeChangesInput = {}): Task {
-  const message = input.message?.trim();
   return withTransaction(() => {
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.WaitingCodeReview) {
       throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingCodeReview)} status`);
     }
-    const actor = input.actor ?? "user";
-    for (const id of input.findingIds ?? []) {
-      const finding = getFinding(taskId, id);
-      if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
-      if (finding.status !== "open") updateFinding(taskId, id, { status: "open", reopened: true });
+    return sendBackToCoder(task, input, "code_changes_requested", "Code changes requested.");
+  });
+}
+
+/**
+ * A person asks for changes on the open pull request (on the task page, or a
+ * change request on GitHub the PR sync picked up). As with requestCodeChanges
+ * the message becomes a finding the coder answers by id. The PR stays open and
+ * stays on the task: the coder commits on the same branch, the code goes
+ * through verification and review again, and the pr phase updates the same PR.
+ */
+export function requestPrChanges(taskId: string, input: RequestCodeChangesInput = {}): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.PrOpen) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.PrOpen)} status`);
     }
-    if (message && input.asFinding !== false) {
-      addFindings(taskId, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
-    }
-    humanHandoff(taskId, message, actor);
-    const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
-    return transitionTask(task, TaskStatus.ChangesRequested, {
-      actor,
-      message: (message || "Code changes requested.") + reopened,
-      messageType: "user",
-      event: "code_changes_requested",
-      details: message,
-      patch: { revertStreak: 0 },
-    });
+    return sendBackToCoder(task, input, "pr_changes_requested", "Changes requested on the pull request.");
+  });
+}
+
+/** Reopens the chosen findings, records the message as a finding (H<round>-<n>) and sends the task to the coder. */
+function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: string, fallback: string): Task {
+  const message = input.message?.trim();
+  const actor = input.actor ?? "user";
+  for (const id of input.findingIds ?? []) {
+    const finding = getFinding(task.id, id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
+    if (finding.status !== "open") updateFinding(task.id, id, { status: "open", reopened: true });
+  }
+  if (message && input.asFinding !== false) {
+    addFindings(task.id, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
+  }
+  humanHandoff(task.id, message, actor);
+  const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
+  return transitionTask(task, TaskStatus.ChangesRequested, {
+    actor,
+    message: (message || fallback) + reopened,
+    messageType: "user",
+    event,
+    details: message,
+    patch: { revertStreak: 0 },
   });
 }
 
@@ -751,7 +773,7 @@ export function pullRequestClosed(taskId: string, pr: PullRequest): Task {
     if (task.status !== TaskStatus.PrOpen) throw new WorkflowError("The task has no open pull request.");
     const blocker: Blocker = {
       reason: `The pull request ${pr.url ?? `#${pr.number}`} was closed without merging.`,
-      question: "Reopen it and send the task back to PR open, send it back to Approved for a new PR, or cancel it.",
+      question: "Reopen it and send the task back to PR open, send it back to Approved for a new PR or to the coder (Changes requested), or cancel it.",
       phase: "merge",
       fromStatus: task.status,
       raisedBy: "github",

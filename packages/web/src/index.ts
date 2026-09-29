@@ -42,6 +42,7 @@ import {
   sweepQueue,
   requestAiReview,
   requestCodeChanges,
+  requestPrChanges,
   requestPlanChanges,
   resolveBlocker,
   skillsBundleVersion,
@@ -833,6 +834,11 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     approve_code: () => approveCode(taskId, { message: data.message }),
     request_code_changes: () =>
       requestCodeChanges(taskId, {
+        message: data.message,
+        findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
+      }),
+    request_pr_changes: () =>
+      requestPrChanges(taskId, {
         message: data.message,
         findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
       }),
