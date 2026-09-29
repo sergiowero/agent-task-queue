@@ -66,8 +66,8 @@ export const SERVER_VERSION = "0.1.0";
 const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
 export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (metadata.version of your agentq-claim skill). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
-2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills are older than ${SKILLS_VERSION} or still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your agentq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
+2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the AgentQ repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
 4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the agentq-* skill to follow:
    - refining (role refine): make the draft ready (testable criteria, type, risk, non-goals), then call submit_refinement.
@@ -280,21 +280,25 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         skillsVersion: z
           .string()
           .optional()
-          .describe("metadata.version of your agentq-claim skill; outdated skills are refused"),
+          .describe(
+            "Required: metadata.version of your agentq-claim skill. A claim without it, or with skills older than the server supports, is refused with reason skills_outdated",
+          ),
         context: contextSchema,
       },
     },
     (input) =>
       run(() => {
-        if (
-          input.skillsVersion &&
-          compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0
-        ) {
+        // Skills that send no version predate it (or are missing): the server cannot trust them either.
+        if (!input.skillsVersion || compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0) {
           return {
             success: false,
             reason: "skills_outdated",
             skillsVersion: SKILLS_VERSION,
-            message: `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}. Stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.`,
+            message: `${
+              input.skillsVersion
+                ? `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}.`
+                : "claim_task needs skillsVersion, the metadata.version of your agentq-claim skill: your AgentQ skills are missing or predate it."
+            } Stop and tell the user to run \`bun run install:all\` in the AgentQ repo (it installs the current skills, ${SKILLS_VERSION}, and the MCP registration for every tool it finds), then restart the tool.`,
           };
         }
         sweepQueue();

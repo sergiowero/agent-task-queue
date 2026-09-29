@@ -59,6 +59,7 @@ const defaultAgent = {
   version: "1.0",
   model: "test-model",
   sessionId: "session-mcp",
+  skillsVersion: skillsBundleVersion()!,
 };
 
 function parse(result: CallToolResult): any {
@@ -514,7 +515,7 @@ describe("AgentQ MCP server", () => {
 describe("AgentQ MCP agent workflow", () => {
   // Same scenarios agents go through: every role, every claim and submit transition.
   const projectId = "mcp-workflow-" + Date.now();
-  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model" };
+  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model", skillsVersion: skillsBundleVersion()! };
   let client: Client;
   let primaryClient: Client | null = null;
   let planTaskId: string;
@@ -939,7 +940,7 @@ describe("AgentQ MCP create, list and archive", () => {
 
 describe("AgentQ MCP claims and blockers", () => {
   const projectId = "mcp-claims-" + Date.now();
-  const agent = { toolName: "Claimer", version: "1.0", model: "m" };
+  const agent = { toolName: "Claimer", version: "1.0", model: "m", skillsVersion: skillsBundleVersion()! };
   const clients: Client[] = [];
 
   async function connect(opts?: Parameters<typeof createAgentQMcpServer>[0]): Promise<Client> {
@@ -1318,8 +1319,24 @@ describe("AgentQ MCP claims and blockers", () => {
     const out = parse(
       await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "s4", projectId, skillsVersion: "5.0.0" }),
     );
-    expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
-    expect(out.message).toContain("bun run install:skills");
+    expect(out).toMatchObject({ success: false, reason: "skills_outdated", skillsVersion: skillsBundleVersion() });
+    expect(out.message).toContain("bun run install:all");
+  });
+
+  it("refuses a claim without skillsVersion, e.g. from skills that still send the old single role", async () => {
+    createTask({ title: "no version", description: "d", projectId, requiresPlan: true, priority: 99 });
+    const client = await connect();
+    const { skillsVersion: _v, ...unversioned } = agent;
+    for (const args of [
+      { ...unversioned, roles: ["plan"], sessionId: "nv1", projectId },
+      { ...unversioned, role: "code", sessionId: "nv2", projectId },
+    ]) {
+      const out = parse(await call(client, "claim_task", args));
+      expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
+      expect(out.message).toContain("needs skillsVersion");
+    }
+    const ok = parse(await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "nv3", projectId }));
+    expect(ok).toMatchObject({ success: true, task: { title: "no version" } });
   });
 });
 
