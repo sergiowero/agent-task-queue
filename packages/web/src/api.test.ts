@@ -412,7 +412,7 @@ describe("workflow sub-actions (requiresPlan task)", () => {
   });
 
   it("submit-plan requires Planning status", async () => {
-    const res = await subAction(taskId, "submit-plan", { message: "too early" });
+    const res = await subAction(taskId, "submit-plan", { message: "too early", context: "c" });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("Planning");
   });
@@ -422,7 +422,8 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(claimed.assignedAgent).not.toBeNull();
     const task = await expectTransition(taskId, "submit-plan", TaskStatus.WaitingPlanReview, {
       message: "Plan v1",
-      authorName: "planner-bot",
+      author: "planner-bot",
+      context: "plan notes",
     });
     expect(task.assignedAgent).toBeNull();
     const last = task.conversation[task.conversation.length - 1];
@@ -457,6 +458,7 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     await setStatus(taskId, TaskStatus.Planning);
     await expectTransition(taskId, "submit-plan", TaskStatus.WaitingPlanReview, {
       message: "Plan v2",
+      context: "plan notes",
     });
     await expectTransition(taskId, "approve-plan", TaskStatus.ReadyForCode);
     // The approval note is persisted (the response body itself predates it).
@@ -466,7 +468,7 @@ describe("workflow sub-actions (requiresPlan task)", () => {
   });
 
   it("submit-code requires Coding status", async () => {
-    const res = await subAction(taskId, "submit-code", { message: "nope" });
+    const res = await subAction(taskId, "submit-code", { message: "nope", worktree: "/w", context: "c" });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("Coding");
   });
@@ -475,7 +477,9 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     await setStatus(taskId, TaskStatus.Coding);
     const submitted = await expectTransition(taskId, "submit-code", TaskStatus.WaitingCodeReview, {
       message: "Implemented",
-      authorName: "coder-bot",
+      worktree: "/w",
+      author: "coder-bot",
+      context: "code notes",
     });
     expect(submitted.assignedAgent).toBeNull();
     const last = submitted.conversation[submitted.conversation.length - 1];
@@ -489,12 +493,13 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(early.status).toBe(400);
 
     await setStatus(taskId, TaskStatus.Reviewing);
-    const noVerdict = await subAction(taskId, "submit-review", { message: "LGTM with nits" });
+    const noVerdict = await subAction(taskId, "submit-review", { message: "LGTM with nits", context: "c" });
     expect(noVerdict.status).toBe(400);
     expect((await noVerdict.json()).error).toContain("verdict");
     const task = await expectTransition(taskId, "submit-review", TaskStatus.WaitingCodeReview, {
       verdict: "approve",
       message: "LGTM with nits",
+      context: "review notes",
     });
     const last = task.conversation[task.conversation.length - 1];
     expect(last.messageType).toBe("review");
@@ -512,6 +517,8 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     // The change request is a finding (H1-1) the coder answers by id.
     await expectTransition(taskId, "submit-code", TaskStatus.WaitingCodeReview, {
       message: "Fixed",
+      worktree: "/w",
+      context: "fixed H1-1",
       findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "tests fixed" }],
     });
     await expectTransition(taskId, "approve-code", TaskStatus.Approved);
@@ -527,15 +534,16 @@ describe("workflow sub-actions (requiresPlan task)", () => {
 
   it("submit-merge validates required fields and -> pr_open; confirm-completion -> complete", async () => {
     await setStatus(taskId, TaskStatus.Merging);
-    const missing = await subAction(taskId, "submit-merge", { branch: "feat/x" });
+    const missing = await subAction(taskId, "submit-merge", { mergeBranch: "feat/x", context: "c" });
     expect(missing.status).toBe(400);
-    expect((await missing.json()).error).toContain("branch, commit, and authors are required");
+    expect((await missing.json()).error).toBe("commit: Required; authors: Required");
 
     const merged = await expectTransition(taskId, "submit-merge", TaskStatus.PrOpen, {
-      branch: "feat/x",
+      mergeBranch: "feat/x",
       commit: "abc123",
       authors: "dev1,dev2",
       worktree: "/tmp/wt",
+      context: "PR notes",
     });
     const last = merged.conversation[merged.conversation.length - 1];
     expect(last.messageType).toBe("merge");
@@ -581,10 +589,11 @@ describe("POST /api/tasks/:id/archive", () => {
     const task = await createTaskViaApi({ title: "Archive me", projectId: archiveProjectId });
     await setStatus(task.id, TaskStatus.Merging);
     await expectTransition(task.id, "submit-merge", TaskStatus.PrOpen, {
-      branch: "develop",
+      mergeBranch: "develop",
       commit: "abc123",
       authors: "dev1",
       message: "PR: https://github.com/org/repo/pull/7",
+      context: "PR notes",
     });
     await expectTransition(task.id, "confirm-completion", TaskStatus.Complete);
 
@@ -621,6 +630,74 @@ describe("POST /api/tasks/:id/archive", () => {
   });
 });
 
+describe("agent submissions over HTTP take the MCP tools' arguments", () => {
+  it("submit-plan passes every plan field on: a blocking question sends the task to a person, the planner's risk counts", async () => {
+    const task = await createTaskViaApi({ title: "HTTP plan", requiresPlan: true });
+    await setStatus(task.id, TaskStatus.Planning);
+    const blocked = await expectTransition(task.id, "submit-plan", TaskStatus.NeedsHuman, {
+      message: "## Plan",
+      context: "c",
+      openQuestions: [{ text: "Which DB?", blocking: true }],
+      suggestedRisk: "high",
+      touchedPaths: ["src/db.ts"],
+    });
+    expect(blocked.blocker).toMatchObject({ phase: "plan", question: "Which DB?" });
+    expect(blocked.risk).toBe("high");
+    expect(blocked.planSubmission).toMatchObject({ suggestedRisk: "high", touchedPaths: ["src/db.ts"] });
+  });
+
+  it("refuses what the MCP tool refuses, with the field that is wrong, and changes nothing", async () => {
+    const task = await createTaskViaApi({ title: "HTTP shapes" });
+    await setStatus(task.id, TaskStatus.Coding);
+    const cases: [string, Record<string, unknown>, string][] = [
+      ["submit-code", { message: "m", worktree: "/w" }, "context: Required"],
+      ["submit-code", { message: "m", worktree: "/w", context: "c", evidence: [{ kind: "command" }] }, "evidence.0.summary"],
+      ["submit-code", { message: "m", worktree: "/w", context: "c", findingResolutions: [{ id: "R1-1", status: "verified", resolution: "x" }] }, "findingResolutions.0.status"],
+    ];
+    for (const [action, body, error] of cases) {
+      const res = await subAction(task.id, action, body);
+      expect({ action, status: res.status }).toEqual({ action, status: 400 });
+      expect((await res.json()).error).toContain(error);
+    }
+    await setStatus(task.id, TaskStatus.Reviewing);
+    const critical = await subAction(task.id, "submit-review", {
+      verdict: "request_changes",
+      message: "m",
+      context: "c",
+      findings: [{ severity: "critical", text: "x" }],
+    });
+    expect(critical.status).toBe(400);
+    expect((await critical.json()).error).toContain("findings.0.severity");
+    expect((await getTask(task.id)).status).toBe(TaskStatus.Reviewing);
+  });
+
+  it("the other agent submits are there too: refinement, plan critique and verification", async () => {
+    const draft = await createTaskViaApi({ title: "HTTP draft", draft: true });
+    await setStatus(draft.id, TaskStatus.Refining);
+    await expectTransition(draft.id, "submit-refinement", TaskStatus.ReadyForCode, {
+      message: "refined",
+      acceptanceCriteria: ["exports a header row $ bun test export"],
+      context: "assumed CSV",
+    });
+
+    const planned = await createTaskViaApi({ title: "HTTP critique", requiresPlan: true });
+    await setStatus(planned.id, TaskStatus.PlanReviewing);
+    await expectTransition(planned.id, "submit-plan-review", TaskStatus.PlanChangesRequested, {
+      verdict: "request_changes",
+      message: "missing check",
+      context: "c",
+      findings: [{ severity: "major", text: "AC1 has no check" }],
+    });
+
+    const coded = await createTaskViaApi({ title: "HTTP verify" });
+    await setStatus(coded.id, TaskStatus.Verifying);
+    await expectTransition(coded.id, "submit-verification", TaskStatus.ChangesRequested, {
+      passed: false,
+      evidence: [{ kind: "command", command: "bun test", exitCode: 1, summary: "1 fail" }],
+    });
+  });
+});
+
 describe("cancel / unblock / comment", () => {
   it("cancel -> canceled and blocks further submissions", async () => {
     const task = await createTaskViaApi({ title: "Cancel me", requiresPlan: true });
@@ -628,7 +705,7 @@ describe("cancel / unblock / comment", () => {
     const canceled = await expectTransition(task.id, "cancel", TaskStatus.Canceled);
     expect(canceled.assignedAgent).toBeNull();
 
-    const res = await subAction(task.id, "submit-plan", { message: "late" });
+    const res = await subAction(task.id, "submit-plan", { message: "late", context: "c" });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("canceled");
 
@@ -700,10 +777,10 @@ describe("state changes only go through the workflow", () => {
   it("a submit must carry the claim's token", async () => {
     const task = await createTaskViaApi({ title: "Token", requiresPlan: true });
     const { claimToken } = forceStatus(task.id, TaskStatus.Planning);
-    const missing = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x" });
+    const missing = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x", context: "c" });
     expect(missing.status).toBe(400);
     expect((await missing.json()).error).toContain("claimToken");
-    const wrong = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x", claimToken: "nope" });
+    const wrong = await json(`/api/tasks/${task.id}/submit-plan`, "POST", { message: "x", context: "c", claimToken: "nope" });
     expect(wrong.status).toBe(400);
     const ok = await json(`/api/tasks/${task.id}/submit-plan`, "POST", {
       message: "x",

@@ -76,7 +76,7 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - REST API for all CRUD and workflow operations on tasks, projects, agents, and activity
 - Server-Sent Events endpoint for real-time streaming to connected clients
 - Static file serving for the pre-built web UI
-- Request validation via Zod schemas
+- Request validation via Zod schemas. The agent submissions (`POST /api/tasks/:id/submit-plan`, `submit-code`, `submit-review`, `submit-plan-review`, `submit-verification`, `submit-refinement`, `submit-pr`, `report-blocker`) take the MCP tools' arguments without `taskId` and parse them with the same schemas (`agentSubmitSchemas` in `@agentq/shared`); agents normally use MCP
 - Automatic Vite dev server management in development mode
 - CORS support for development
 

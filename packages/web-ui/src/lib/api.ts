@@ -374,14 +374,6 @@ export const api = {
     request<Task>(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteTask: (id: string) => request<void>(`/tasks/${id}?hard=true`, { method: "DELETE" }),
 
-  submitPlan: (id: string, data: any) =>
-    request<Task>(`/tasks/${id}/submit-plan`, { method: "POST", body: JSON.stringify(data) }),
-  submitCode: (id: string, data: any) =>
-    request<Task>(`/tasks/${id}/submit-code`, { method: "POST", body: JSON.stringify(data) }),
-  submitReview: (id: string, data: any) =>
-    request<Task>(`/tasks/${id}/submit-review`, { method: "POST", body: JSON.stringify(data) }),
-  submitPr: (id: string, data: any) =>
-    request<Task>(`/tasks/${id}/submit-pr`, { method: "POST", body: JSON.stringify(data) }),
   approvePlan: (id: string) => request<Task>(`/tasks/${id}/approve-plan`, { method: "POST" }),
   requestPlanChanges: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/request-plan-changes`, {
