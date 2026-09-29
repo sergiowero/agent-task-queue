@@ -51,6 +51,7 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       requiresPlan: "<true | false>",
       openQuestions: [{ text: "<question for a person>", blocking: false }],
       context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
   plan_review: (taskId) => ({
@@ -104,6 +105,9 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
       passed: "<true | false>",
       evidence: [{ kind: "command", criterionId: "<AC1>", command: "<command>", exitCode: 0, summary: "<key output lines>" }],
       tampering: ["<tests deleted, skipped or weakened, if any>"],
+      verifiedSha: "<git rev-parse HEAD>",
+      context: CONTEXT_ARG,
+      ...HANDOFF_ARGS,
     },
   }),
   review: (taskId) => ({
@@ -221,7 +225,7 @@ export function buildPrompt(input: BuildPromptInput): string {
     JSON.stringify(blockerArgs, null, 2),
     "```",
     "",
-    `\`context\` is required: a short handoff summary for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Add \`decisions\`, \`risks\` and \`next\` (lists) when you have them. Do not repeat \`message\`.`,
+    `${phase === "verify" ? "`context` is optional for a verification but expected" : "`context` is required"}: a short handoff summary for the agent that picks up the next phase. Include ${CONTEXT_HINT[phase]}. Add \`decisions\`, \`risks\` and \`next\` (lists) when you have them. Do not repeat \`message\`.`,
     "",
     "Rules:",
     "- You are running headless. Never ask for permission or confirmation; decide and proceed.",

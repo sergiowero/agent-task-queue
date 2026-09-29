@@ -1403,7 +1403,7 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
   );
 }
 
-export interface SubmitVerificationInput extends ClaimAuth {
+export interface SubmitVerificationInput extends ClaimAuth, Pick<SubmitInput, "context" | "decisions" | "risks" | "next"> {
   passed: boolean;
   evidence: NewEvidence[];
   /** Test tampering the verifier found (deleted tests, .skip/.only, lowered thresholds). */
@@ -1531,6 +1531,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       event: passed ? "verification_passed" : "verification_failed",
       details: passed ? undefined : lines.filter((l) => l.includes("❌")).join("\n") || tampering.join("; "),
       release: true,
+      context: input.context,
       patch: {
         acceptanceCriteria: criteria,
         verifyFailures: failures,
@@ -1543,6 +1544,18 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       },
     });
     if (newReasons.length) addActivity(taskId, "risk_raised", actor, newReasons.join("; "));
+    // An agent verifier's handoff reaches the coder's brief (the reviewer never reads handoffs).
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: "verify",
+        round,
+        agentId: actor,
+        summary: input.context,
+        decisions: input.decisions,
+        risks: input.risks,
+        next: input.next,
+      });
+    }
     return {
       task: updated,
       previousStatus: task.status,

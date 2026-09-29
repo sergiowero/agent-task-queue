@@ -81,7 +81,7 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (ski
    - merging (role pr): push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; the brief shows the notes earlier agents left (except in the independent checks). context is optional on claim_task. Write every message in Markdown.
+7. Every submit_* call takes context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored separately from message, plus optional decisions, risks and next lists; the brief shows the latest handoff of each phase (except in the independent checks). context is required on every submit_* but submit_verification, where it is optional (the built-in verifier sends none) and expected from agents; it is optional on claim_task. Write every message in Markdown.
 8. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
@@ -443,6 +443,10 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             tampering: input.tampering,
             verifiedSha: input.verifiedSha,
             author: input.author,
+            context: input.context,
+            decisions: input.decisions,
+            risks: input.risks,
+            next: input.next,
             ...auth(input),
           }),
         ),
@@ -547,6 +551,9 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             message: input.message,
             author: input.author,
             context: input.context,
+            decisions: input.decisions,
+            risks: input.risks,
+            next: input.next,
             ...auth(input),
           }),
         ),

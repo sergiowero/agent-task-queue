@@ -1144,6 +1144,62 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(getTaskById(created.task.id)!.validationPlan?.regressionCommands).toEqual(["bun test"]);
   });
 
+  it("submit_verification and submit_refinement record a handoff with its lists; the coder's brief shows the verifier's", async () => {
+    const draft = parse(
+      await call(await connect(), "create_task", { title: "refine me", projectId, description: "rough", draft: true, priority: 97 }),
+    ).task;
+    const refiner = await connect();
+    expect(parse(await call(refiner, "claim_task", { ...agent, roles: ["refine"], sessionId: "rf1", projectId })).task.id).toBe(draft.id);
+    parse(
+      await call(refiner, "submit_refinement", {
+        taskId: draft.id,
+        message: "refined",
+        acceptanceCriteria: ["exports a header row $ bun test export"],
+        context: "assumed CSV",
+        decisions: ["CSV, not XLSX"],
+        risks: ["large accounts"],
+        next: ["check the export module"],
+      }),
+    );
+    const refined = parse(await call(refiner, "get_task", { taskId: draft.id }));
+    expect(refined.task.handoffs.at(-1)).toMatchObject({
+      phase: "refine",
+      summary: "assumed CSV",
+      decisions: ["CSV, not XLSX"],
+      risks: ["large accounts"],
+      next: ["check the export module"],
+    });
+    updateTask(draft.id, { status: TaskStatus.Canceled }); // out of the coders' way below
+
+    const task = createTask({ title: "verify me", description: "d", projectId, priority: 96 });
+    updateTask(task.id, { status: TaskStatus.VerifyRequested, worktreePath: "/w" });
+    const verifier = await connect();
+    const claimed = parse(await call(verifier, "claim_task", { ...agent, roles: ["verify"], sessionId: "v1", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const out = parse(
+      await call(verifier, "submit_verification", {
+        taskId: task.id,
+        passed: false,
+        evidence: [{ kind: "command", command: "bun test", exitCode: 1, summary: "1 fail" }],
+        context: "bun test fails in src/a.test.ts: the code, not the environment",
+        next: ["run bun test src/a.test.ts"],
+      }),
+    );
+    expect(out.newStatus).toBe(TaskStatus.ChangesRequested);
+    const coder = await connect();
+    const coding = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "vc1", projectId }));
+    expect(coding.task.id).toBe(task.id);
+    expect(coding.brief.handoffs).toContainEqual(
+      expect.objectContaining({
+        phase: "verify",
+        round: 1,
+        summary: "bun test fails in src/a.test.ts: the code, not the environment",
+        next: ["run bun test src/a.test.ts"],
+      }),
+    );
+    expect(coding.brief.verification.failing).toEqual([{ command: "bun test", exitCode: 1, summary: "1 fail" }]);
+  });
+
   it("submit_verification is exposed for verifier agents", async () => {
     const { tools } = await (await connect()).listTools();
     const tool = tools.find((t) => t.name === "submit_verification")!;

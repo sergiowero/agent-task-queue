@@ -847,6 +847,7 @@ describe("buildPrompt", () => {
       [TaskStatus.PlanReviewing, "submit_plan_review", ["verdict", "message"]],
       [TaskStatus.Planning, "submit_plan", ["message"]],
       [TaskStatus.Coding, "submit_code", ["message", "worktree"]],
+      [TaskStatus.Verifying, "submit_verification", ["passed", "evidence"]],
       [TaskStatus.Reviewing, "submit_review", ["message"]],
       [TaskStatus.Merging, "submit_pr", ["prUrl", "mergeBranch", "commit", "authors", "message"]],
     ];
@@ -856,8 +857,10 @@ describe("buildPrompt", () => {
       expect(prompt).toContain(`working the **${roleOf(status)}** role`);
       expect(prompt).toContain(`call the \`${tool}\` tool of the \`agentq\` MCP server`);
       expect(prompt).toContain(`"taskId": "${task.id}"`);
-      for (const arg of [...args, "context"]) expect(prompt).toContain(`"${arg}":`);
-      expect(prompt).toContain("`context` is required");
+      for (const arg of [...args, "context", "decisions", "risks", "next"]) expect(prompt).toContain(`"${arg}":`);
+      expect(prompt).toContain(
+        status === TaskStatus.Verifying ? "`context` is optional for a verification but expected" : "`context` is required",
+      );
       expect(prompt).toContain("Do **NOT** call `claim_task`");
       expect(prompt).toContain("mcp__agentq__<tool>");
       expect(prompt).toContain("`report_blocker`");

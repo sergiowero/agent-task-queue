@@ -303,6 +303,15 @@ export const submitVerificationFields = {
   tampering: z.array(z.string()).default([]).describe("Tests deleted, skipped or weakened"),
   verifiedSha: z.string().optional().describe("Commit that was verified"),
   author: authorSchema,
+  // Optional here only: the built-in verifier reports without a handoff. Agents pass one.
+  context: submitContextSchema
+    .optional()
+    .describe(
+      "Handoff notes for the coder (expected from agents): which commands failed and why, and whether the failure is in the code or the environment",
+    ),
+  decisions: handoffFields.decisions,
+  risks: handoffFields.risks,
+  next: handoffFields.next,
 };
 
 export const submitRefinementFields = {
@@ -315,7 +324,7 @@ export const submitRefinementFields = {
   openQuestions: z.array(openQuestionSchema).optional(),
   message: z.string().min(1).describe("What you changed and why (markdown)"),
   author: authorSchema,
-  context: submitContextSchema,
+  ...handoffFields,
 };
 
 export const submitPrFields = {
