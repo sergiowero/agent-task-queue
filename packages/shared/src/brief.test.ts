@@ -187,6 +187,20 @@ describe("Definition of Ready", () => {
     ]);
   });
 
+  it("flags a task nothing can verify: no project commands and no criterion command", () => {
+    const manualOnly = { description: "x".repeat(40), acceptanceCriteria: [{ text: "looks right", verify: { kind: "manual" as const } }] };
+    const nothing =
+      'Nothing can verify this task: the project has no commands and no criterion has one (Projects → Edit → Commands, or "text $ command").';
+    expect(checkDefinitionOfReady({ ...manualOnly, hasProjectCommands: false })).toEqual([nothing]);
+    expect(checkDefinitionOfReady({ ...manualOnly, hasProjectCommands: true })).toEqual([]);
+    expect(checkDefinitionOfReady({ ...manualOnly, acceptanceCriteria: ["works $ bun test"], hasProjectCommands: false })).toEqual([]);
+    // Through the workflow, the project's commands decide it.
+    const bare = project({ commands: {} });
+    const task = createTaskForProject({ title: "m", description: "x".repeat(40), projectId: bare, acceptanceCriteria: manualOnly.acceptanceCriteria });
+    expect(task.dorIssues).toEqual([nothing]);
+    expect(createTaskForProject({ title: "m", description: "x".repeat(40), projectId: project(), acceptanceCriteria: manualOnly.acceptanceCriteria }).dorIssues).toEqual([]);
+  });
+
   it("warn stores the issues; enforce refuses the task; off skips the check", () => {
     const warn = project();
     expect(createTaskForProject({ title: "w", description: "short", projectId: warn }).dorIssues.length).toBeGreaterThan(0);

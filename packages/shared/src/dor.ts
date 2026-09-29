@@ -12,6 +12,12 @@ export interface ReadinessInput {
   type?: TaskType;
   risk?: Risk;
   requiresPlan?: boolean;
+  /**
+   * Whether the task's project has commands (test, lint...) the verifier runs.
+   * Without them, and without a criterion command, nothing can verify the task.
+   * Left out: not checked.
+   */
+  hasProjectCommands?: boolean;
 }
 
 export function checkDefinitionOfReady(input: ReadinessInput): string[] {
@@ -27,6 +33,12 @@ export function checkDefinitionOfReady(input: ReadinessInput): string[] {
   );
   if (criteria.length > 0 && !checkable) {
     issues.push("No criterion says how it is verified: add a command (\"text $ command\") or a test for at least one.");
+  }
+  const criterionCommand = criteria.some((c) => (typeof c === "string" ? c.includes(" $ ") : !!c.verify?.command));
+  if (input.hasProjectCommands === false && !criterionCommand) {
+    issues.push(
+      "Nothing can verify this task: the project has no commands and no criterion has one (Projects → Edit → Commands, or \"text $ command\").",
+    );
   }
   if (input.risk === "high" && !input.requiresPlan) {
     issues.push("High-risk tasks should require a plan, so a person approves the approach first.");

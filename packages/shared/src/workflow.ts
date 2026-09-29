@@ -39,7 +39,7 @@ import {
 } from "./records.js";
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
-import { checkDefinitionOfReady } from "./dor.js";
+import { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 
 /** A pull request URL on GitHub, GitLab or Bitbucket. */
 const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/;
@@ -335,6 +335,12 @@ function requireTask(taskId: string): Task {
 /** The autonomy policy that applies to a task (its override, else its project's level). */
 export function policyFor(task: Task): GatePolicy {
   return resolvePolicy(task.projectId ? getProjectById(task.projectId) : null, task);
+}
+
+/** The Definition of Ready of a task in its project, whose commands can verify it too. */
+function readinessIssues(input: ReadinessInput, projectId: string | null | undefined): string[] {
+  const profile = resolveProfile(projectId ? getProjectById(projectId)?.profile : null);
+  return checkDefinitionOfReady({ ...input, hasProjectCommands: profileCommands(profile).length > 0 });
 }
 
 function minutesFromNow(minutes: number): string {
@@ -978,7 +984,7 @@ function editTaskFields(taskId: string, edit: TaskEdit): Task {
   const project = task.projectId ? getProjectById(task.projectId) : null;
   if (resolveProfile(project?.profile).dorMode !== "off") {
     const next = { ...task, ...patch };
-    patch.dorIssues = checkDefinitionOfReady({ ...next, acceptanceCriteria: next.acceptanceCriteria });
+    patch.dorIssues = readinessIssues({ ...next, acceptanceCriteria: next.acceptanceCriteria }, next.projectId);
   }
   const updated = patchTask(taskId, patch)!;
   const to =
@@ -1022,7 +1028,7 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
     updateProject(project.id, { defaultMergeBranch: mergeBranch });
   }
   const mode = resolveProfile(project.profile).dorMode;
-  const issues = mode === "off" ? [] : checkDefinitionOfReady(input);
+  const issues = mode === "off" ? [] : readinessIssues(input, project.id);
   if (mode === "enforce" && issues.length && !input.draft) {
     throw new WorkflowError(`The task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
   }
@@ -1366,7 +1372,15 @@ export function createSubtask(parentId: string, input: CreateSubtaskInput): Task
       blockedBy: input.blockedBy ?? [],
       held: true,
     });
+    // Subtasks meet the project's Definition of Ready too (enforce: the insert is rolled back).
+    const mode = resolveProfile(getProjectById(parent.projectId!)?.profile).dorMode;
+    const issues = mode === "off" ? [] : readinessIssues(child, child.projectId);
+    if (mode === "enforce" && issues.length) {
+      throw new WorkflowError(`The subtask is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
+    }
+    if (issues.length) patchTask(child.id, { dorIssues: issues });
     addActivity(child.id, "task_created", author, `Subtask of ${parentId}`);
+    if (issues.length) addActivity(child.id, "dor_warning", author, issues.join("\n"));
     addActivity(parentId, "subtask_created", author, `${child.title} (${child.id})`);
     touchTask(parentId);
     return getTaskById(child.id)!;
@@ -1401,8 +1415,15 @@ export function submitRefinement(taskId: string, input: SubmitRefinementInput): 
         risk: refinedRisk(task, input.type ?? task.type, input.risk),
         requiresPlan: input.requiresPlan ?? task.requiresPlan,
       };
-      const issues = checkDefinitionOfReady(next);
+      const mode = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null).dorMode;
+      const issues = mode === "off" ? [] : readinessIssues(next, task.projectId);
       const blocking = (input.openQuestions ?? []).filter((q) => q.blocking && q.text.trim());
+      // Under enforce the refiner fixes what is missing, or asks a person (a blocking question).
+      if (mode === "enforce" && issues.length && !blocking.length) {
+        throw new WorkflowError(
+          `The refined task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}\nFix these, or ask a blocking question.`,
+        );
+      }
       const blocker: Blocker | null = blocking.length
         ? {
             reason: "The draft has questions only a person can answer.",
@@ -1443,12 +1464,13 @@ export function promoteDraft(taskId: string, input: HumanActionInput = {}): Task
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.Draft) throw new WorkflowError("Only a draft can be promoted.");
     const to = task.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode;
+    const mode = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null).dorMode;
     return transitionTask(task, to, {
       actor: input.actor ?? "user",
       message: input.message?.trim() || `Draft promoted to ${statusLabel(to)}.`,
       messageType: "user",
       event: "draft_promoted",
-      patch: { dorIssues: checkDefinitionOfReady(task) },
+      patch: { dorIssues: mode === "off" ? [] : readinessIssues(task, task.projectId) },
     });
   });
 }

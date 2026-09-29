@@ -196,6 +196,31 @@ describe("drafts", () => {
     expect(promoteDraft(manual.id).status).toBe(TaskStatus.ReadyForCode);
   });
 
+  it("an enforced Definition of Ready applies to refined drafts and to subtasks", () => {
+    const pid = project({ profile: { dorMode: "enforce", commands: { test: "bun test" } } });
+    const draft = createTaskForProject({ title: "rough", description: "x", projectId: pid, draft: true });
+    const c = claimNextTask({ roles: ["refine"], agent: planner, projectId: pid })!;
+    expect(() => submitRefinement(draft.id, { message: "m", claimToken: c.claimToken, description: "too short" })).toThrow("not ready");
+    expect(getTaskById(draft.id)!.status).toBe(TaskStatus.Refining);
+    // A blocking question goes to a person instead.
+    const asked = submitRefinement(draft.id, { message: "m", claimToken: c.claimToken, openQuestions: [{ text: "What data?", blocking: true }] });
+    expect(asked.newStatus).toBe(TaskStatus.NeedsHuman);
+
+    const parent = createTaskForProject({ title: "big", description: DESCRIPTION, projectId: pid, requiresPlan: true, acceptanceCriteria: ["works $ bun test"] });
+    const p = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    expect(p.task.id).toBe(parent.id);
+    expect(() => createSubtask(parent.id, { title: "x", description: "short", claimToken: p.claimToken })).toThrow("subtask is not ready");
+    expect(getSubtasks(parent.id)).toEqual([]);
+    const ok = createSubtask(parent.id, { title: "UI", description: DESCRIPTION, acceptanceCriteria: ["shows it $ bun test ui"], claimToken: p.claimToken });
+    expect(ok.dorIssues).toEqual([]);
+  });
+
+  it("a subtask under warn keeps its readiness issues", () => {
+    const pid = project();
+    const { task: parent, claimToken } = planned(pid);
+    expect(createSubtask(parent.id, { title: "x", description: "short", claimToken }).dorIssues.length).toBeGreaterThan(0);
+  });
+
   it("drafts skip the enforced Definition of Ready (they exist to be refined)", () => {
     const pid = project({ profile: { dorMode: "enforce" } });
     expect(() => createTaskForProject({ title: "x", description: "x", projectId: pid })).toThrow("not ready");
