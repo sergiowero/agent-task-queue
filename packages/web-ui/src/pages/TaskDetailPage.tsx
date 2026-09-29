@@ -60,6 +60,7 @@ import { DecisionPanel } from "../components/DecisionPanel";
 import {
   AUTONOMY_LEVELS,
   RISKS,
+  REQUIRES_PLAN_EDITABLE,
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
@@ -808,9 +809,29 @@ export function TaskDetailPage() {
                   </PropertyRow>
                 )}
                 <PropertyRow icon={PlanIcon} label="Requires plan">
-                  <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
-                    {task.requiresPlan ? "Yes" : "No"}
-                  </Badge>
+                  {REQUIRES_PLAN_EDITABLE.includes(task.status as TaskStatus) ? (
+                    // Before work starts; changing it moves the task between planning and coding.
+                    <Select
+                      selectSize="sm"
+                      aria-label="Requires plan"
+                      wrapperClassName="w-32"
+                      value={task.requiresPlan ? "yes" : "no"}
+                      disabled={updateMutation.isPending}
+                      onChange={(e) =>
+                        updateMutation.mutate(
+                          { requiresPlan: e.target.value === "yes" },
+                          { onError: (err) => toast.error(err.message) },
+                        )
+                      }
+                    >
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </Select>
+                  ) : (
+                    <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
+                      {task.requiresPlan ? "Yes" : "No"}
+                    </Badge>
+                  )}
                 </PropertyRow>
                 <PropertyRow icon={WorktreeIcon} label="Worktree">
                   {task.worktreePath ? (

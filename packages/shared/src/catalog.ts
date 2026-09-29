@@ -308,6 +308,14 @@ export function criteriaEditable(task: {
   return phase === "refine" || phase === "plan" || phase === "plan_review";
 }
 
+/**
+ * Where a person may change whether a task requires a plan: before any agent
+ * started it. Turning it on sends a ready-for-code task to planning (unless it
+ * already has an approved plan); turning it off sends a task still waiting for
+ * its first plan to coding.
+ */
+export const REQUIRES_PLAN_EDITABLE: readonly TaskStatus[] = [TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode];
+
 // ─── Roles and claims ─────────────────────────────────────────────────
 
 /**
@@ -521,6 +529,9 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.CodeReviewRequested,
     TaskStatus.PlanChangesRequested,
   );
+  // A person changed requiresPlan before any agent started the task.
+  add(TaskStatus.ReadyForCode, TaskStatus.PlanRequested);
+  add(TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
   // A task it starts after was canceled or deleted: a person decides (drop it, or cancel).
   add(TaskStatus.ReadyForCode, TaskStatus.NeedsHuman);
   add(TaskStatus.PlanRequested, TaskStatus.NeedsHuman);

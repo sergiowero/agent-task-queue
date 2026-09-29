@@ -114,6 +114,8 @@ export const updateTaskSchema = z
     acceptanceCriteria: criteriaInputSchema.optional(),
     priority: z.number().int().min(0).optional(),
     recommendedBranch: z.string().max(200).optional(),
+    /** Only before work starts (draft, plan requested, ready for code); it can move the task between the last two. */
+    requiresPlan: z.boolean().optional(),
     realBranch: z.string().max(200).nullable().optional(),
     mergeBranch: z.string().max(200).optional(),
     projectId: z.string().uuid().nullable().optional(),

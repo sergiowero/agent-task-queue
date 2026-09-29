@@ -17,6 +17,7 @@ import {
   resolveBlocker,
   submitPlan,
   submitPlanReview,
+  submitRefinement,
 } from "./workflow.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
@@ -293,6 +294,39 @@ describe("subtask dependencies", () => {
     cancelTask(gone.id);
     expect(() => createSubtask(parent.id, { title: "x", description: DESCRIPTION, claimToken, blockedBy: [gone.id] })).toThrow("canceled");
     expect(createSubtask(parent.id, { title: "x", description: DESCRIPTION, claimToken, blockedBy: [first.id] }).blockedBy).toEqual([first.id]);
+  });
+});
+
+describe("requiresPlan", () => {
+  it("the refiner's choice is stored, so a later edit does not bring the DoR warning back", () => {
+    const pid = project();
+    const draft = createTaskForProject({ title: "rough", description: "export", projectId: pid, draft: true });
+    const c = claimNextTask({ roles: ["refine"], agent: planner, projectId: pid })!;
+    const out = submitRefinement(draft.id, {
+      message: "ready",
+      claimToken: c.claimToken,
+      description: DESCRIPTION,
+      acceptanceCriteria: ["header row $ bun test export"],
+      risk: "high",
+      requiresPlan: true,
+    });
+    expect(out.task).toMatchObject({ status: TaskStatus.PlanRequested, requiresPlan: true, dorIssues: [] });
+    expect(editTask(draft.id, { title: "export as CSV" }).dorIssues).toEqual([]);
+  });
+
+  it("a person turns it on or off before work starts, which moves the task", () => {
+    const pid = project();
+    const task = createTaskForProject({ title: "t", description: DESCRIPTION, projectId: pid, risk: "high" });
+    expect(task.dorIssues.join(" ")).toContain("require a plan");
+    const planned = editTask(task.id, { requiresPlan: true });
+    expect(planned).toMatchObject({ status: TaskStatus.PlanRequested, requiresPlan: true });
+    expect(planned.dorIssues.join(" ")).not.toContain("require a plan");
+    expect(editTask(task.id, { requiresPlan: false }).status).toBe(TaskStatus.ReadyForCode);
+    // Unchanged: no move, and any status may send it.
+    expect(editTask(task.id, { requiresPlan: false }).status).toBe(TaskStatus.ReadyForCode);
+    forceStatus(task.id, TaskStatus.WaitingCodeReview);
+    expect(() => editTask(task.id, { requiresPlan: true })).toThrow("only before work starts");
+    expect(editTask(task.id, { requiresPlan: false, title: "same" }).title).toBe("same");
   });
 });
 

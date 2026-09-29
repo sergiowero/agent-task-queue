@@ -386,6 +386,14 @@ describe("GET/PUT /api/tasks/:id", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("PUT requiresPlan before work starts moves the task to planning", async () => {
+    const created = await createTaskViaApi({ title: "Plan it later" });
+    expect(created.status).toBe(TaskStatus.ReadyForCode);
+    const res = await json(`/api/tasks/${created.id}`, "PUT", { requiresPlan: true });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Task).toMatchObject({ requiresPlan: true, status: TaskStatus.PlanRequested });
+  });
+
   it("PUT refuses edits while an agent holds the task (409) and allows them once it is back in the queue", async () => {
     const created = await createTaskViaApi({ title: "Held", risk: "high" });
     await setStatus(created.id, TaskStatus.Reviewing);

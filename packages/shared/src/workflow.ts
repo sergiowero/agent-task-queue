@@ -48,6 +48,7 @@ import {
   BLOCKING_SEVERITIES,
   CLAIM_RULES,
   CLAIMABLE_FROM,
+  REQUIRES_PLAN_EDITABLE,
   REVERT_FALLBACK,
   STATUS_INFO,
   TASK_TYPES,
@@ -942,11 +943,16 @@ export function unblockTask(taskId: string, input: HumanActionInput = {}): Task 
 export type TaskEdit = Omit<TaskPatch, "acceptanceCriteria"> & { acceptanceCriteria?: CriterionInput[] };
 
 /**
- * A person edits a task's fields (never its status, claim or history), only in
- * the statuses STATUS_INFO marks editable: never while an agent holds it. The
- * criteria are frozen with an approved plan (see criteriaEditable).
+ * A person edits a task's fields (never its claim or history), only in the
+ * statuses STATUS_INFO marks editable: never while an agent holds it. The
+ * criteria are frozen with an approved plan (see criteriaEditable). Changing
+ * requiresPlan before work starts routes the task (see REQUIRES_PLAN_EDITABLE).
  */
 export function editTask(taskId: string, edit: TaskEdit): Task {
+  return withTransaction(() => editTaskFields(taskId, edit));
+}
+
+function editTaskFields(taskId: string, edit: TaskEdit): Task {
   const task = requireTask(taskId);
   if (!STATUS_INFO[task.status].editable) {
     throw new WorkflowError(
@@ -961,6 +967,12 @@ export function editTask(taskId: string, edit: TaskEdit): Task {
       "The acceptance criteria are frozen with the approved plan: send the task back to planning to change them.",
     );
   }
+  const planChanged = rest.requiresPlan !== undefined && rest.requiresPlan !== task.requiresPlan;
+  if (planChanged && !REQUIRES_PLAN_EDITABLE.includes(task.status)) {
+    throw new WorkflowError(
+      `Whether a task requires a plan can change only before work starts (${REQUIRES_PLAN_EDITABLE.map(statusLabel).join(", ")}).`,
+    );
+  }
   const patch: TaskPatch = { ...rest };
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
   const project = task.projectId ? getProjectById(task.projectId) : null;
@@ -968,7 +980,19 @@ export function editTask(taskId: string, edit: TaskEdit): Task {
     const next = { ...task, ...patch };
     patch.dorIssues = checkDefinitionOfReady({ ...next, acceptanceCriteria: next.acceptanceCriteria });
   }
-  return patchTask(taskId, patch)!;
+  const updated = patchTask(taskId, patch)!;
+  const to =
+    planChanged && updated.requiresPlan && task.status === TaskStatus.ReadyForCode && !task.approvedPlan
+      ? TaskStatus.PlanRequested
+      : planChanged && !updated.requiresPlan && task.status === TaskStatus.PlanRequested
+        ? TaskStatus.ReadyForCode
+        : null;
+  if (!to) return updated;
+  return transitionTask(updated, to, {
+    actor: "user",
+    message: updated.requiresPlan ? "Requires a plan now: a planner writes one first." : "No longer requires a plan: ready for code.",
+    messageType: "user",
+  });
 }
 
 export function addUserComment(taskId: string, input: { message: string; author?: string }): Task {
@@ -1397,6 +1421,7 @@ export function submitRefinement(taskId: string, input: SubmitRefinementInput): 
           acceptanceCriteria: criteria,
           type: next.type,
           risk: next.risk,
+          requiresPlan: next.requiresPlan,
           nonGoals: input.nonGoals ?? task.nonGoals,
           dorIssues: issues,
           ...(blocker ? { blocker } : {}),

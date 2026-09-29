@@ -1041,6 +1041,7 @@ const TASK_COLUMNS = {
   recommendedBranch: { column: "recommended_branch", json: false },
   realBranch: { column: "real_branch", json: false },
   mergeBranch: { column: "merge_branch", json: false },
+  requiresPlan: { column: "requires_plan", json: false },
   status: { column: "status", json: false },
   assignedAgent: { column: "assigned_agent_id", json: true },
   conversation: { column: "conversation", json: true },
