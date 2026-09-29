@@ -174,6 +174,7 @@ export const submitContextSchema = z
   .string()
   .trim()
   .min(1)
+  .max(4000)
   .describe(
     "Required handoff notes appended to task.contexts for the next agent: decisions taken, gotchas, what the next phase should check",
   );

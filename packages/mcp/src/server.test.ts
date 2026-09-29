@@ -208,7 +208,15 @@ describe("AgentQ MCP server", () => {
     expect(claimed.task.claimToken).toBeUndefined();
     expect(claimed.skillsVersion).toBe(skillsBundleVersion()!);
     expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
-    expect(claimed.task.contexts).toEqual(["initial context", "claim context"]);
+    // The claim's task leaves out the notes that grow with every round: the brief carries the latest handoffs.
+    expect(claimed.task.contexts).toBeUndefined();
+    expect(claimed.task.acceptanceCriteria).toEqual([
+      { id: "AC1", text: "tests pass", verify: { kind: "review" }, status: "pending" },
+    ]);
+    expect(claimed.brief.handoffs.map((h: { phase: string; summary: string }) => [h.phase, h.summary])).toEqual([
+      ["human", "initial context"],
+      ["claim", "claim context"],
+    ]);
 
     const planResult = (await client.callTool({
       name: "submit_plan",
@@ -425,9 +433,14 @@ describe("AgentQ MCP server", () => {
         arguments: { taskId: task.id, message: "halfway there", author: "worker" },
       })) as CallToolResult,
     );
-    expect(result.success).toBe(true);
-    expect(result.task.status).toBe(TaskStatus.ReadyForCode);
-    expect(result.task.conversation).toEqual([
+    // Only the entry it added comes back, never the whole task.
+    expect(result).toEqual({
+      success: true,
+      taskId: task.id,
+      entry: { author: "worker", timestamp: expect.any(String), message: "halfway there" },
+    });
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.ReadyForCode);
+    expect(getTaskById(task.id)!.conversation).toEqual([
       expect.objectContaining({
         authorName: "worker",
         message: "halfway there",
@@ -854,6 +867,10 @@ describe("AgentQ MCP create, list and archive", () => {
     expect(all.success).toBe(true);
     const planned = all.tasks.find((t: any) => t.title === "Plan me");
     expect(planned.project.id).toBe(projectId);
+    // Summaries: nothing that grows with the task's rounds.
+    expect(Object.keys(planned).sort()).toEqual(
+      ["createdAt", "id", "mergeBranch", "priority", "project", "projectId", "pullRequest", "recommendedBranch", "risk", "status", "title", "type", "updatedAt"],
+    );
 
     const ready = await ok("list_tasks", { projectId, status: TaskStatus.ReadyForCode });
     expect(ready.tasks.map((t: any) => t.title)).toEqual(["Just code"]);
@@ -1201,6 +1218,51 @@ describe("AgentQ MCP claims and blockers", () => {
       }),
     );
     expect(coding.brief.verification.failing).toEqual([{ command: "bun test", exitCode: 1, summary: "1 fail" }]);
+  });
+
+  it("the claim_task result stays flat as code/review rounds pile up", async () => {
+    const pid = "mcp-flat-" + Date.now();
+    createProject({ id: pid, displayName: "Flat", workingDirectory: "/tmp/flat", policy: { maxReviewRounds: 10 } });
+    const task = createTask({ title: "flat", description: "d", projectId: pid, acceptanceCriteria: ["works $ bun test x"] });
+    const coder = await connect();
+    const reviewer = await connect();
+    const note = (who: string, round: number) => `${who} round ${round}: ${"x".repeat(500)}`;
+    const sizes: number[] = [];
+    for (let round = 1; round <= 5; round++) {
+      const claimed = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "flat-c", projectId: pid }));
+      expect(claimed.task.id).toBe(task.id);
+      sizes.push(JSON.stringify(claimed).length);
+      const open = claimed.brief.openFindings.filter((f: { status: string }) => f.status === "open");
+      parse(
+        await call(coder, "submit_code", {
+          taskId: task.id,
+          message: `code ${round}`,
+          worktree: "/w",
+          context: note("coder", round),
+          evidence: [{ kind: "command", criterionId: "AC1", command: "bun test x", exitCode: 0, summary: "ok" }],
+          findingResolutions: open.map((f: { id: string }) => ({ id: f.id, status: "fixed", resolution: "done" })),
+        }),
+      );
+      parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "flat-r", projectId: pid }));
+      parse(
+        await call(reviewer, "submit_review", {
+          taskId: task.id,
+          verdict: "request_changes",
+          message: `review ${round}`,
+          context: note("reviewer", round),
+          verifiedFindings: open.map((f: { id: string }) => ({ id: f.id, status: "verified" })),
+          findings: [{ severity: "minor", text: `finding ${round}` }],
+        }),
+      );
+    }
+    expect(getTaskById(task.id)!.contexts.length).toBe(10);
+    expect(sizes[4] - sizes[1]).toBeLessThan(2048);
+    // A handoff summary is bounded too.
+    const last = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "flat-c", projectId: pid }));
+    expect(last.task.id).toBe(task.id);
+    expect(validationError(await call(coder, "submit_code", { taskId: task.id, message: "m", worktree: "/w", context: "x".repeat(4001) }))).toContain(
+      "context",
+    );
   });
 
   it("submit_verification is exposed for verifier agents", async () => {

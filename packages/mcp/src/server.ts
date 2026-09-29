@@ -151,10 +151,33 @@ function phaseSkillOf(status: Task["status"]) {
   return skill ? { name: skill.name, version: skill.version } : null;
 }
 
-/** The task without its (growing) conversation and history: claim_task pairs it with the brief. */
+/**
+ * The task without what grows with every round (conversation, history, contexts
+ * and each criterion's evidence ids): claim_task pairs it with the brief, whose
+ * size stays flat. get_task still returns all of it.
+ */
 function taskHeader(task: Task) {
-  const { conversation: _c, history: _h, ...rest } = withProject(task);
-  return rest;
+  const { conversation: _c, history: _h, contexts: _x, ...rest } = withProject(task);
+  return { ...rest, acceptanceCriteria: task.acceptanceCriteria.map(({ id, text, verify, status }) => ({ id, text, verify, status })) };
+}
+
+/** A task in a listing: enough to pick it (get_task has the rest). */
+function taskSummary(task: Task) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    type: task.type,
+    risk: task.risk,
+    projectId: task.projectId,
+    project: projectOf(task),
+    recommendedBranch: task.recommendedBranch,
+    mergeBranch: task.mergeBranch,
+    pullRequest: task.pullRequest,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
 }
 
 /** Trims each entry and drops the empty ones; undefined stays undefined. */
@@ -713,7 +736,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "List tasks",
       description:
-        "List tasks with their project, highest priority first. Archived and deleted tasks are left out. Use it to find work outside the claim loop, e.g. the `complete` tasks to archive.",
+        "List tasks, highest priority first, as summaries (id, title, status, priority, type, risk, project, branches, pull request, dates; get_task has the rest). Archived and deleted tasks are left out. Use it to find work outside the claim loop, e.g. the `complete` tasks to archive.",
       inputSchema: {
         status: z
           .nativeEnum(TaskStatus)
@@ -728,7 +751,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         const tasks = getTasks(input.projectId).filter(
           (task) => !input.status || task.status === input.status,
         );
-        return { success: true, tasks: tasks.map(visibleTask) };
+        return { success: true, tasks: tasks.map(taskSummary) };
       }),
   );
 
@@ -821,7 +844,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Post comment",
       description:
-        "Append a comment to a task's conversation thread without changing its status (progress notes, questions for the reviewer, blockers).",
+        "Append a comment to a task's conversation thread without changing its status (progress notes, questions for the reviewer, blockers). Returns the entry it added.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Comment body (markdown)"),
@@ -831,7 +854,8 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     (input) =>
       run(() => {
         const task = postComment(input.taskId, { message: input.message, author: input.author });
-        return { success: true, task: visibleTask(task) };
+        const entry = task.conversation[task.conversation.length - 1];
+        return { success: true, taskId: task.id, entry: { author: entry.authorName, timestamp: entry.timestamp, message: entry.message } };
       }),
   );
 
