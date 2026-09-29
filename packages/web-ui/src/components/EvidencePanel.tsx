@@ -60,10 +60,18 @@ export function CriteriaList({ criteria, evidence }: { criteria: AcceptanceCrite
   );
 }
 
+/** The evidence of the task's latest verification (older records: the verifier's rows of its round). */
+export function verificationEvidence(task: Task, evidence: Evidence[]): Evidence[] {
+  const v = task.verification;
+  if (!v) return [];
+  const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
+  return evidence.filter((e) => (ids ? ids.has(e.id) : e.round === v.round && e.producedBy === "runner:verify"));
+}
+
 /** The latest verification: result, tampering, diff size, risk changes and each command's output. */
 export function VerificationCard({ task, evidence }: { task: Task; evidence: Evidence[] }) {
   const v = task.verification!;
-  const latest = evidence.filter((e) => e.round === v.round && e.producedBy === "runner:verify");
+  const latest = verificationEvidence(task, evidence);
   return (
     <div className="card mb-4 p-4">
       <div className="flex flex-wrap items-center gap-2">

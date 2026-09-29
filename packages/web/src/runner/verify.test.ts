@@ -7,6 +7,7 @@ import type { Task } from "@agentq/shared";
 import {
   TaskStatus,
   analyzeDiff,
+  buildTaskBrief,
   cancelTask,
   claimNextTask,
   createProject,
@@ -16,10 +17,12 @@ import {
   getProjectById,
   getTaskById,
   patchTask,
+  renderPrBody,
   setAppState,
   submitCode,
   submitReview,
   submitVerification,
+  sweepQueue,
   updateProject,
   verifierOnline,
 } from "@agentq/shared";
@@ -373,6 +376,72 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(task.status).toBe(TaskStatus.NeedsHuman);
     expect(task.verifyFailures).toBe(0);
     expect(task.blocker?.phase).toBe("verify");
+    // The code was not verified, whatever an earlier submission's result said.
+    expect(task.verification).toMatchObject({ passed: false, skipped: true });
+    expect(task.verification?.note).toContain("does not exist");
+  });
+
+  it("a new submission never shows the previous verification: pending, then not verified when the verifier is gone", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    coded(pid, worktree);
+    expect((await verify(pid)).verification).toMatchObject({ passed: true, skipped: false });
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
+    submitReview(r.task.id, { verdict: "request_changes", message: "fix", findings: [{ severity: "minor", text: "rename" }], claimToken: r.claimToken });
+
+    commit(worktree, { "src/a.ts": "export const a = 3;\n" });
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    setAppState("verifier_heartbeat", new Date().toISOString());
+    submitCode(c.task.id, {
+      message: "renamed",
+      worktree,
+      findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "renamed" }],
+      claimToken: c.claimToken,
+    });
+    const pending = getTaskById(c.task.id)!;
+    expect(pending.status).toBe(TaskStatus.VerifyRequested);
+    expect(pending.verification).toMatchObject({ round: 2, passed: false, skipped: true, note: "Waiting for the verifier." });
+    expect(renderPrBody(pending)).not.toContain("Passed");
+
+    // The verifier never comes: the sweeper sends the code on, marked as not verified.
+    sweepQueue(new Date(Date.now() + 10 * 60_000));
+    const swept = getTaskById(c.task.id)!;
+    expect(swept.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(swept.verification?.note).toContain("verifier is not running");
+    expect(renderPrBody(swept)).toContain("Not verified");
+    expect(renderPrBody(swept)).not.toContain("Passed");
+  });
+
+  it("red then green in the same round: the brief lists no failing command", async () => {
+    const { repo, worktree } = makeRepo();
+    const marker = join(root, `green-${randomUUID()}`);
+    const pid = project(repo, { test: `${BUN} -e ${JSON.stringify(`process.exit(require('fs').existsSync(${JSON.stringify(marker)}) ? 0 : 1)`)}` });
+    coded(pid, worktree);
+    const red = await verify(pid);
+    expect(red.status).toBe(TaskStatus.ChangesRequested);
+    expect(buildTaskBrief(red)!.verification?.failing).toHaveLength(1);
+    writeFileSync(marker, "1");
+    recode(red, worktree);
+    const green = await verify(pid);
+    expect(green.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(green.verification?.round).toBe(red.verification?.round);
+    expect(buildTaskBrief(green)!.verification?.failing).toEqual([]);
+    expect(getEvidence(green.id).find((e) => e.id === green.verification?.evidenceIds?.[0])?.logPath).toContain("verify-R1-2-1.log");
+  });
+
+  it("the tamper strikes survive the pending record: weakened again at verification asks a person", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const first = coded(pid, worktree);
+    expect(first.verification?.tamperStrikes).toBe(1);
+    const clean = recode(first, worktree, { "src/a.test.ts": "it('works', () => {});\n" });
+    expect(clean.status).toBe(TaskStatus.VerifyRequested);
+    expect(clean.verification).toMatchObject({ skipped: true, tamperStrikes: 1 });
+    commit(worktree, { "src/a.test.ts": null });
+    const second = await verify(pid);
+    expect(second.status).toBe(TaskStatus.NeedsHuman);
+    expect(second.blocker?.reason).toContain("Tests were weakened again");
   });
 
   it("the worker keeps its heartbeat while a long verification runs", async () => {

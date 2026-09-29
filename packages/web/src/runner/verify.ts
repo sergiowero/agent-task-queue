@@ -5,7 +5,7 @@
  * workflow. No LLM involved; it runs inside the web server.
  */
 import { spawn } from "child_process";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { hostname } from "os";
 import { join } from "path";
 import type { NewEvidence, Project, SubmitVerificationInput, Task } from "@agentq/shared";
@@ -175,6 +175,9 @@ export async function runVerification(
   const round = task.codeRound + 1;
   const logDir = runsDir(task.id);
   mkdirSync(logDir, { recursive: true });
+  // A round can be verified more than once (red, fix, verify again): keep each attempt's logs.
+  const logName = new RegExp(`^verify-R${round}-(\\d+)-\\d+\\.log$`);
+  const attempt = 1 + Math.max(0, ...readdirSync(logDir).map((f) => Number(f.match(logName)?.[1] ?? 0)));
 
   const evidence: NewEvidence[] = [];
   let passed = true;
@@ -204,7 +207,7 @@ export async function runVerification(
       if (retry.exitCode === 0) flaky = true;
       result = retry.exitCode === 0 ? retry : result;
     }
-    const logPath = join(logDir, `verify-R${round}-${i + 1}.log`);
+    const logPath = join(logDir, `verify-R${round}-${attempt}-${i + 1}.log`);
     try {
       writeFileSync(logPath, `$ ${cmd.command}\n${result.output}\n[exit ${result.exitCode}${result.timedOut ? ", timed out" : ""}]\n`);
     } catch {}

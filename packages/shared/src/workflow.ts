@@ -1299,6 +1299,25 @@ export function verifierOnline(now = Date.now()): boolean {
   return now - (Number.isFinite(at) ? at : new Date(beat.updatedAt).getTime()) < VERIFIER_STALE_MS;
 }
 
+/**
+ * The verification record of code that is not (or not yet) verified. It replaces
+ * the previous result, so the reviewer, the PR body and the portal never show an
+ * earlier submission's outcome as this one's; the tamper strikes carry over.
+ */
+export function unverifiedRecord(task: Task, note: string, round = task.verification?.round ?? task.codeRound + 1): Verification {
+  return {
+    round,
+    passed: false,
+    skipped: true,
+    note,
+    tampering: [],
+    tamperStrikes: task.verification?.tamperStrikes ?? 0,
+    verifiedSha: null,
+    at: new Date().toISOString(),
+    evidenceIds: [],
+  };
+}
+
 /** Whether the task has anything the verifier can run. */
 export function hasVerificationCommands(task: Task): boolean {
   const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
@@ -1497,6 +1516,7 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
               tamperStrikes: strikes,
               verifiedSha: facts?.headSha ?? null,
               at: now,
+              evidenceIds: [],
             },
             ...(routed.blocker ? { blocker: routed.blocker } : {}),
           },
@@ -1504,20 +1524,17 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
       }
 
       const verifyNow = hasVerificationCommands(task) && verifierOnline();
-      const verification: Verification | null = verifyNow
-        ? task.verification
-        : {
-            round,
-            passed: false,
-            skipped: true,
-            note: hasVerificationCommands(task)
-              ? "Not verified: the AgentQ web server (which runs the verifier) is not running."
-              : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
-            tampering: [],
-            tamperStrikes: task.verification?.tamperStrikes ?? 0,
-            verifiedSha: null,
-            at: now,
-          };
+      // Never leave the previous submission's result on the task: until the verifier
+      // reports, this code is not verified.
+      const verification = unverifiedRecord(
+        task,
+        verifyNow
+          ? "Waiting for the verifier."
+          : hasVerificationCommands(task)
+            ? "Not verified: the AgentQ web server (which runs the verifier) is not running."
+            : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
+        round,
+      );
 
       return {
         to: afterCode(task, policy, { verify: verifyNow }),
@@ -1577,7 +1594,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         event: "task_blocked",
         details: input.infraError,
         release: true,
-        patch: { blocker },
+        patch: { blocker, verification: unverifiedRecord(task, input.infraError, round) },
       });
       return { task: blocked, previousStatus: task.status, newStatus: blocked.status, message: "Verification blocked." };
     }
@@ -1638,6 +1655,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       tamperStrikes: strikes,
       verifiedSha,
       at: now,
+      evidenceIds: evidence.map((e) => e.id),
     };
     const updated = transitionTask(task, to, {
       actor,

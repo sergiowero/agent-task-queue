@@ -126,11 +126,18 @@ function briefBasics(task: Task) {
   };
 }
 
+/** The evidence of the task's latest verification (older records: every verifier row of its round). */
+function verificationEvidence(task: Task): Evidence[] {
+  const v = task.verification;
+  if (!v) return [];
+  const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
+  return getEvidence(task.id).filter((e) => (ids ? ids.has(e.id) : e.round === v.round));
+}
+
 /** The latest verification, with the commands the verifier saw fail. */
 function verificationOf(task: Task): TaskBrief["verification"] {
   if (!task.verification) return null;
-  const failing = getEvidence(task.id)
-    .filter((e) => e.round === task.verification!.round)
+  const failing = verificationEvidence(task)
     .filter((e) => e.producedBy === "runner:verify" && !e.skipped && e.exitCode !== 0)
     .map((e) => ({ command: e.command, exitCode: e.exitCode, summary: e.summary }));
   return { ...task.verification, failing };

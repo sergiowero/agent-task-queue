@@ -135,6 +135,8 @@ export interface Verification {
   tamperStrikes: number;
   verifiedSha: string | null;
   at: string;
+  /** The evidence this verification recorded (older records have none: their round's evidence is used). */
+  evidenceIds?: string[];
 }
 
 /** What the planner said beyond the plan text. */
