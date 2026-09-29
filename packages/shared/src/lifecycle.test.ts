@@ -27,10 +27,10 @@ const critic = { toolName: "Critic", version: "1", model: "c", sessionId: "lc-cr
 const coder = { toolName: "Coder", version: "1", model: "k", sessionId: "lc-coder" };
 let n = 0;
 
-function project(extra: Record<string, unknown> = {}) {
+function project(extra: Partial<Parameters<typeof createProject>[0]> = {}) {
   const id = `lifecycle-${Date.now()}-${n++}`;
   // L1: a person approves plans.
-  createProject({ id, displayName: "Lifecycle", workingDirectory: "/tmp/lifecycle", autonomy: 1, ...extra } as any);
+  createProject({ id, displayName: "Lifecycle", workingDirectory: "/tmp/lifecycle", autonomy: 1, ...extra });
   return id;
 }
 
