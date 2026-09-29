@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpServerLaunch } from "@agentq/mcp";
 import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@agentq/mcp";
-import type { Runner, RunnerTool } from "@agentq/shared";
+import type { Agent, Runner, RunnerTool } from "@agentq/shared";
 import {
   CLAIM_RULES,
   TaskStatus,
@@ -866,6 +866,34 @@ describe("buildPrompt", () => {
       expect(prompt).toContain("`report_blocker`");
       expect(prompt).not.toContain("still submit");
       expect(prompt).not.toMatch(/agentq (claim|submit)/);
+    }
+  });
+
+  it("the submit and report_blocker calls it shows use only the tools' arguments, and all the required ones", async () => {
+    const agent = { id: "claude@1|opus", toolName: "claude", version: "1", model: "opus", role: "plan" } as Agent;
+    const client = new Client({ name: "prompt-args", version: "0.0.0" });
+    await client.connect(new StdioClientTransport({ ...mcpServerLaunch(getDbPath()), stderr: "ignore" }));
+    try {
+      const { tools } = await client.listTools();
+      const check = (tool: string, args: Record<string, unknown>, where: string) => {
+        const schema = tools.find((t) => t.name === tool)!.inputSchema;
+        const props = Object.keys(schema.properties ?? {});
+        const required = (schema.required ?? []) as string[];
+        expect({ where, tool, unknown: Object.keys(args).filter((k) => !props.includes(k)) }).toEqual({ where, tool, unknown: [] });
+        expect({ where, tool, missing: required.filter((k) => !(k in args)) }).toEqual({ where, tool, missing: [] });
+      };
+      const phases = CLAIM_RULES.map((r) => r.to);
+      expect(phases.length).toBe(7);
+      for (const status of phases) {
+        const task = { ...planTask(`prompt args ${status}`), status };
+        const prompt = buildPrompt({ task, project: null, agent, role: roleOf(status), claimToken: "tok", phaseSkill: "SKILL" });
+        const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+        const tool = prompt.match(/call the `(\w+)` tool of the `agentq` MCP server/)![1];
+        check(tool, JSON.parse(blocks[1]), status);
+        check("report_blocker", JSON.parse(blocks[2]), status);
+      }
+    } finally {
+      await client.close();
     }
   });
 

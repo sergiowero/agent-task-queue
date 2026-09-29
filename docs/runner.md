@@ -132,8 +132,10 @@ job, the **independent brief**, without the author's conversation, handoffs, mes
 or evidence, see [policy.md](policy.md#independent-checks)), the
 body of
 `skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
-arguments to finish with (a Markdown message plus the required `context` handoff notes,
-with a per-phase hint of what they should contain, and the job's `claimToken`), how to call
+arguments to finish with (a Markdown message plus the `context` handoff notes and the
+optional `decisions`, `risks` and `next` lists, with a per-phase hint of what they should
+contain: required everywhere, optional but expected for a verification; and the job's
+`claimToken`), how to call
 `report_blocker` when something outside its control blocks the phase (never submit
 partial work), never to ask for permission, and to stop once the submit succeeds.
 

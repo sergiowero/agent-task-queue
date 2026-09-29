@@ -27,7 +27,11 @@ and existing projects start at **L2**.
 planner's own session) critiques it with a verdict and findings (`P<round>-<n>`).
 Approve sends a **low-risk** plan straight to coding and anything riskier to a
 person; request changes goes back to the planner (at most `maxPlanRounds`, then a
-person); needs_human asks a person. A **blocking open question** in the plan
+person); needs_human asks a person. The planner answers each open finding by id
+in its revision (`findingResolutions`: `fixed`, or `wontfix` with the reason; a
+revision that leaves one unanswered is refused), and the critic verifies each
+answer. The brief's `round.remainingPlanRounds` says how many critiques may still
+ask for changes. A **blocking open question** in the plan
 sends the task to a person before any critique. The planner's `suggestedRisk` and
 `touchedPaths` can only raise the risk (protected paths make it high).
 
@@ -176,10 +180,11 @@ an **independent brief** (`buildIndependentBrief` in
 | The verifier's result on the submitted commit (review only) | |
 
 The MCP server enforces it for the session that holds the claim (a runner job's
-server holds its job's claim): `claim_task`, `get_task_brief`, `get_task`,
-`list_tasks`, `post_comment` and `agentq://task/{taskId}` all return the
-independent view. Anyone else, a person's session included, still reads the
-whole task. The checkers' own handoffs still reach the agent that acts on their
+server holds its job's claim): `claim_task`, `get_task_brief`, `get_task` and
+`agentq://task/{taskId}` all return the independent view, and `list_tasks` (task
+summaries) and `post_comment` (the entry it added) return nothing of the task's
+context to anyone. Anyone else, a person's session included, still reads the
+whole task with `get_task`. The checkers' own handoffs still reach the agent that acts on their
 verdict (the planner or the coder).
 
 ## Settings

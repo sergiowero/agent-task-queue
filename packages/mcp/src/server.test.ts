@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -1412,6 +1412,29 @@ describe("AgentQ MCP contracts", () => {
       });
     }
     expect(argsOf("submit_plan")).toContain("findingResolutions");
+  });
+
+  it("docs/mcp.md lists every tool with exactly its arguments", () => {
+    const doc = readFileSync(resolve(import.meta.dir, "../../../docs/mcp.md"), "utf8");
+    const table = doc.slice(doc.indexOf("Tool inputs"), doc.indexOf("### Claim tokens"));
+    const namesIn = (cell: string) => {
+      let text = cell;
+      // Nested field lists and notes are in parentheses: only the top-level arguments count.
+      while (/\([^()]*\)/.test(text)) text = text.replace(/\([^()]*\)/g, "");
+      return [...text.matchAll(/`([A-Za-z]+)(?:\[\])?`/g)].map((m) => m[1]);
+    };
+    const rows = new Map<string, { required: string[]; optional: string[] }>();
+    for (const [, tool, required, optional] of table.matchAll(/^\| `(\w+)`\s*\|([^|]*)\|([^|]*)\|$/gm)) {
+      const alias = required.match(/^\s*as `(\w+)`\s*$/)?.[1];
+      rows.set(tool, alias ? rows.get(alias)! : { required: namesIn(required), optional: namesIn(optional) });
+    }
+    expect([...rows.keys()].sort()).toEqual(tools.map((t) => t.name).sort());
+    for (const tool of tools) {
+      const row = rows.get(tool.name)!;
+      expect({ tool: tool.name, args: [...row.required, ...row.optional].sort() }).toEqual({ tool: tool.name, args: argsOf(tool.name).sort() });
+      const required = (tool.inputSchema.required ?? []) as string[];
+      expect({ tool: tool.name, missing: required.filter((k) => !row.required.includes(k)) }).toEqual({ tool: tool.name, missing: [] });
+    }
   });
 });
 
