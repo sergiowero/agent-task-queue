@@ -4,6 +4,7 @@
  * diff for weakened tests and risky paths, and reports through the shared
  * workflow. No LLM involved; it runs inside the web server.
  */
+import { spawn } from "child_process";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { hostname } from "os";
 import { join } from "path";
@@ -83,35 +84,62 @@ export interface ExecResult {
   timedOut: boolean;
 }
 
-/** Runs one shell command with CI=1, killing it (and its children on Windows) after `timeoutMs`. */
-export async function execCommand(command: string, cwd: string, timeoutMs: number): Promise<ExecResult> {
-  const argv = IS_WINDOWS ? ["cmd", "/d", "/s", "/c", command] : ["sh", "-c", command];
-  const proc = Bun.spawn(argv, {
-    cwd,
-    env: { ...process.env, CI: "1", FORCE_COLOR: "0" } as Record<string, string>,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+/** How long a killed command may keep its output pipes open before we stop waiting for it. */
+const KILL_GRACE_MS = 2000;
+
+/**
+ * Runs one shell command with CI=1. After `timeoutMs` the whole process tree is
+ * killed (its own process group on POSIX, `taskkill /T` on Windows): killing
+ * only the shell would leave `a && b` or an npm script running and holding the
+ * output pipes, so the verifier would wait for it forever.
+ */
+export function execCommand(command: string, cwd: string, timeoutMs: number): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const env = { ...process.env, CI: "1", FORCE_COLOR: "0" };
+    const child = IS_WINDOWS
+      ? spawn("cmd", ["/d", "/s", "/c", `"${command}"`], { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsVerbatimArguments: true, windowsHide: true })
+      : spawn("sh", ["-c", command], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (d) => (stdout += d));
+    child.stderr?.on("data", (d) => (stderr += d));
+    let timedOut = false;
+    let settled = false;
+    let grace: ReturnType<typeof setTimeout> | null = null;
+    const finish = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve({ exitCode: timedOut ? 124 : code, output: stdout + (stderr ? `\n${stderr}` : ""), timedOut });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+      // A grandchild that left the group could still hold the pipes: do not wait for it.
+      grace = setTimeout(() => finish(124), KILL_GRACE_MS);
+    }, timeoutMs);
+    child.on("error", (e) => {
+      stderr += `${e.message}\n`;
+      finish(127);
+    });
+    child.on("close", (code, signal) => finish(code ?? (signal ? 137 : 1)));
   });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (IS_WINDOWS) {
-      try {
-        Bun.spawnSync(["taskkill", "/pid", String(proc.pid), "/T", "/F"]);
-      } catch {}
-    }
-    try {
-      proc.kill("SIGKILL");
-    } catch {}
-  }, timeoutMs);
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout as ReadableStream).text().catch(() => ""),
-    new Response(proc.stderr as ReadableStream).text().catch(() => ""),
-  ]);
-  const code = await proc.exited;
-  clearTimeout(timer);
-  return { exitCode: timedOut ? 124 : code, output: stdout + (stderr ? `\n${stderr}` : ""), timedOut };
+}
+
+/** Kills a command and everything it started. */
+function killTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (IS_WINDOWS) Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"]);
+    // The command leads its own process group (detached), so -pid reaches all of it.
+    else process.kill(-pid, "SIGKILL");
+  } catch {}
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
 }
 
 // eslint-disable-next-line no-control-regex
@@ -212,6 +240,8 @@ export async function runVerification(
 export interface VerifyWorkerOptions {
   broadcast?: (event: string, data: unknown) => void;
   intervalMs?: number;
+  /** How often the worker says it is alive, also while a long verification runs. */
+  heartbeatMs?: number;
   run?: typeof runVerification;
 }
 
@@ -219,8 +249,10 @@ export interface VerifyWorkerOptions {
 export class VerifyWorker {
   private readonly broadcast: (event: string, data: unknown) => void;
   private readonly intervalMs: number;
+  private readonly heartbeatMs: number;
   private readonly run: typeof runVerification;
   private timer: Timer | null = null;
+  private heartbeat: Timer | null = null;
   private busy = false;
   running = false;
   lastRunAt: string | null = null;
@@ -229,12 +261,17 @@ export class VerifyWorker {
   constructor(opts: VerifyWorkerOptions = {}) {
     this.broadcast = opts.broadcast ?? (() => {});
     this.intervalMs = opts.intervalMs ?? 3000;
+    this.heartbeatMs = opts.heartbeatMs ?? 30_000;
     this.run = opts.run ?? runVerification;
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    // The beat runs on its own timer: a verification can take longer than the
+    // 2 minutes after which submit_code and the sweeper count the verifier as gone.
+    this.beat();
+    this.heartbeat = setInterval(() => this.beat(), this.heartbeatMs);
     this.schedule(0);
   }
 
@@ -242,10 +279,20 @@ export class VerifyWorker {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
   }
 
   state() {
     return { running: this.running, busy: this.busy, currentTaskId: this.currentTaskId, lastRunAt: this.lastRunAt };
+  }
+
+  private beat(): void {
+    try {
+      setAppState("verifier_heartbeat", new Date().toISOString());
+    } catch (e) {
+      console.error("[verifier]", e);
+    }
   }
 
   private schedule(ms: number): void {

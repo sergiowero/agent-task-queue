@@ -7,6 +7,7 @@ import type { Task } from "@agentq/shared";
 import {
   TaskStatus,
   analyzeDiff,
+  cancelTask,
   claimNextTask,
   createProject,
   createTask,
@@ -20,8 +21,9 @@ import {
   submitReview,
   submitVerification,
   updateProject,
+  verifierOnline,
 } from "@agentq/shared";
-import { runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
+import { execCommand, runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
 const HOME = mkdtempSync(join(tmpdir(), "agentq-verify-home-"));
@@ -176,6 +178,22 @@ describe.skipIf(!hasGit)("verification", () => {
     const pid = project(repo, { test: `${BUN} -e "setTimeout(() => {}, 20000)"` });
     coded(pid, worktree);
     const task = await verify(pid, { timeoutMs: 500 });
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    expect(getEvidence(task.id)[0].summary).toContain("Timed out");
+  }, 15_000);
+
+  it.skipIf(process.platform === "win32")("a timeout kills the whole command, not just the shell", async () => {
+    const started = Date.now();
+    const result = await execCommand("true && sleep 20", root, 500);
+    expect(result).toMatchObject({ exitCode: 124, timedOut: true });
+    expect(Date.now() - started).toBeLessThan(3000);
+
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: "true && sleep 20" });
+    coded(pid, worktree);
+    const at = Date.now();
+    const task = await verify(pid, { timeoutMs: 500 });
+    expect(Date.now() - at).toBeLessThan(3000);
     expect(task.status).toBe(TaskStatus.ChangesRequested);
     expect(getEvidence(task.id)[0].summary).toContain("Timed out");
   }, 15_000);
@@ -355,6 +373,41 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(task.status).toBe(TaskStatus.NeedsHuman);
     expect(task.verifyFailures).toBe(0);
     expect(task.blocker?.phase).toBe("verify");
+  });
+
+  it("the worker keeps its heartbeat while a long verification runs", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    coded(pid, worktree);
+    let finish!: () => void;
+    const running = new Promise<void>((r) => (finish = r));
+    const worker = new VerifyWorker({
+      heartbeatMs: 20,
+      intervalMs: 60_000,
+      run: async () => {
+        await running;
+        return { passed: true, evidence: [] };
+      },
+    });
+    setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+    worker.start();
+    for (let i = 0; i < 50 && !worker.currentTaskId; i++) await Bun.sleep(10);
+    expect(worker.currentTaskId).not.toBeNull();
+    setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+    await Bun.sleep(100);
+    expect(verifierOnline()).toBe(true);
+
+    // Other code submitted meanwhile still waits for the verifier instead of skipping it.
+    const other = createTask({ title: "meanwhile", description: "d", projectId: pid });
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(other.id);
+    submitCode(other.id, { message: "c", worktree, claimToken: c.claimToken });
+    expect(getTaskById(other.id)!.status).toBe(TaskStatus.VerifyRequested);
+
+    finish();
+    for (let i = 0; i < 50 && worker.currentTaskId; i++) await Bun.sleep(10);
+    worker.stop();
+    cancelTask(other.id);
   });
 
   it("the worker claims and verifies a task on its own", async () => {
