@@ -348,6 +348,85 @@ describe.skipIf(!hasGit)("verification", () => {
       ["AC1", "met"],
       ["AC2", "pending"],
     ]);
+    // The pass says which commands it does not cover.
+    const body = renderPrBody(verified);
+    expect(body).toContain("✅ Passed");
+    expect(body).toContain("⚠ Skipped (not in the project's commands or verify allowlist): `curl http://example.com` (AC2)");
+  });
+
+  it("the project's commands always run; a plan's regression commands only add to them", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { install: "bun install", typecheck: "bun run typecheck", test: "bun test" });
+    const task = coded(pid, worktree);
+    patchTask(task.id, {
+      approvedPlan: {
+        markdown: "plan",
+        validation: { items: [], regressionCommands: ["bun test src/foo.test.ts", "bun test"] },
+        approvedBy: "critic-agent",
+        at: new Date().toISOString(),
+      },
+    });
+    const commands = verificationCommands(getTaskById(task.id)!, getProjectById(pid));
+    expect(commands.map((c) => [c.command, c.source])).toEqual([
+      ["bun install", "project"],
+      ["bun run typecheck", "project"],
+      ["bun test", "project"],
+      ["bun test src/foo.test.ts", "plan"],
+    ]);
+  });
+
+  it("when every command is skipped the code is not verified, never passed", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, {});
+    const task = coded(pid, worktree, { acceptanceCriteria: [{ text: "works", verify: { kind: "command", command: "./gradlew test" } }] });
+    expect(task.status).toBe(TaskStatus.VerifyRequested);
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(verified.verification).toMatchObject({ passed: false, skipped: true });
+    expect(verified.verification?.note).toContain("no verification command ran");
+    expect(verified.verification?.note).toContain("`./gradlew test`");
+    expect(verified.verifyFailures).toBe(0);
+    expect(renderPrBody(verified)).not.toContain("Passed");
+    expect(renderPrBody(verified)).toContain("Not verified");
+
+    // An agent verifier's pass with nothing that ran is not verified either.
+    const other = coded(pid, worktree, { acceptanceCriteria: [{ text: "works", verify: { kind: "command", command: "./gradlew test" } }] });
+    const claimed = claimNextTask({ roles: ["verify"], agent: { ...reviewer, sessionId: "llm-verifier-2" }, projectId: pid })!;
+    expect(claimed.task.id).toBe(other.id);
+    submitVerification(other.id, {
+      passed: true,
+      evidence: [{ kind: "command", command: "./gradlew test", criterionId: "AC1", skipped: true, summary: "no gradle" }],
+      claimToken: claimed.claimToken,
+    });
+    expect(getTaskById(other.id)!.verification).toMatchObject({ passed: false, skipped: true });
+  });
+
+  it("uncommitted changes in the worktree are refused before any command runs", async () => {
+    const { repo, worktree } = makeRepo();
+    const marker = join(root, `ran-${randomUUID()}`);
+    const pid = project(repo, { test: `${BUN} -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(marker)}, '1')`)}` });
+    commit(worktree, { "src/a.ts": "export const a = 2;\n" });
+    write(worktree, "src/a.ts", "export const a = 3;\n");
+    write(worktree, "src/extra.ts", "export {};\n");
+    coded(pid, worktree);
+    const task = await verify(pid);
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    const [row] = getEvidence(task.id);
+    expect(row).toMatchObject({ command: "git status --porcelain", exitCode: 1 });
+    expect(row.summary).toContain("Uncommitted changes");
+    expect(row.summary).toContain("src/extra.ts");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("a worktree checked out at another commit than the submitted one fails", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.ts": "export const a = 2;\n" });
+    const submitted = coded(pid, worktree);
+    commit(worktree, { "src/a.ts": "export const a = 3;\n" });
+    const task = await verify(pid);
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    expect(getEvidence(task.id)[0].summary).toContain(`is not the submitted commit ${submitted.headSha!.slice(0, 12)}`);
   });
 
   it("without commands, or without a running verifier, the code goes straight to review", () => {

@@ -15,6 +15,7 @@ import {
   claimNextTask,
   getProjectById,
   getTaskById,
+  git,
   profileCommands,
   protectedFiles,
   resolveProfile,
@@ -37,7 +38,11 @@ export interface VerifyCommand {
   source: "project" | "plan";
 }
 
-/** Every command to run, once each, in order: install, regression, then per-criterion checks. */
+/**
+ * Every command to run, once each, in order: the project's commands (install
+ * first), the plan's regression commands, then per-criterion checks. A plan
+ * adds commands to the project's, never replaces them.
+ */
 export function verificationCommands(task: Task, project: Project | null): VerifyCommand[] {
   const profile = resolveProfile(project?.profile);
   const out = new Map<string, VerifyCommand>();
@@ -51,14 +56,9 @@ export function verificationCommands(task: Task, project: Project | null): Verif
     out.set(cmd, entry);
   };
 
-  if (profile.commands.install) add(profile.commands.install, "project");
+  for (const cmd of profileCommands(profile)) add(cmd, "project");
   const plan = task.approvedPlan?.validation;
-  if (plan?.regressionCommands.length) {
-    const projectOwn = new Set(profileCommands(profile));
-    for (const cmd of plan.regressionCommands) add(cmd, projectOwn.has(cmd.trim()) ? "project" : "plan");
-  } else {
-    for (const cmd of profileCommands(profile)) if (cmd !== profile.commands.install) add(cmd, "project");
-  }
+  for (const cmd of plan?.regressionCommands ?? []) add(cmd, "plan");
   for (const item of plan?.items ?? []) add(item.command, "plan", item.criterionId);
   for (const c of task.acceptanceCriteria) {
     if (c.verify.command && (c.verify.kind === "command" || c.verify.kind === "test")) add(c.verify.command, "plan", c.id);
@@ -179,8 +179,21 @@ export async function runVerification(
   const logName = new RegExp(`^verify-R${round}-(\\d+)-\\d+\\.log$`);
   const attempt = 1 + Math.max(0, ...readdirSync(logDir).map((f) => Number(f.match(logName)?.[1] ?? 0)));
 
+  // Verify exactly what was submitted: every change committed, HEAD at the submitted commit.
+  const unclean = uncommittedWork(task, cwd);
+  if (unclean) {
+    return {
+      passed: false,
+      evidence: [{ kind: "command", command: unclean.command, exitCode: 1, summary: unclean.summary }],
+      verifiedSha: git(cwd, ["rev-parse", "HEAD"]),
+    };
+  }
+
   const evidence: NewEvidence[] = [];
   let passed = true;
+  /** Commands that ran and check the code (install does not). */
+  let checks = 0;
+  const install = profile.commands.install?.trim();
   const commands = verificationCommands(task, project);
   for (const [i, cmd] of commands.entries()) {
     const rows = (summary: string, extra: Partial<NewEvidence>): NewEvidence[] =>
@@ -216,6 +229,7 @@ export async function runVerification(
       : summarize(result.output) || "(no output)";
     evidence.push(...rows(summary, { exitCode: result.exitCode, logPath, flaky }));
     if (result.exitCode !== 0) passed = false;
+    if (cmd.command !== install) checks += 1;
   }
 
   const diff = analyzeDiff(cwd, task.mergeBranch);
@@ -228,14 +242,49 @@ export async function runVerification(
       passed = false;
     }
   }
+  // Nothing that checks the code ran (every command skipped, or only install): not a pass.
+  const skipped = [...new Set(evidence.filter((e) => e.skipped).map((e) => `\`${e.command}\``))];
+  const unverifiedNote =
+    passed && checks === 0
+      ? `Not verified: no verification command ran${skipped.length ? `; skipped (not in the project's commands or verify allowlist, and no person approved the plan): ${skipped.join(", ")}` : ""}.`
+      : undefined;
   return {
     passed,
     evidence,
+    ...(unverifiedNote ? { unverifiedNote } : {}),
     tampering: diff?.tampering ?? [],
     diffStats: diff?.diffStats ?? null,
     touchedProtected: diff ? protectedFiles(diff.changedFiles, profile) : [],
     verifiedSha: diff?.headSha ?? null,
   };
+}
+
+/**
+ * Why the worktree is not the submitted code: uncommitted or untracked changes
+ * (they would change what the commands test without being in the branch or in
+ * the diff checks), or HEAD at another commit than the one submitted.
+ */
+function uncommittedWork(task: Task, cwd: string): { command: string; summary: string } | null {
+  const status = git(cwd, ["status", "--porcelain"]);
+  if (status) {
+    const lines = status.split("\n");
+    return {
+      command: "git status --porcelain",
+      summary: [
+        "Uncommitted changes in the worktree (commit them before submit_code):",
+        ...lines.slice(0, 20),
+        ...(lines.length > 20 ? [`… and ${lines.length - 20} more`] : []),
+      ].join("\n"),
+    };
+  }
+  const head = git(cwd, ["rev-parse", "HEAD"]);
+  if (head && task.headSha && !head.startsWith(task.headSha) && !task.headSha.startsWith(head)) {
+    return {
+      command: "git rev-parse HEAD",
+      summary: `HEAD ${head.slice(0, 12)} is not the submitted commit ${task.headSha.slice(0, 12)}: submit the commit that is checked out.`,
+    };
+  }
+  return null;
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────

@@ -1558,6 +1558,11 @@ export interface SubmitVerificationInput extends ClaimAuth {
   verifiedSha?: string | null;
   /** The verifier could not run at all (worktree missing, ...): a person looks, no retry counted. */
   infraError?: string;
+  /**
+   * Nothing that checks the code ran (every command skipped, or only install):
+   * why. The code goes on to review marked as not verified, never as a pass.
+   */
+  unverifiedNote?: string;
   author?: string;
 }
 
@@ -1623,19 +1628,27 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
     const verifiedSha = input.verifiedSha ?? facts?.headSha ?? null;
 
     const strikes = (task.verification?.tamperStrikes ?? 0) + (tampering.length ? 1 : 0);
-    const passed = input.passed && tampering.length === 0;
-    const failures = passed ? 0 : task.verifyFailures + 1;
-    const { to, blocker } = passed
-      ? { to: afterVerify({ ...task, risk, verifyFailures: 0 }, policy, true), blocker: null }
-      : afterFailedCheck(task, policy, risk, { tampering, strikes, failures, actor, now });
+    // A pass needs at least one command that ran: a report where everything was skipped is not verified.
+    const ran = evidence.some((e) => !e.skipped && e.exitCode !== null);
+    const notVerified =
+      input.passed && tampering.length === 0
+        ? (input.unverifiedNote ?? (ran ? undefined : "Not verified: the verifier reported no command that ran."))
+        : undefined;
+    const passed = input.passed && tampering.length === 0 && !notVerified;
+    const failures = passed ? 0 : notVerified ? task.verifyFailures : task.verifyFailures + 1;
+    const { to, blocker } =
+      passed || notVerified
+        ? { to: afterVerify({ ...task, risk, verifyFailures: failures }, policy, true), blocker: null }
+        : afterFailedCheck(task, policy, risk, { tampering, strikes, failures, actor, now });
 
     const lines = evidence.map(
       (e) =>
         `- ${e.skipped ? "⏭" : e.exitCode === 0 ? "✅" : "❌"} \`${e.command ?? e.summary}\`${e.criterionId ? ` (${e.criterionId})` : ""}${e.flaky ? " — flaky, passed on retry" : ""}${e.skipped ? ` — ${e.summary}` : ""}`,
     );
     const message = [
-      `## Verification ${passed ? "passed" : "failed"}`,
+      `## Verification ${passed ? "passed" : notVerified ? "skipped" : "failed"}`,
       "",
+      ...(notVerified ? [notVerified, ""] : []),
       ...lines,
       ...(tampering.length ? ["", "**Test tampering:**", ...tampering.map((t) => `- ${t}`)] : []),
       ...(diffStats ? ["", `Diff: ${diffStats.files} files, +${diffStats.insertions} −${diffStats.deletions}`] : []),
@@ -1643,14 +1656,14 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         ? ["", `⚠ Verified commit ${verifiedSha.slice(0, 12)} differs from the submitted ${task.headSha.slice(0, 12)}.`]
         : []),
       ...(newReasons.length ? ["", `Risk raised to high: ${newReasons.join("; ")}.`] : []),
-      ...(!passed && failures ? ["", "Evidence of the failing commands is on the task; the coder fixes them next."] : []),
+      ...(!passed && !notVerified && failures ? ["", "Evidence of the failing commands is on the task; the coder fixes them next."] : []),
     ].join("\n");
 
     const verification: Verification = {
       round,
       passed,
-      skipped: false,
-      note: null,
+      skipped: !!notVerified,
+      note: notVerified ?? null,
       tampering,
       tamperStrikes: strikes,
       verifiedSha,
@@ -1662,8 +1675,8 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       author: "verifier",
       message,
       messageType: "verify",
-      event: passed ? "verification_passed" : "verification_failed",
-      details: passed ? undefined : lines.filter((l) => l.includes("❌")).join("\n") || tampering.join("; "),
+      event: passed ? "verification_passed" : notVerified ? "verification_skipped" : "verification_failed",
+      details: passed ? undefined : notVerified ?? (lines.filter((l) => l.includes("❌")).join("\n") || tampering.join("; ")),
       release: true,
       patch: {
         acceptanceCriteria: criteria,
@@ -1681,7 +1694,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       task: updated,
       previousStatus: task.status,
       newStatus: updated.status,
-      message: `Verification ${passed ? "passed" : "failed"}. Task moved to ${statusLabel(updated.status)}.`,
+      message: `Verification ${passed ? "passed" : notVerified ? "skipped (nothing ran)" : "failed"}. Task moved to ${statusLabel(updated.status)}.`,
     };
   });
 }

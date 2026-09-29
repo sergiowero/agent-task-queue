@@ -345,6 +345,12 @@ export function renderPrBody(task: Task): string {
   else {
     lines.push(`${v.passed ? "✅ Passed" : "❌ Failed"} (round ${v.round})${v.verifiedSha ? ` on \`${v.verifiedSha.slice(0, 12)}\`` : ""}.`);
     if (task.diffStats) lines.push(`Diff: ${task.diffStats.files} files, +${task.diffStats.insertions} −${task.diffStats.deletions}.`);
+    // A pass covers only the commands that ran: say which ones did not.
+    const skipped = verificationEvidence(task).filter((e) => e.skipped);
+    if (skipped.length) lines.push("");
+    for (const e of skipped) {
+      lines.push(`- ⚠ Skipped (not in the project's commands or verify allowlist): \`${e.command ?? e.summary}\`${e.criterionId ? ` (${e.criterionId})` : ""}`);
+    }
   }
   lines.push("");
   lines.push("## Review", "");
