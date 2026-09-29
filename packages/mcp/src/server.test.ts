@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -13,11 +13,13 @@ import {
   getTasks,
   getTaskById,
   getActivityEvents,
+  patchTask,
   updateTask,
   ROLES,
   TaskStatus,
   skillsBundleVersion,
 } from "@agentq/shared";
+import { forceStatus } from "@agentq/shared/testing";
 import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
 import {
   MCP_ENTRY,
@@ -1149,6 +1151,53 @@ describe("AgentQ MCP claims and blockers", () => {
     const tool = tools.find((t) => t.name === "submit_verification")!;
     expect(tool.inputSchema.required).toEqual(expect.arrayContaining(["taskId", "passed", "evidence"]));
     expect(RUNNER_MCP_TOOLS).toContain("submit_verification");
+  });
+
+  it.skipIf(!Bun.which("git"))("submit_verification reads the worktree's diff itself: protected paths and size raise the risk", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-mcp-verify-"));
+    const run = (...args: string[]) => {
+      const out = Bun.spawnSync(["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...args]);
+      if (out.exitCode !== 0) throw new Error(out.stderr.toString());
+    };
+    try {
+      run("init", "-q", "-b", "main");
+      writeFileSync(join(repo, "README.md"), "x\n");
+      run("add", "-A");
+      run("commit", "-q", "-m", "init");
+      run("switch", "-q", "-c", "feat");
+      mkdirSync(join(repo, "migrations"));
+      writeFileSync(join(repo, "migrations/001.sql"), "select 1;\n".repeat(500));
+      run("add", "-A");
+      run("commit", "-q", "-m", "migration");
+
+      const pid = `mcp-verify-${Date.now()}`;
+      createProject({ id: pid, displayName: "Verify", workingDirectory: repo, profile: { protectedPaths: ["migrations/**"], maxDiffLines: 400 } });
+      const task = createTask({ title: "verify over mcp", description: "d", projectId: pid, risk: "low", mergeBranch: "main" });
+      forceStatus(task.id, TaskStatus.VerifyRequested, { claim: false });
+      patchTask(task.id, { worktreePath: repo });
+
+      const client = await connect();
+      const claimed = parse(await call(client, "claim_task", { ...agent, roles: ["verify"], sessionId: "v1", projectId: pid }));
+      expect(claimed.task.id).toBe(task.id);
+      const out = parse(
+        await call(client, "submit_verification", {
+          taskId: task.id,
+          passed: true,
+          evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "3 pass" }],
+        }),
+      );
+      expect(out.success).toBe(true);
+      const verified = getTaskById(task.id)!;
+      expect(verified.risk).toBe("high");
+      expect(verified.riskReasons).toEqual([
+        "Touches protected paths: migrations/001.sql",
+        "Diff of 500 lines exceeds the project's 400",
+      ]);
+      expect(verified.diffStats).toEqual({ files: 1, insertions: 500, deletions: 0 });
+      removeProjectTasks(pid);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("claim_task returns the brief instead of the conversation; get_task_brief re-reads it", async () => {

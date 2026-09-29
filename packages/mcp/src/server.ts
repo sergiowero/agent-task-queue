@@ -404,7 +404,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review.",
+        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Summary of the changes (markdown)"),
@@ -524,7 +524,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit verification",
       description:
-        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
+        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person). The server also reads the worktree's diff itself: tampering it finds counts as red even if you report none, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         passed: z.boolean().describe("Every command passed and no tests were weakened"),

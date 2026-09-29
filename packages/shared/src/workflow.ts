@@ -39,6 +39,7 @@ import {
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
 import { checkDefinitionOfReady } from "./dor.js";
+import { analyzeDiff, diffRiskReasons, mergeDiffReasons, protectedFiles } from "./diff.js";
 
 /** A pull request URL on GitHub, GitLab or Bitbucket. */
 const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/;
@@ -922,6 +923,8 @@ interface SubmitPlanOut {
   details?: string;
   /** Written after the transition (e.g. why the task went to a person). */
   note?: { message: string; event?: string };
+  /** More activity events written after the transition (e.g. risk_raised). */
+  events?: { event: string; details: string }[];
 }
 
 function submit(
@@ -965,6 +968,7 @@ function submit(
       final = addConversation(updated, "system", out.note.message, "system");
       if (out.note.event) addActivity(taskId, out.note.event, "system", out.note.message);
     }
+    for (const e of out.events ?? []) addActivity(taskId, e.event, "system", e.details);
     return {
       task: final,
       previousStatus: task.status,
@@ -1040,14 +1044,16 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
             at: new Date().toISOString(),
           }
         : null;
+      const newReasons = reasons.filter((r) => !task.riskReasons.includes(r));
       return {
         to: afterPlan({ ...task, risk }, policy, { blockingQuestions: blocking.length > 0 }),
         message: input.message,
+        events: newReasons.length ? [{ event: "risk_raised", details: newReasons.join("; ") }] : [],
         patch: {
           ...(input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {}),
           planSubmission: submission,
           risk,
-          riskReasons: [...task.riskReasons, ...reasons.filter((r) => !task.riskReasons.includes(r))],
+          riskReasons: [...task.riskReasons, ...newReasons],
           ...(blocker ? { blocker } : {}),
         },
       };
@@ -1305,7 +1311,114 @@ export function hasVerificationCommands(task: Task): boolean {
   );
 }
 
+/** What a task's diff shows, as the verifier reports it. */
+interface DiffFacts {
+  diffStats: DiffStats | null;
+  /** Changed files under the project's protected paths. */
+  touchedProtected: string[];
+  tampering: string[];
+  headSha?: string | null;
+}
+
+function profileOf(task: Task) {
+  return resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
+}
+
+/** Reads the diff of a worktree. Call it before the transaction: git can take a while. */
+function worktreeFacts(task: Task | null, worktree: string | null | undefined): DiffFacts | null {
+  if (!task || !worktree) return null;
+  const diff = analyzeDiff(worktree, task.mergeBranch);
+  if (!diff) return null;
+  return {
+    diffStats: diff.diffStats,
+    touchedProtected: protectedFiles(diff.changedFiles, profileOf(task)),
+    tampering: diff.tampering,
+    headSha: diff.headSha,
+  };
+}
+
+/**
+ * The guards every code submission goes through, whether or not the verifier
+ * runs: protected paths or a diff over maxDiffLines raise the risk to high
+ * (never lower it), and the tampering found is returned for routing.
+ */
+function diffGuards(task: Task, facts: DiffFacts | null) {
+  const reasons = facts ? diffRiskReasons(facts.touchedProtected, facts.diffStats, profileOf(task)) : [];
+  const { riskReasons, added } = mergeDiffReasons(task.riskReasons, reasons);
+  return {
+    risk: reasons.length ? maxRisk(task.risk, "high") : task.risk,
+    riskReasons,
+    newReasons: added,
+    tampering: [...new Set(facts?.tampering ?? [])],
+  };
+}
+
+interface FailedCheck {
+  tampering: string[];
+  /** Tamper strikes, this one included. */
+  strikes: number;
+  /** Consecutive failed verifications, this one included. */
+  failures: number;
+  actor: string;
+  now: string;
+}
+
+/**
+ * Where a failed verification (or tampering found on submit) sends the task:
+ * back to the coder, or to a person once tests were weakened twice or the
+ * verification failed `maxVerifyFailures` times in a row.
+ */
+function afterFailedCheck(task: Task, policy: GatePolicy, risk: Risk, f: FailedCheck): { to: TaskStatus; blocker: Blocker | null } {
+  const to = afterVerify({ ...task, risk, verifyFailures: f.failures }, policy, false);
+  const blocker = (reason: string, question: string): Blocker => ({
+    reason,
+    question,
+    phase: "verify",
+    fromStatus: task.status,
+    raisedBy: f.actor,
+    at: f.now,
+  });
+  if (f.tampering.length && f.strikes >= 2) {
+    return {
+      to: TaskStatus.NeedsHuman,
+      blocker: blocker(
+        `Tests were weakened again: ${f.tampering.join("; ")}.`,
+        "Decide whether the test changes are legitimate; if so, send the task to review, otherwise back to the coder.",
+      ),
+    };
+  }
+  if (to === TaskStatus.NeedsHuman) {
+    return {
+      to,
+      blocker: blocker(
+        `Verification failed ${f.failures} times in a row.`,
+        "Look at the failing commands: fix the environment, adjust the plan, or send the task back to the coder.",
+      ),
+    };
+  }
+  return { to, blocker: null };
+}
+
+/**
+ * Raises a task's risk to high for what a diff shows outside a submission
+ * (e.g. the files of its pull request), with a risk_raised event.
+ */
+export function raiseRisk(taskId: string, reasons: string[], actor: string): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    const { riskReasons, added } = mergeDiffReasons(task.riskReasons, reasons);
+    patchTask(taskId, { risk: maxRisk(task.risk, "high"), riskReasons });
+    if (added.length) {
+      addConversation(task, "system", `Risk raised to high: ${added.join("; ")}.`, "system");
+      addActivity(taskId, "risk_raised", actor, added.join("; "));
+    }
+    return getTaskById(taskId)!;
+  });
+}
+
 export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitResult {
+  // The diff is read before the transaction, so git never runs while the database is locked.
+  const facts = worktreeFacts(getTaskById(taskId), input.worktree);
   return submit(
     taskId,
     { from: TaskStatus.Coding, phase: "code", messageType: "code", event: "code_submitted", done: "Code submitted" },
@@ -1341,6 +1454,55 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
         evidenceIds: [...c.evidenceIds, ...evidence.filter((e) => e.criterionId === c.id).map((e) => e.id)],
       }));
 
+      const now = new Date().toISOString();
+      const guards = diffGuards(task, facts);
+      const patch: TaskPatch = {
+        worktreePath: input.worktree ?? null,
+        realBranch: input.branch?.trim() || task.realBranch,
+        headSha: input.headSha?.trim() || null,
+        acceptanceCriteria: criteria,
+        diffStats: facts?.diffStats ?? task.diffStats,
+        risk: guards.risk,
+        riskReasons: guards.riskReasons,
+      };
+      const events = guards.newReasons.length ? [{ event: "risk_raised", details: guards.newReasons.join("; ") }] : [];
+      const raised = guards.newReasons.length ? `Risk raised to high: ${guards.newReasons.join("; ")}.` : null;
+
+      // Weakened tests send the code back at once, whether or not the verifier would run.
+      if (guards.tampering.length) {
+        const strikes = (task.verification?.tamperStrikes ?? 0) + 1;
+        const failures = task.verifyFailures + 1;
+        const routed = afterFailedCheck(task, policy, guards.risk, { tampering: guards.tampering, strikes, failures, actor: author, now });
+        return {
+          to: routed.to,
+          message: input.message,
+          events,
+          note: {
+            message: [
+              "**Test tampering** in the submitted commits, so the code goes back without running the verification:",
+              ...guards.tampering.map((t) => `- ${t}`),
+              ...(raised ? ["", raised] : []),
+            ].join("\n"),
+            event: "verification_failed",
+          },
+          patch: {
+            ...patch,
+            verifyFailures: failures,
+            verification: {
+              round,
+              passed: false,
+              skipped: false,
+              note: "Tests were weakened in the submitted commits; the verification commands did not run.",
+              tampering: guards.tampering,
+              tamperStrikes: strikes,
+              verifiedSha: facts?.headSha ?? null,
+              at: now,
+            },
+            ...(routed.blocker ? { blocker: routed.blocker } : {}),
+          },
+        };
+      }
+
       const verifyNow = hasVerificationCommands(task) && verifierOnline();
       const verification: Verification | null = verifyNow
         ? task.verification
@@ -1354,19 +1516,15 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
             tampering: [],
             tamperStrikes: task.verification?.tamperStrikes ?? 0,
             verifiedSha: null,
-            at: new Date().toISOString(),
+            at: now,
           };
 
       return {
         to: afterCode(task, policy, { verify: verifyNow }),
         message: input.message,
-        patch: {
-          worktreePath: input.worktree ?? null,
-          realBranch: input.branch?.trim() || task.realBranch,
-          headSha: input.headSha?.trim() || null,
-          acceptanceCriteria: criteria,
-          verification,
-        },
+        events,
+        ...(raised ? { note: { message: raised } } : {}),
+        patch: { ...patch, verification },
       };
     },
   );
@@ -1386,8 +1544,15 @@ export interface SubmitVerificationInput extends ClaimAuth {
   author?: string;
 }
 
-/** The verifier reports: evidence per command, criteria met/failed, and where the task goes. */
+/**
+ * The verifier reports: evidence per command, criteria met/failed, and where
+ * the task goes. When the report carries no diff (an agent verifier over MCP),
+ * the server reads the worktree's diff itself, so risk and tampering never
+ * depend on what the verifier chose to report.
+ */
 export function submitVerification(taskId: string, input: SubmitVerificationInput): SubmitResult {
+  const current = input.infraError || input.diffStats !== undefined ? null : getTaskById(taskId);
+  const facts = worktreeFacts(current, current?.worktreePath);
   return withTransaction(() => {
     const task = requireClaim(taskId, TaskStatus.Verifying, input);
     const policy = policyFor(task);
@@ -1429,41 +1594,23 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       evidenceIds: [...c.evidenceIds, ...evidence.filter((e) => e.criterionId === c.id).map((e) => e.id)],
     }));
 
-    // Risk only goes up: protected paths or a diff larger than the project allows.
-    const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
-    const reasons: string[] = [];
-    if (input.touchedProtected?.length) reasons.push(`Touches protected paths: ${input.touchedProtected.join(", ")}`);
-    const size = input.diffStats ? input.diffStats.insertions + input.diffStats.deletions : 0;
-    if (size > profile.maxDiffLines) reasons.push(`Diff of ${size} lines exceeds the project's ${profile.maxDiffLines}`);
-    const newReasons = reasons.filter((r) => !task.riskReasons.includes(r));
-    const risk: Risk = reasons.length ? maxRisk(task.risk, "high") : task.risk;
+    // Risk only goes up (protected paths, a diff larger than the project allows), and
+    // the server's own reading of the diff adds to what the verifier reported.
+    const diffStats = input.diffStats !== undefined ? input.diffStats : (facts?.diffStats ?? null);
+    const guards = diffGuards(task, {
+      diffStats,
+      touchedProtected: [...new Set([...(input.touchedProtected ?? []), ...(facts?.touchedProtected ?? [])])],
+      tampering: [...(input.tampering ?? []), ...(facts?.tampering ?? [])],
+    });
+    const { risk, newReasons, tampering } = guards;
+    const verifiedSha = input.verifiedSha ?? facts?.headSha ?? null;
 
-    const tampering = input.tampering ?? [];
     const strikes = (task.verification?.tamperStrikes ?? 0) + (tampering.length ? 1 : 0);
     const passed = input.passed && tampering.length === 0;
     const failures = passed ? 0 : task.verifyFailures + 1;
-    let to = afterVerify({ ...task, risk, verifyFailures: failures }, policy, passed);
-    let blocker: Blocker | null = null;
-    if (tampering.length && strikes >= 2) {
-      to = TaskStatus.NeedsHuman;
-      blocker = {
-        reason: `Tests were weakened again: ${tampering.join("; ")}.`,
-        question: "Decide whether the test changes are legitimate; if so, send the task to review, otherwise back to the coder.",
-        phase: "verify",
-        fromStatus: task.status,
-        raisedBy: actor,
-        at: now,
-      };
-    } else if (to === TaskStatus.NeedsHuman) {
-      blocker = {
-        reason: `Verification failed ${failures} times in a row.`,
-        question: "Look at the failing commands: fix the environment, adjust the plan, or send the task back to the coder.",
-        phase: "verify",
-        fromStatus: task.status,
-        raisedBy: actor,
-        at: now,
-      };
-    }
+    const { to, blocker } = passed
+      ? { to: afterVerify({ ...task, risk, verifyFailures: 0 }, policy, true), blocker: null }
+      : afterFailedCheck(task, policy, risk, { tampering, strikes, failures, actor, now });
 
     const lines = evidence.map(
       (e) =>
@@ -1474,9 +1621,9 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       "",
       ...lines,
       ...(tampering.length ? ["", "**Test tampering:**", ...tampering.map((t) => `- ${t}`)] : []),
-      ...(input.diffStats ? ["", `Diff: ${input.diffStats.files} files, +${input.diffStats.insertions} −${input.diffStats.deletions}`] : []),
-      ...(input.verifiedSha && task.headSha && !input.verifiedSha.startsWith(task.headSha) && !task.headSha.startsWith(input.verifiedSha)
-        ? ["", `⚠ Verified commit ${input.verifiedSha.slice(0, 12)} differs from the submitted ${task.headSha.slice(0, 12)}.`]
+      ...(diffStats ? ["", `Diff: ${diffStats.files} files, +${diffStats.insertions} −${diffStats.deletions}`] : []),
+      ...(verifiedSha && task.headSha && !verifiedSha.startsWith(task.headSha) && !task.headSha.startsWith(verifiedSha)
+        ? ["", `⚠ Verified commit ${verifiedSha.slice(0, 12)} differs from the submitted ${task.headSha.slice(0, 12)}.`]
         : []),
       ...(newReasons.length ? ["", `Risk raised to high: ${newReasons.join("; ")}.`] : []),
       ...(!passed && failures ? ["", "Evidence of the failing commands is on the task; the coder fixes them next."] : []),
@@ -1489,7 +1636,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       note: null,
       tampering,
       tamperStrikes: strikes,
-      verifiedSha: input.verifiedSha ?? null,
+      verifiedSha,
       at: now,
     };
     const updated = transitionTask(task, to, {
@@ -1504,9 +1651,9 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         acceptanceCriteria: criteria,
         verifyFailures: failures,
         verification,
-        diffStats: input.diffStats ?? task.diffStats,
+        diffStats: diffStats ?? task.diffStats,
         risk,
-        riskReasons: [...task.riskReasons, ...newReasons],
+        riskReasons: guards.riskReasons,
         producers: { ...task.producers, verify: producerOf(task) },
         ...(blocker ? { blocker } : {}),
       },

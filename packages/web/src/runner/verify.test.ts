@@ -10,6 +10,7 @@ import {
   claimNextTask,
   createProject,
   createTask,
+  getActivityEvents,
   getEvidence,
   getProjectById,
   getTaskById,
@@ -179,19 +180,85 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(getEvidence(task.id)[0].summary).toContain("Timed out");
   }, 15_000);
 
-  it("skipped or deleted tests count as tampering: back to the coder, then to a person", async () => {
+  it("skipped or deleted tests are caught on submit, before the verifier: back to the coder, then to a person", () => {
     const { repo, worktree } = makeRepo();
     const pid = project(repo, { test: `${BUN} -e "0"` });
     commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
-    coded(pid, worktree);
-    const first = await verify(pid);
+    const first = coded(pid, worktree);
     expect(first.status).toBe(TaskStatus.ChangesRequested);
+    expect(first.verification).toMatchObject({ passed: false, skipped: false, tamperStrikes: 1 });
     expect(first.verification?.tampering[0]).toContain("skipped or focused test added in src/a.test.ts");
-    recode(first, worktree, { "src/a.test.ts": null });
-    const second = await verify(pid);
+    expect(first.conversation.at(-1)?.message).toContain("Test tampering");
+    const second = recode(first, worktree, { "src/a.test.ts": null });
     expect(second.verification?.tampering.some((t) => t.includes("deleted test file src/a.test.ts"))).toBe(true);
     expect(second.status).toBe(TaskStatus.NeedsHuman);
+    expect(second.blocker).toMatchObject({ phase: "verify" });
     expect(second.blocker?.reason).toContain("Tests were weakened again");
+  });
+
+  it("without commands the diff is still checked: tampering goes back, protected paths raise the risk", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, {}, { protectedPaths: ["migrations/**"] });
+    commit(worktree, { "src/a.test.ts": "it.only('works', () => {});\n" });
+    const tampered = coded(pid, worktree);
+    expect(tampered.status).toBe(TaskStatus.ChangesRequested);
+    expect(tampered.verification?.tampering).toHaveLength(1);
+
+    const fixed = recode(tampered, worktree, { "src/a.test.ts": "it('works', () => {});\n", "migrations/001.sql": "create table x (id int);\n" });
+    expect(fixed.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(fixed.verification).toMatchObject({ skipped: true, tampering: [] });
+    expect(fixed.risk).toBe("high");
+    expect(fixed.riskReasons).toEqual(["Touches protected paths: migrations/001.sql"]);
+    expect(fixed.diffStats).toEqual({ files: 1, insertions: 1, deletions: 0 });
+    expect(getActivityEvents({ taskId: fixed.id }).some((e) => e.eventType === "risk_raised")).toBe(true);
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
+    const out = submitReview(r.task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
+    expect(out.newStatus).toBe(TaskStatus.WaitingCodeReview);
+  });
+
+  it("with the verifier offline, weakened tests still go back and a large diff still raises the risk", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: "bun test" }, { maxDiffLines: 5 });
+    const submitOffline = (files: Record<string, string | null>) => {
+      commit(worktree, files);
+      const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+      setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+      submitCode(c.task.id, { message: "c", worktree, claimToken: c.claimToken });
+      return getTaskById(c.task.id)!;
+    };
+    createTask({ title: "offline", description: "d", projectId: pid });
+    const tampered = submitOffline({ "src/a.test.ts": null });
+    expect(tampered.status).toBe(TaskStatus.ChangesRequested);
+    expect(tampered.verification?.tampering).toEqual(["deleted test file src/a.test.ts"]);
+
+    const big = submitOffline({ "src/a.test.ts": "it('works', () => {});\n", "src/big.ts": "x\n".repeat(20) });
+    expect(big.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(big.verification?.note).toContain("not running");
+    expect(big.risk).toBe("high");
+    expect(big.riskReasons).toEqual(["Diff of 20 lines exceeds the project's 5"]);
+  });
+
+  it("the server checks an agent verifier's report against the diff itself", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` }, { protectedPaths: ["migrations/**"] });
+    const task = coded(pid, worktree);
+    expect(task.status).toBe(TaskStatus.VerifyRequested);
+    // The agent verifier reports a clean pass and no diff; the branch it verified says otherwise.
+    commit(worktree, { "migrations/001.sql": "create table x (id int);\n", "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const claimed = claimNextTask({ roles: ["verify"], agent: { ...reviewer, sessionId: "llm-verifier" }, projectId: pid })!;
+    submitVerification(task.id, {
+      passed: true,
+      evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "1 pass" }],
+      tampering: [],
+      claimToken: claimed.claimToken,
+    });
+    const verified = getTaskById(task.id)!;
+    expect(verified.status).toBe(TaskStatus.ChangesRequested);
+    expect(verified.verification?.tampering[0]).toContain("skipped or focused test added in src/a.test.ts");
+    expect(verified.verification?.verifiedSha).toBe(git(worktree, "rev-parse", "HEAD"));
+    expect(verified.risk).toBe("high");
+    expect(verified.riskReasons).toEqual(["Touches protected paths: migrations/001.sql"]);
+    expect(verified.diffStats).toEqual({ files: 2, insertions: 2, deletions: 1 });
   });
 
   it("detects lowered coverage thresholds", () => {

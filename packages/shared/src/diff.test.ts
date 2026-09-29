@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import { analyzeDiff, protectedFiles } from "./diff.js";
+import { analyzeDiff, diffRiskReasons, mergeDiffReasons, protectedFiles } from "./diff.js";
 import { resolveProfile } from "./profile.js";
 
 const hasGit = !!Bun.which("git");
@@ -37,6 +37,30 @@ function diffOf(base: Record<string, string>, change: Record<string, string | nu
   apply(repo, change);
   return analyzeDiff(repo, "main")!;
 }
+
+describe("diff risk reasons", () => {
+  const profile = resolveProfile({ protectedPaths: ["migrations/**"], maxDiffLines: 10 });
+
+  it("names protected paths and a diff over the limit", () => {
+    expect(diffRiskReasons(["migrations/1.sql"], { files: 2, insertions: 8, deletions: 3 }, profile)).toEqual([
+      "Touches protected paths: migrations/1.sql",
+      "Diff of 11 lines exceeds the project's 10",
+    ]);
+    expect(diffRiskReasons([], { files: 1, insertions: 10, deletions: 0 }, profile)).toEqual([]);
+  });
+
+  it("a newer reason of the same kind replaces the older one; only new kinds are announced", () => {
+    const first = mergeDiffReasons(["The plan touches protected paths: migrations/1.sql"], ["Touches protected paths: migrations/1.sql"]);
+    expect(first.added).toEqual(["Touches protected paths: migrations/1.sql"]);
+    const next = mergeDiffReasons(first.riskReasons, ["Touches protected paths: migrations/1.sql, migrations/2.sql", "Diff of 50 lines exceeds the project's 10"]);
+    expect(next.riskReasons).toEqual([
+      "The plan touches protected paths: migrations/1.sql",
+      "Touches protected paths: migrations/1.sql, migrations/2.sql",
+      "Diff of 50 lines exceeds the project's 10",
+    ]);
+    expect(next.added).toEqual(["Diff of 50 lines exceeds the project's 10"]);
+  });
+});
 
 describe.skipIf(!hasGit)("analyzeDiff", () => {
   it("flags skip variants of the common test runners", () => {

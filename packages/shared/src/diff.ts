@@ -113,3 +113,31 @@ export function analyzeDiff(cwd: string, mergeBranch: string): DiffAnalysis | nu
 export function protectedFiles(changedFiles: string[], profile: ProjectProfile): string[] {
   return changedFiles.filter((f) => matchesAny(f, profile.protectedPaths));
 }
+
+const PROTECTED_REASON = "Touches protected paths: ";
+const SIZE_REASON = /^Diff of \d+ lines exceeds/;
+
+/** Why a diff makes the task high risk: protected paths, or more lines than the project allows. */
+export function diffRiskReasons(touchedProtected: string[], diffStats: DiffStats | null, profile: ProjectProfile): string[] {
+  const reasons: string[] = [];
+  if (touchedProtected.length) reasons.push(`${PROTECTED_REASON}${touchedProtected.join(", ")}`);
+  const size = diffStats ? diffStats.insertions + diffStats.deletions : 0;
+  if (size > profile.maxDiffLines) reasons.push(`Diff of ${size} lines exceeds the project's ${profile.maxDiffLines}`);
+  return reasons;
+}
+
+/**
+ * Adds diff reasons to a task's risk reasons. The diff is cumulative and is
+ * read on every submission, so a newer reason of the same kind (more paths, a
+ * bigger size) replaces the older one instead of piling up. `added` holds the
+ * kinds the task did not have yet: the ones worth announcing.
+ */
+export function mergeDiffReasons(existing: string[], reasons: string[]): { riskReasons: string[]; added: string[] } {
+  const kind = (r: string) => (r.startsWith(PROTECTED_REASON) ? "protected" : SIZE_REASON.test(r) ? "size" : null);
+  const replaced = new Set(reasons.map(kind));
+  const had = new Set(existing.map(kind));
+  return {
+    riskReasons: [...existing.filter((r) => kind(r) === null || !replaced.has(kind(r))), ...reasons],
+    added: reasons.filter((r) => !had.has(kind(r))),
+  };
+}
