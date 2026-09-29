@@ -75,7 +75,7 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
    ```
 8. Submit with `submit_code` (see Submit Code)
 
-The validation plan is frozen once approved. If it cannot be followed (a command cannot work, a criterion cannot be tested as planned), do **not** change it or work around it: call `report_blocker` and say why.
+The validation plan is frozen once approved. If it cannot be followed (a command cannot work, a criterion cannot be tested as planned), do **not** change it or work around it: call `report_blocker` and say why. A person can then send the task back to planning, and the next approved plan replaces it.
 
 ### Review fixes (claimed from `changes_requested`)
 

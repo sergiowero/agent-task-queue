@@ -50,7 +50,7 @@ Once a person approves the plan, the validation plan is **frozen**: the coder ca
 
 ### Revising a plan (`plan_changes_requested`)
 
-The feedback is in the task conversation (`task.conversation[]`). Read it, revise the previous plan so every point is addressed, and submit the revised plan as a whole (not just the delta). Note in the plan what changed and why.
+The feedback is in the task conversation (`task.conversation[]`). Read it, revise the previous plan so every point is addressed, and submit the revised plan as a whole (not just the delta), with its full `validationPlan` (a revision without one clears the previous one). Note in the plan what changed and why. A task can also come back here from coding, verification or review when the approved plan was wrong (`brief.approvedPlan` is that plan; `brief.lastAnswer` or `brief.humanNotes` say why): the next approval replaces it.
 
 ## Submit Plan
 
