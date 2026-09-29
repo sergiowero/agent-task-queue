@@ -76,6 +76,7 @@ describe("plan critique (L2)", () => {
       critique(pid, { verdict: "request_changes", message: "no test", findings: [{ severity: "major", text: "AC1 has no check" }] }).newStatus,
     ).toBe(TaskStatus.PlanChangesRequested);
     expect(getFindings(task.id).map((f) => [f.id, f.phase])).toEqual([["P1-1", "plan"]]);
+    expect(getTaskById(task.id)!.conversation.at(-1)).toMatchObject({ message: "no test", messageType: "plan_review" });
     const again = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
     submitPlan(task.id, {
       message: "v2",

@@ -176,7 +176,9 @@ const SUBMITTED_TO: Record<string, { status: string; label: string }> = {
 const MESSAGE_TYPE_LABELS: Record<string, string> = {
   user: "User",
   agent: "Agent note",
+  refine: "Refinement",
   plan: "Plan",
+  plan_review: "Plan critique",
   code: "Code submission",
   review: "Review",
   merge: "Merge",
@@ -394,6 +396,7 @@ function iterationsLine(task: Task): string | null {
   const into = (status: string) => task.history.filter((h) => h.new_status === status).length;
   const parts = [
     count("plan") && plural(count("plan"), "plan"),
+    count("plan_review") && plural(count("plan_review"), "plan critique"),
     into(TaskStatus.PlanChangesRequested) &&
       plural(into(TaskStatus.PlanChangesRequested), "plan change request"),
     count("code") && plural(count("code"), "code submission"),

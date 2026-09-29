@@ -20,11 +20,24 @@ interface ConversationEntry {
   authorName: string;
   timestamp: string;
   message: string;
-  messageType?: "user" | "agent" | "plan" | "code" | "review" | "merge" | "system" | (string & {});
+  messageType?:
+    | "user"
+    | "agent"
+    | "refine"
+    | "plan"
+    | "plan_review"
+    | "code"
+    | "verify"
+    | "review"
+    | "merge"
+    | "system"
+    | (string & {});
 }
 
 const TYPE_META: Record<string, { label: string; tone: Tone; icon: LucideIcon }> = {
+  refine: { label: "Refinement", tone: "accent", icon: PlanIcon },
   plan: { label: "Plan", tone: "accent", icon: PlanIcon },
+  plan_review: { label: "Plan critique", tone: "warning", icon: ReviewIcon },
   code: { label: "Code", tone: "info", icon: TerminalIcon },
   verify: { label: "Verification", tone: "info", icon: VerifyIcon },
   review: { label: "Review", tone: "warning", icon: ReviewIcon },

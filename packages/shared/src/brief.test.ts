@@ -16,6 +16,7 @@ import {
   submitCode,
   submitPlan,
   submitPlanReview,
+  submitRefinement,
   submitReview,
   submitVerification,
 } from "./workflow.js";
@@ -158,9 +159,29 @@ describe("task brief", () => {
   });
 
   it("the task summary carries what still keeps a draft from being ready", () => {
-    const task = createTaskForProject({ title: "rough", description: "export", projectId, draft: true });
+    const task = createTaskForProject({ title: "rough", description: "export", projectId: project(), draft: true });
     expect(buildTaskBrief(task.id)!.task.dorIssues).toEqual(getTaskById(task.id)!.dorIssues);
     expect(buildTaskBrief(task.id)!.task.dorIssues.length).toBeGreaterThan(0);
+  });
+
+  it("a refinement and a plan critique are their own messages, never the plan", () => {
+    const pid = project();
+    const draft = createTaskForProject({ title: "draft", description: "export", projectId: pid, draft: true });
+    let c = claimNextTask({ roles: ["refine"], agent: coder, projectId: pid })!;
+    submitRefinement(draft.id, {
+      message: "Refined: rewrote the criteria",
+      claimToken: c.claimToken,
+      description: "Users can export their data as CSV from the settings page.",
+      acceptanceCriteria: ["export works $ bun test export"],
+      context: "assumed CSV",
+    });
+    expect(getTaskById(draft.id)!.conversation.at(-1)?.messageType).toBe("refine");
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(draft.id);
+    expect(buildTaskBrief(draft.id)!.latestPlan).toBeNull();
+    // Nothing to freeze: a task that never had a plan cannot have one approved.
+    forceStatus(draft.id, TaskStatus.WaitingPlanReview, { claim: false });
+    expect(() => approvePlan(draft.id)).toThrow("There is no plan to approve");
   });
 
   it("records people's change requests and answers as handoffs", () => {

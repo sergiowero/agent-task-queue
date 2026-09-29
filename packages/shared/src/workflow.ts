@@ -651,8 +651,9 @@ function humanTransition(
 /** The latest submitted plan and its validation plan, frozen as the approved plan. */
 function freezePlan(task: Task, approvedBy: string): ApprovedPlan {
   const plan = [...task.conversation].reverse().find((e) => e.messageType === "plan");
+  if (!plan) throw new WorkflowError("There is no plan to approve: the task has no submitted plan yet.");
   return {
-    markdown: plan?.message ?? "",
+    markdown: plan.message,
     validation: task.validationPlan,
     approvedBy,
     at: new Date().toISOString(),
@@ -1132,7 +1133,7 @@ export function submitPlanReview(taskId: string, input: SubmitPlanReviewInput): 
     {
       from: TaskStatus.PlanReviewing,
       phase: "plan_review",
-      messageType: "review",
+      messageType: "plan_review",
       event: "plan_review_submitted",
       done: `Plan critique submitted (${input.verdict})`,
     },
@@ -1265,7 +1266,7 @@ export interface SubmitRefinementInput extends SubmitInput {
 export function submitRefinement(taskId: string, input: SubmitRefinementInput): SubmitResult {
   return submit(
     taskId,
-    { from: TaskStatus.Refining, phase: "refine", messageType: "plan", event: "draft_refined", done: "Draft refined" },
+    { from: TaskStatus.Refining, phase: "refine", messageType: "refine", event: "draft_refined", done: "Draft refined" },
     input,
     (task) => {
       const criteria = input.acceptanceCriteria ? normalizeCriteria(input.acceptanceCriteria, task.acceptanceCriteria) : task.acceptanceCriteria;

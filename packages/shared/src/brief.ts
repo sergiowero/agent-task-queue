@@ -93,7 +93,7 @@ export interface TaskBrief {
   more: string;
 }
 
-const SUBMISSIONS = new Set<ConversationEntry["messageType"]>(["plan", "code", "review", "merge", "verify"]);
+const SUBMISSIONS = new Set<ConversationEntry["messageType"]>(["refine", "plan", "plan_review", "code", "verify", "review", "merge"]);
 
 /** What the task, its project and its round look like in every brief. */
 function briefBasics(task: Task) {

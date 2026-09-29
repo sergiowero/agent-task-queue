@@ -3,12 +3,14 @@ import { randomUUID } from "crypto";
 import type { Task } from "@agentq/shared";
 import {
   TaskStatus,
+  addConversation,
   createProject,
   createTask,
   deleteProject,
   deleteRunner,
   deleteTask,
   getRunners,
+  getTaskById,
   updateTask,
 } from "@agentq/shared";
 import { startServer } from "./index.js";
@@ -323,6 +325,8 @@ describe("user actions include their note", () => {
     createdTaskIds.push(task.id);
 
     updateTask(task.id, { status: TaskStatus.WaitingPlanReview });
+    // Approving needs a submitted plan to freeze.
+    addConversation(getTaskById(task.id)!, "planner", "## Plan", "plan");
     let res = await json(`/api/tasks/${task.id}/approve-plan`, "POST");
     expect(res.status).toBe(200);
     let body = (await res.json()) as Task;
