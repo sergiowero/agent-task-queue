@@ -116,6 +116,11 @@ so a slow or stuck GitHub never holds up the server:
 Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
 merged** on the task page.
 
+With `autoArchive` on, every way a task completes through its PR archives it: a merge
+the sync sees, an L3 auto-merge and **Mark merged**. When archiving fails (for example
+the project folder moved), the task stays complete and its activity shows an
+`archive_failed` event with the reason.
+
 **L3 auto-merge.** With `autonomy: 3` and `autoMerge: true`, the sync merges a PR
 itself (`gh pr merge --squash`) when the task is **low risk**, every check is green and
 no reviewer's latest review asks for changes (only each reviewer's newest approve,

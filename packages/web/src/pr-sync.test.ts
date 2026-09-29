@@ -144,6 +144,20 @@ describe("syncPullRequests", () => {
     expect(task.archivePath).toStartWith(join(root, "archive"));
   });
 
+  it("records a failed automatic archive on the task instead of dropping it", async () => {
+    const gone = randomUUID();
+    createProject({ id: gone, displayName: "Gone", workingDirectory: join(root, "gone"), profile: { autoArchive: true } });
+    const url = "https://github.com/org/repo/pull/74";
+    const id = prOpenTask(gone, { pr: { url, number: 74 } });
+    const { gh } = fakeGh({ [url]: open({ state: "MERGED", url }) });
+    await syncPullRequests({ gh });
+    const task = getTaskById(id)!;
+    expect(task.status).toBe(TaskStatus.Complete);
+    expect(task.archivedAt).toBeNull();
+    const failed = getActivityEvents({ taskId: id }).find((e) => e.eventType === "archive_failed");
+    expect(failed?.details).toContain("working directory not found");
+  });
+
   it("sends a task whose PR was closed without merging to a person", async () => {
     const id = prOpenTask(project(), { pr: { url: "https://github.com/org/repo/pull/71", number: 71 } });
     const { gh } = fakeGh({ "https://github.com/org/repo/pull/71": open({ state: "CLOSED", url: "https://github.com/org/repo/pull/71" }) });
@@ -220,6 +234,18 @@ describe("syncPullRequests", () => {
         expect(merges(calls, url)).toEqual([]);
         expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
       });
+    });
+
+    it("archives the auto-merged task when the project archives automatically", async () => {
+      const url = "https://github.com/org/repo/pull/82";
+      const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true }, profile: { autoArchive: true } }), { risk: "low", pr: { url, number: 82 } });
+      const { gh } = fakeGh({ [url]: green(url) });
+      const result = await syncPullRequests({ gh });
+      expect(result.autoMerged).toContain(id);
+      const task = getTaskById(id)!;
+      expect(task.status).toBe(TaskStatus.Complete);
+      expect(task.archivedAt).not.toBeNull();
+      expect(task.archivePath).toStartWith(join(root, "archive"));
     });
 
     it("merges once the person who asked for changes approved the PR", async () => {

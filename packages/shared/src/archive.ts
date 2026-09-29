@@ -10,6 +10,7 @@ import {
   slugify,
 } from "./database.js";
 import { getFindings } from "./records.js";
+import { resolveProfile } from "./profile.js";
 import type {
   AcceptanceCriterion,
   ActivityEvent,
@@ -872,4 +873,26 @@ export function archiveTask(taskId: string, options: ArchiveTaskOptions = {}): A
   addActivity(task.id, "task_archived", actor, summaryPath);
 
   return { task: updated, directory, summaryPath, detailedPath, pullRequests };
+}
+
+/**
+ * Archives a task that just completed when its project archives automatically
+ * (profile `autoArchive`): after a merge seen on GitHub, an L3 auto-merge or a
+ * person's "Mark merged". The merge already happened, so a failure is recorded
+ * as an `archive_failed` event on the task instead of thrown. Returns the
+ * archive, or null when nothing was archived.
+ */
+export function archiveIfAuto(
+  taskId: string,
+  options: Pick<ArchiveTaskOptions, "pullRequests" | "runnerJobs"> = {},
+): ArchiveTaskResult | null {
+  const task = getTaskById(taskId);
+  const project = task?.projectId ? getProjectById(task.projectId) : null;
+  if (!task || task.archivedAt || !resolveProfile(project?.profile).autoArchive) return null;
+  try {
+    return archiveTask(taskId, { ...options, actor: "system" });
+  } catch (e) {
+    addActivity(taskId, "archive_failed", "system", e instanceof Error ? e.message : String(e));
+    return null;
+  }
 }

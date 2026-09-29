@@ -651,6 +651,7 @@ export const EVENT_TYPES: Record<string, string> = {
   pr_closed: "PR closed without merging",
   task_reverted: "Reverted",
   task_archived: "Archived",
+  archive_failed: "Archive failed",
   comment_added: "Comment",
 };
 

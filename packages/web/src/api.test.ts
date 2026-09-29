@@ -619,6 +619,22 @@ describe("POST /api/tasks/:id/archive", () => {
     expect(forced.status).toBe(200);
     expect((await forced.json()).summaryPath).toBe(result.summaryPath);
   });
+
+  it("Mark merged archives the task when the project archives automatically", async () => {
+    const autoId = randomUUID();
+    const created = await json("/api/projects", "POST", {
+      id: autoId,
+      displayName: "Auto-archive API Project",
+      workingDirectory: archiveRoot,
+      profile: { autoArchive: true },
+    });
+    expect(created.status).toBe(201);
+    const task = await createTaskViaApi({ title: "Archive on merge", projectId: autoId });
+    await setStatus(task.id, TaskStatus.PrOpen);
+    const done = await expectTransition(task.id, "confirm-completion", TaskStatus.Complete);
+    expect(done.archivedAt).toBeTruthy();
+    expect(done.archivePath).toStartWith(join(archiveRoot, "archive"));
+  });
 });
 
 describe("cancel / unblock / comment", () => {

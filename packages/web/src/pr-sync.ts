@@ -7,7 +7,7 @@ import type { PullRequest, Task } from "@agentq/shared";
 import {
   TaskStatus,
   addActivity,
-  archiveTask,
+  archiveIfAuto,
   completeFromPullRequest,
   getProjectById,
   getTaskById,
@@ -15,7 +15,6 @@ import {
   policyFor,
   pullRequestClosed,
   recordPullRequest,
-  resolveProfile,
 } from "@agentq/shared";
 
 export interface GhResult {
@@ -177,11 +176,7 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
     if (pr.state === "merged") {
       completeFromPullRequest(task.id, pr);
       result.merged.push(task.id);
-      if (resolveProfile(project.profile).autoArchive) {
-        try {
-          archiveTask(task.id, { actor: "system", pullRequests: pr.url ? [pr.url] : [] });
-        } catch {}
-      }
+      archiveIfAuto(task.id, { pullRequests: pr.url ? [pr.url] : [] });
       continue;
     }
     if (pr.state === "closed") {
@@ -206,6 +201,7 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
         if (stillOpen(task.id)) {
           completeFromPullRequest(task.id, { ...pr, state: "merged", mergedAt: now, mergedBy: "agentq-auto-merge" });
           result.autoMerged.push(task.id);
+          archiveIfAuto(task.id, { pullRequests: pr.url ? [pr.url] : [] });
         }
       } else {
         result.errors.push({ taskId: task.id, error: `auto-merge failed: ${(merge.stderr || merge.stdout).trim().split("\n")[0]}` });

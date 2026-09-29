@@ -249,6 +249,7 @@ export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./gi
 
 export {
   archiveTask,
+  archiveIfAuto,
   buildArchiveDocuments,
   resolveArchiveDirectory,
   archiveBaseName,
