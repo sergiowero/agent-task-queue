@@ -60,7 +60,12 @@ describe("editing a task", () => {
     const task = planSubmitted(pid);
     // Waiting for the plan's approval: the criteria can still change.
     expect(criteriaEditable(task)).toBe(true);
-    editTask(task.id, { acceptanceCriteria: ["exports a header row $ bun test export", "shows a download link"] });
+    const reworded = editTask(task.id, { acceptanceCriteria: ["exports a header row $ bun test export", "shows a download link"] });
+    // Reworded in place: the ids the validation plan names still point at the same criteria.
+    expect(reworded.acceptanceCriteria.map((c) => [c.id, c.text])).toEqual([
+      ["AC1", "exports a header row"],
+      ["AC2", "shows a download link"],
+    ]);
     const approved = approvePlan(task.id);
     expect(approved.status).toBe(TaskStatus.ReadyForCode);
     expect(criteriaEditable(approved)).toBe(false);

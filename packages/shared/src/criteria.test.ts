@@ -20,6 +20,43 @@ describe("acceptance criteria", () => {
     ]);
   });
 
+  it("a reworded criterion keeps its id; its status and evidence start over", () => {
+    const before = normalizeCriteria(["a $ bun test a", "b"]).map((c) => ({ ...c, status: "met" as const, evidenceIds: [`E-${c.id}`] }));
+    expect(normalizeCriteria(["a2 $ bun test a", "b"], before).map((c) => [c.id, c.text, c.status, c.evidenceIds, c.verify])).toEqual([
+      ["AC1", "a2", "pending", [], { kind: "command", command: "bun test a" }],
+      ["AC2", "b", "met", ["E-AC2"], { kind: "review" }],
+    ]);
+    // Moved and reworded (or one removed and one added): exact text first, the rest gets a new id.
+    expect(normalizeCriteria(["b2", "a $ bun test a"], before).map((c) => [c.id, c.text])).toEqual([
+      ["AC3", "b2"],
+      ["AC1", "a"],
+    ]);
+    expect(normalizeCriteria(["b", "c"], before).map((c) => c.id)).toEqual(["AC2", "AC3"]);
+    // One added (or one removed): the count changes, so a new criterion gets a new id.
+    expect(normalizeCriteria(["a $ bun test a", "b", "c"], before).map((c) => c.id)).toEqual(["AC1", "AC2", "AC3"]);
+    expect(normalizeCriteria(["c"], before).map((c) => c.id)).toEqual(["AC3"]);
+  });
+
+  it("a line without its command drops it; checks a line cannot show are kept", () => {
+    const before = normalizeCriteria([
+      "persists $ bun test theme",
+      { text: "looks right", verify: { kind: "manual", notes: "375px" } },
+      { text: "covered", verify: { kind: "test", command: "bun test cover" } },
+    ]);
+    // What the portal's one-line editor sends back (the schema turns lines into objects).
+    const after = normalizeCriteria(
+      [{ text: "persists" }, { text: "looks right" }, { text: "covered", verify: { kind: "command", command: "bun test cover" } }],
+      before,
+    );
+    expect(after.map((c) => c.verify)).toEqual([
+      { kind: "review" },
+      { kind: "manual", notes: "375px" },
+      { kind: "test", command: "bun test cover" },
+    ]);
+    // An agent naming the criterion by id without a check leaves the check alone.
+    expect(normalizeCriteria([{ id: "AC1", text: "persists" }], before)[0].verify).toEqual({ kind: "command", command: "bun test theme" });
+  });
+
   it("reads rows stored as strings or as objects", () => {
     expect(criteriaFromStored(["x"])[0]).toMatchObject({ id: "AC1", text: "x" });
     const stored = normalizeCriteria(["y"]);
