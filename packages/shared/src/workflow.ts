@@ -53,6 +53,7 @@ import {
   UNBLOCK_TARGET,
   canTransition,
   claimRuleFor,
+  criteriaEditable,
   isRole,
   resolveTargets,
   statusLabel,
@@ -812,10 +813,26 @@ export function unblockTask(taskId: string, input: HumanActionInput = {}): Task 
 
 export type TaskEdit = Omit<TaskPatch, "acceptanceCriteria"> & { acceptanceCriteria?: CriterionInput[] };
 
-/** A person edits a task's fields (never its status, claim or history). */
+/**
+ * A person edits a task's fields (never its status, claim or history), only in
+ * the statuses STATUS_INFO marks editable: never while an agent holds it. The
+ * criteria are frozen with an approved plan (see criteriaEditable).
+ */
 export function editTask(taskId: string, edit: TaskEdit): Task {
   const task = requireTask(taskId);
+  if (!STATUS_INFO[task.status].editable) {
+    throw new WorkflowError(
+      STATUS_INFO[task.status].kind === "active"
+        ? `An agent is working on this task (${statusLabel(task.status)}): unblock it before editing it.`
+        : `A task in ${statusLabel(task.status)} cannot be edited.`,
+    );
+  }
   const { acceptanceCriteria, ...rest } = edit;
+  if (acceptanceCriteria && !criteriaEditable(task)) {
+    throw new WorkflowError(
+      "The acceptance criteria are frozen with the approved plan: send the task back to planning to change them.",
+    );
+  }
   const patch: TaskPatch = { ...rest };
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
   const project = task.projectId ? getProjectById(task.projectId) : null;

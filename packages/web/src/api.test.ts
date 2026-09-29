@@ -385,6 +385,20 @@ describe("GET/PUT /api/tasks/:id", () => {
     const missing = await json(`/api/tasks/${randomUUID()}`, "PUT", { title: "x" });
     expect(missing.status).toBe(404);
   });
+
+  it("PUT refuses edits while an agent holds the task (409) and allows them once it is back in the queue", async () => {
+    const created = await createTaskViaApi({ title: "Held", risk: "high" });
+    await setStatus(created.id, TaskStatus.Reviewing);
+    const res = await json(`/api/tasks/${created.id}`, "PUT", { title: "x", risk: "low" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("unblock it before editing");
+    expect(await getTask(created.id)).toMatchObject({ title: "Held", risk: "high" });
+
+    await setStatus(created.id, TaskStatus.ReadyForCode);
+    const ok = await json(`/api/tasks/${created.id}`, "PUT", { title: "Edited" });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as Task).title).toBe("Edited");
+  });
 });
 
 describe("workflow sub-actions (requiresPlan task)", () => {

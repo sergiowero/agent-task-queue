@@ -175,7 +175,7 @@ A record of a task status transition. Contains:
 
 ### States (23 total)
 
-The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee. The web UI reads the same catalog (`@agentq/shared/catalog`).
+The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee, and answers `409` in a status the catalog marks not editable (while an agent holds the task, or once it has a PR open, is complete or canceled). Once a plan is approved the acceptance criteria are frozen with it: changing them needs the task back in planning. The web UI reads the same catalog (`@agentq/shared/catalog`).
 
 The task lifecycle moves through these states:
 

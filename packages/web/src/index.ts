@@ -910,7 +910,14 @@ const handleTaskById = wrapHandler(async (req, url) => {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
     if (!getTaskById(taskId)) return errorResponse("not found", 404);
-    const task = editTask(taskId, parsed.data);
+    let task: Task;
+    try {
+      task = editTask(taskId, parsed.data);
+    } catch (e) {
+      // Not editable in its status (an agent holds it, or the criteria are frozen with the plan).
+      if (e instanceof WorkflowError) return errorResponse(e.message, 409);
+      throw e;
+    }
     broadcastSSE("task_updated", task);
     return jsonResponse(task);
   }

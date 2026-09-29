@@ -291,6 +291,23 @@ export function isActiveStatus(status: string): boolean {
   return STATUS_INFO[status as TaskStatus]?.kind === "active";
 }
 
+/**
+ * Whether a person may change a task's acceptance criteria: only where the task
+ * is editable, and once a plan is approved the criteria are frozen with it until
+ * the task goes back to planning (the next approval freezes the new ones).
+ */
+export function criteriaEditable(task: {
+  status: string;
+  approvedPlan?: unknown;
+  blocker?: { phase: Phase | null } | null;
+}): boolean {
+  const info = STATUS_INFO[task.status as TaskStatus];
+  if (!info?.editable) return false;
+  if (!task.approvedPlan) return true;
+  const phase = task.status === TaskStatus.NeedsHuman ? task.blocker?.phase : info.phase;
+  return phase === "refine" || phase === "plan" || phase === "plan_review";
+}
+
 // ─── Roles and claims ─────────────────────────────────────────────────
 
 /**

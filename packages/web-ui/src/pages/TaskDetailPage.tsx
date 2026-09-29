@@ -63,6 +63,7 @@ import {
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
+  criteriaEditable,
   type AutonomyLevel,
   type Risk,
   type TaskStatus,
@@ -625,7 +626,8 @@ export function TaskDetailPage() {
                 label="Acceptance criteria"
                 value={task.acceptanceCriteria?.map(formatCriterionLine).join("\n") ?? ""}
                 placeholder="One criterion per line; end with “$ command” to verify it by running a command"
-                editable={canEdit}
+                // Frozen with an approved plan until the task goes back to planning.
+                editable={criteriaEditable(task)}
                 display={
                   task.acceptanceCriteria?.length > 0 ? (
                     <CriteriaList criteria={task.acceptanceCriteria} evidence={evidence} />
