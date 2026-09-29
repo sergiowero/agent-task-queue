@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "bun:test";
-import { createProject, getTaskById, setAppState } from "./database.js";
+import { createProject, createTask, getTaskById, patchTask, setAppState } from "./database.js";
 import { buildAgentBrief, buildTaskBrief, type IndependentBrief } from "./brief.js";
 import { checkDefinitionOfReady } from "./dor.js";
 import { getHandoffs } from "./records.js";
@@ -165,6 +165,23 @@ describe("pull request body", () => {
     expect(pr.body).toContain("## Risk\n\n**medium**");
     expect(pr.body).toContain("Out of scope: PDF export");
     expect(pr.body).toContain(`AgentQ task \`${task.id}\``);
+  });
+});
+
+describe("dependencies", () => {
+  it("the coder's brief lists the tasks it starts after, with their pull request and head commit", () => {
+    const projectId = project();
+    const dep = createTaskForProject({ title: "Backend", description: "The export endpoint returns CSV rows.", projectId });
+    patchTask(dep.id, {
+      status: TaskStatus.Complete,
+      headSha: "abc123",
+      pullRequest: { url: "https://github.com/o/r/pull/7", number: 7, state: "merged", branch: "b", mergedAt: null, mergedBy: null, changesRequestedBy: [], checks: null, checkedAt: null },
+    });
+    const task = createTask({ title: "UI", description: "d", projectId, blockedBy: [dep.id, "gone"] });
+    expect(buildTaskBrief(task.id)!.dependencies).toEqual([
+      { id: dep.id, title: "Backend", status: TaskStatus.Complete, mergeBranch: dep.mergeBranch, headSha: "abc123", pullRequest: "https://github.com/o/r/pull/7" },
+      { id: "gone", title: "", status: "missing", mergeBranch: null, headSha: null, pullRequest: null },
+    ]);
   });
 });
 

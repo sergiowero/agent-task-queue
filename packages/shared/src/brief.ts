@@ -54,6 +54,11 @@ export interface TaskBrief {
   /** How big one task (one reviewable PR) may be: split bigger work into subtasks. */
   sizeLimits: SizeLimits;
   criteria: AcceptanceCriterion[];
+  /**
+   * The tasks this one starts after (blockedBy): their work must be in this
+   * task's branch, which starts from the up-to-date merge branch.
+   */
+  dependencies: Dependency[];
   approvedPlan: ApprovedPlan | null;
   /** The latest plan while no plan is approved yet (planner revisions, plan reviews). */
   latestPlan: string | null;
@@ -77,6 +82,27 @@ export interface TaskBrief {
   pr: { body: string; url: string | null } | null;
   /** Where the full history is. */
   more: string;
+}
+
+/** A task this one starts after, and where its work went. */
+export interface Dependency {
+  id: string;
+  title: string;
+  status: Task["status"] | "missing";
+  /** The branch its pull request went into. */
+  mergeBranch: string | null;
+  /** Head commit of its pull request. */
+  headSha: string | null;
+  pullRequest: string | null;
+}
+
+function dependenciesOf(task: Task): Dependency[] {
+  return task.blockedBy.map((id) => {
+    const dep = getTaskById(id);
+    return dep
+      ? { id, title: dep.title, status: dep.status, mergeBranch: dep.mergeBranch, headSha: dep.headSha, pullRequest: dep.pullRequest?.url ?? null }
+      : { id, title: "", status: "missing" as const, mergeBranch: null, headSha: null, pullRequest: null };
+  });
 }
 
 /** The project's size limits for one task (see ProjectProfile). */
@@ -159,6 +185,7 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
   return {
     ...basics,
     criteria: task.acceptanceCriteria,
+    dependencies: dependenciesOf(task),
     approvedPlan: task.approvedPlan,
     latestPlan: task.approvedPlan ? null : latestPlanOf(task),
     openFindings: getFindings(task.id).filter((f) => f.status !== "verified"),
