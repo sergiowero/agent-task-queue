@@ -17,7 +17,14 @@ import {
   revertClaim,
 } from "@agentq/shared";
 import type { BuiltCommand, CommandBuilder } from "./commands.js";
-import { buildCommand as defaultBuildCommand, runsDir, toolBinary } from "./commands.js";
+import {
+  CUSTOM_RUNNERS_DISABLED,
+  buildCommand as defaultBuildCommand,
+  customRunnersAllowed,
+  runsCustomArgv,
+  runsDir,
+  toolBinary,
+} from "./commands.js";
 import { buildPrompt, phaseForStatus, type Phase } from "./prompt.js";
 
 /** reverted: released for a retry · blocked: the task went to needs_human (no retry). */
@@ -106,6 +113,29 @@ function expandHome(p: string): string {
   if (p === "~") return homedir();
   if (p.startsWith("~/")) return join(homedir(), p.slice(2));
   return p;
+}
+
+export const REDACTED_CLAIM_TOKEN = "[claimToken]";
+
+/**
+ * Replaces `secret` in a stream of text chunks. The end of a chunk that could be
+ * the start of the secret is held back until the next chunk (or `end`) settles it.
+ */
+export function secretRedactor(secret: string): (chunk: string, end?: boolean) => string {
+  if (!secret) return (chunk) => chunk;
+  let held = "";
+  return (chunk, end = false) => {
+    const text = (held + chunk).split(secret).join(REDACTED_CLAIM_TOKEN);
+    held = "";
+    if (end) return text;
+    for (let n = Math.min(secret.length - 1, text.length); n > 0; n--) {
+      if (secret.startsWith(text.slice(-n))) {
+        held = text.slice(-n);
+        return text.slice(0, -n);
+      }
+    }
+    return text;
+  };
 }
 
 function publicJob(job: RunnerJob): Omit<RunnerJob, "tail"> {
@@ -215,6 +245,12 @@ export class RunnerEngine {
     if (!runner) throw new Error("runner not found");
     const rt = this.runtime(runnerId);
     if (rt.running) return this.getState(runnerId);
+    if (runsCustomArgv(runner) && !customRunnersAllowed()) {
+      rt.lastError = CUSTOM_RUNNERS_DISABLED;
+      console.warn(`[runner] ${runner.name} not started: ${CUSTOM_RUNNERS_DISABLED}`);
+      this.emitRunner(runnerId);
+      return this.getState(runnerId);
+    }
     rt.running = true;
     rt.lastError = null;
     void this.resolveVersion(runner.tool).then((v) => {
@@ -297,6 +333,14 @@ export class RunnerEngine {
       // Deleted underneath us: stop quietly.
       rt.ticking = false;
       await this.stop(rt.id, "Runner deleted");
+      return;
+    }
+    if (runsCustomArgv(runner) && !customRunnersAllowed()) {
+      // Turned into a custom argv runner while running: claim nothing more.
+      rt.ticking = false;
+      rt.running = false;
+      rt.lastError = CUSTOM_RUNNERS_DISABLED;
+      this.emitRunner(rt.id);
       return;
     }
     try {
@@ -526,15 +570,17 @@ export class RunnerEngine {
     const reader = stream.getReader();
     active.readers.push(reader);
     const decoder = new TextDecoder();
+    // Tools echo their MCP calls: the claim token stays out of the log and the portal.
+    const redact = secretRedactor(active.claimToken);
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        this.appendOutput(job, decoder.decode(value, { stream: true }));
+        this.appendOutput(job, redact(decoder.decode(value, { stream: true })));
       }
-      const rest = decoder.decode();
-      if (rest) this.appendOutput(job, rest);
+      this.appendOutput(job, redact(decoder.decode()));
     } catch {}
+    this.appendOutput(job, redact("", true));
   }
 
   private pendingOutput = new Map<string, { job: RunnerJob; chunks: string[]; timer: Timer | null }>();

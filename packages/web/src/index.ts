@@ -67,6 +67,8 @@ import {
   validateEnv,
 } from "@agentq/shared";
 import { getRunnerEngine, listTools } from "./runner/runner.js";
+import { CUSTOM_RUNNERS_DISABLED, customRunnersAllowed, runsCustomArgv } from "./runner/commands.js";
+import { refuseRequest } from "./security.js";
 import { VerifyWorker } from "./runner/verify.js";
 import { PrSync } from "./pr-sync.js";
 import type { ChildProcess } from "child_process";
@@ -196,8 +198,17 @@ async function serveStatic(url: URL): Promise<Response | null> {
 const sseClients = new Set<ReadableStreamDefaultController>();
 let sseKeepAlive: Timer | null = null;
 
+/**
+ * JSON for HTTP responses and SSE events. A task's claim token is left out
+ * wherever it appears: it proves who holds the task, so anyone who read it
+ * could submit as that agent (the MCP server keeps it private too).
+ */
+function publicJson(data: unknown): string {
+  return JSON.stringify(data, (key, value) => (key === "claimToken" ? undefined : value));
+}
+
 function broadcastSSE(event: string, data: unknown) {
-  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const payload = `event: ${event}\ndata: ${publicJson(data)}\n\n`;
   for (const controller of sseClients) {
     try {
       controller.enqueue(new TextEncoder().encode(payload));
@@ -279,7 +290,7 @@ function corsHeaders(): HeadersInit {
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
+  return new Response(publicJson(data), {
     status,
     headers: { "Content-Type": "application/json", ...corsHeaders() },
   });
@@ -345,6 +356,8 @@ function wrapHandler(
 export interface StartServerOptions {
   /** Port to listen on (0 = random free port). Defaults to env PORT. */
   port?: number;
+  /** Address to listen on. Defaults to env AGENTQ_HOST (loopback). */
+  hostname?: string;
   /** Enable dev-mode CORS headers and the Vite proxy. Defaults to `--dev` flag. */
   dev?: boolean;
 }
@@ -354,12 +367,14 @@ export function startServer(opts: StartServerOptions = {}) {
 
   const server = Bun.serve({
     port: opts.port ?? PORT,
+    hostname: opts.hostname ?? validateEnv().AGENTQ_HOST,
     // SSE streams idle between events; the default 10 s idle timeout would
     // drop them before the 30 s keepalive comment goes out.
     idleTimeout: 120,
     async fetch(req) {
       const url = new URL(req.url);
       const handlers: Array<(req: Request, url: URL) => Promise<Response | null>> = [
+        handleRequestGuard,
         handleOptions,
         handleSSE,
         handleGetAgents,
@@ -437,9 +452,23 @@ async function main() {
   setInterval(sweep, 60_000);
 
   console.log(`AgentQ Web Server running on http://localhost:${server.port}`);
+  if (!["127.0.0.1", "::1", "localhost"].includes(server.hostname ?? "")) {
+    console.warn(`[server] listening on ${server.hostname} (AGENTQ_HOST): anyone who can reach this port can drive AgentQ`);
+  }
 }
 
 // ─── Handler implementations ────────────────────────────────────────
+
+/**
+ * Requests a web page could forge never reach a route (see security.ts). Every
+ * path is checked: the task and project routes also match below a prefix.
+ */
+async function handleRequestGuard(req: Request, url: URL): Promise<Response | null> {
+  const refusal = refuseRequest(req);
+  if (!refusal) return null;
+  logRequest(req.method, url.pathname, refusal.status, 0);
+  return errorResponse(refusal.error, refusal.status);
+}
 
 async function handleOptions(req: Request, url: URL): Promise<Response | null> {
   if (req.method !== "OPTIONS") return null;
@@ -613,6 +642,7 @@ const handleRunners = wrapHandler(async (req, url) => {
     if (!parsed.success) {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
+    if (runsCustomArgv(parsed.data) && !customRunnersAllowed()) return errorResponse(CUSTOM_RUNNERS_DISABLED);
     if (parsed.data.projectId && !getProjectById(parsed.data.projectId)) {
       return errorResponse("project not found", 404);
     }
@@ -641,6 +671,15 @@ const handleRunnerById = wrapHandler(async (req, url) => {
       if (!parsed.success) {
         return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
       }
+      // Changing the argv, or turning a custom runner on, needs the opt-in; renaming or stopping one does not.
+      const next = {
+        tool: parsed.data.tool ?? runner.tool,
+        extraArgs: parsed.data.extraArgs !== undefined ? parsed.data.extraArgs : runner.extraArgs,
+      };
+      const touchesArgv = parsed.data.tool !== undefined || parsed.data.extraArgs !== undefined;
+      if ((touchesArgv || parsed.data.enabled) && runsCustomArgv(next) && !customRunnersAllowed()) {
+        return errorResponse(CUSTOM_RUNNERS_DISABLED);
+      }
       if (parsed.data.projectId && !getProjectById(parsed.data.projectId)) {
         return errorResponse("project not found", 404);
       }
@@ -659,6 +698,7 @@ const handleRunnerById = wrapHandler(async (req, url) => {
   }
 
   if (req.method === "POST" && rest === "/start") {
+    if (runsCustomArgv(runner) && !customRunnersAllowed()) return errorResponse(CUSTOM_RUNNERS_DISABLED);
     updateRunner(id, { enabled: true });
     runnerEngine.start(id);
     return jsonResponse(runnerWithState(getRunnerById(id)!));

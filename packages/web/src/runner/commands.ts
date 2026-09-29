@@ -154,6 +154,23 @@ export function geminiSettings(mcp: McpServerLaunch, systemPath = geminiSystemSe
   return JSON.stringify({ ...base, mcpServers: { ...base.mcpServers, ...mcpServers } }, null, 2);
 }
 
+/**
+ * A runner that executes an argv of its own: the custom tool, or extra arguments
+ * on any tool (e.g. an inline `--mcp-config` or a Codex `-c` override can start
+ * any command). Anyone who can create one can run commands on this machine.
+ */
+export function runsCustomArgv(runner: { tool: RunnerTool; extraArgs?: string[] | null }): boolean {
+  return runner.tool === "custom" || (runner.extraArgs?.length ?? 0) > 0;
+}
+
+/** Custom argv runners are created and run only when the server was started with AGENTQ_ALLOW_CUSTOM_RUNNERS=1. */
+export function customRunnersAllowed(): boolean {
+  return process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS === "1";
+}
+
+export const CUSTOM_RUNNERS_DISABLED =
+  "Custom runners (tool custom, or extraArgs on any tool) are disabled: start the server with AGENTQ_ALLOW_CUSTOM_RUNNERS=1 to allow them";
+
 export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltCommand {
   const extra = ctx.extraArgs ?? [];
   const model = ctx.model?.trim();
