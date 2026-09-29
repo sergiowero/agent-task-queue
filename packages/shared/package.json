@@ -17,6 +17,7 @@
     "./skills": "./src/skills.ts",
     "./testing": "./src/testing.ts",
     "./criteria": "./src/criteria.ts",
-    "./profile": "./src/profile.ts"
+    "./profile": "./src/profile.ts",
+    "./separation": "./src/separation.ts"
   }
 }

@@ -31,6 +31,7 @@ import { TONE_SOFT, TOOL_TONE } from "../lib/status";
 import { formatDateTime, formatDuration, formatRelative, pluralize } from "../lib/format";
 import { cn } from "../lib/cn";
 import { ROLE_INFO, type Role } from "@agentq/shared/catalog";
+import { separationGaps, type SeparationGap } from "@agentq/shared/separation";
 import { useSSE } from "../hooks/useSSE";
 import { Alert } from "../components/Alert";
 import { Badge, Dot, JobStatusBadge } from "../components/Badge";
@@ -604,6 +605,7 @@ export function RunnersPage() {
 
   const runningCount = runners.filter((r) => r.state.running).length;
   const activeJobs = runners.reduce((sum, r) => sum + r.state.activeJobs, 0);
+  const gaps = separationGaps(runners, projects);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -649,11 +651,20 @@ export function RunnersPage() {
         <VerifierStatus />
         {runners.length > 0 && (
           <div className="space-y-5">
-            {runners.filter((r) => r.roles.includes("review")).length === 1 && (
-              <Alert tone="info" title="Reviews need a second agent">
-                With autonomy L1 or higher, code goes to an AI review without a click, but a runner never
-                reviews code it wrote. Add a second runner with the review role, ideally on a different
-                model; otherwise unclaimed reviews go to you after a while.
+            {gaps.length > 0 && (
+              <Alert tone="warning" title="Some checks have no runner that may take them">
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {gaps.map((gap) => (
+                    <li key={`${gap.projectId}:${gap.check}:${gap.reason}`}>
+                      <SeparationGapText gap={gap} projectName={projectName(gap.projectId)} runners={runners} />
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">
+                  A runner never critiques, verifies or reviews its own work. Add a runner with that role
+                  {gaps.some((g) => g.reason === "model") && " on another model"}; otherwise these checks wait
+                  for an agent session you open and go to you after a while.
+                </p>
               </Alert>
             )}
             <div className="grid grid-cols-3 gap-3">
@@ -691,6 +702,29 @@ export function RunnersPage() {
       {deleting && <DeleteRunnerModal runner={deleting} onClose={() => setDeleting(null)} />}
       {open && <JobsDrawer runner={open} onClose={() => setOpenId(null)} />}
     </div>
+  );
+}
+
+/** One project's check that no runner may take, e.g. "Web: code by Solo, no other runner reviews". */
+function SeparationGapText({
+  gap,
+  projectName,
+  runners,
+}: {
+  gap: SeparationGap;
+  projectName: string | null;
+  runners: Runner[];
+}) {
+  const authors = gap.authors.map((id) => runners.find((r) => r.id === id)?.name ?? id).join(", ");
+  const work = gap.check === "review" ? "code" : "plans";
+  const checks = gap.check === "review" ? "reviews code" : "critiques plans";
+  return (
+    <>
+      <span className="font-medium">{projectName}</span>: {work} by {authors},{" "}
+      {gap.reason === "separation"
+        ? `no other runner ${checks}`
+        : `every other runner that ${checks} is on the same model, and the project requires a different one`}
+    </>
   );
 }
 

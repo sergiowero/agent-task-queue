@@ -179,6 +179,13 @@ export {
 } from "./policy.js";
 
 export {
+  separationGaps,
+  type SeparationGap,
+  type SeparationProject,
+  type SeparationRunner,
+} from "./separation.js";
+
+export {
   addFindings,
   getFinding,
   getFindings,

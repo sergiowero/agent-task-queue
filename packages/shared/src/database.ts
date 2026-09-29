@@ -952,9 +952,11 @@ export function getTaskById(id: string): Task | null {
 }
 
 export interface ClaimFilter {
-  /** Identity of the claimer: tasks whose artifact it produced are skipped (separation of duties). */
-  sessionKey?: string;
-  /** Model of the claimer: skipped when the project requires a different model than the producer's. */
+  /** Identities of the claimer: tasks whose artifact any of them produced, in any round, are skipped (separation of duties). */
+  identities?: string[];
+  /** Model key of the claimer (see modelKey): skipped when the project requires a different model than every producer's. */
+  modelKey?: string;
+  /** The claimer's model as given, compared with producers recorded before model keys existed. */
   model?: string;
 }
 
@@ -984,17 +986,24 @@ export function getClaimableTasks(
     sql += ` AND t.id NOT IN (${excludeTaskIds.map(() => "?").join(", ")})`;
     params.push(...excludeTaskIds);
   }
-  // Nobody claims the review of an artifact they produced.
+  // Nobody claims the check of an artifact they produced, in any round. Tasks
+  // recorded before producers kept every round match on the last producer.
+  const identities = filter.identities ?? [];
+  const models = [...new Set([filter.modelKey, filter.model].filter((m): m is string => !!m))];
   for (const [status, phase] of Object.entries(SEPARATION)) {
     if (!statuses.includes(status)) continue;
-    if (filter.sessionKey) {
-      sql += ` AND NOT (t.status = ? AND json_extract(t.producers, '$.${phase}.sessionKey') IS ?)`;
-      params.push(status, filter.sessionKey);
+    if (identities.length > 0) {
+      sql += ` AND NOT (t.status = ? AND EXISTS (SELECT 1 FROM json_each(COALESCE(
+        json_extract(t.producers, '$.${phase}.identities'),
+        json_array(json_extract(t.producers, '$.${phase}.sessionKey')))) WHERE value IN (${identities.map(() => "?").join(", ")})))`;
+      params.push(status, ...identities);
     }
-    if (filter.model) {
-      sql += ` AND NOT (t.status = ? AND json_extract(t.producers, '$.${phase}.model') IS ?
-        AND COALESCE(json_extract(p.policy, '$.requireDifferentModel'), 0) = 1)`;
-      params.push(status, filter.model);
+    if (models.length > 0) {
+      sql += ` AND NOT (t.status = ? AND COALESCE(json_extract(p.policy, '$.requireDifferentModel'), 0) = 1
+        AND EXISTS (SELECT 1 FROM json_each(COALESCE(
+          json_extract(t.producers, '$.${phase}.modelKeys'),
+          json_array(json_extract(t.producers, '$.${phase}.model')))) WHERE value IN (${models.map(() => "?").join(", ")})))`;
+      params.push(status, ...models);
     }
   }
   sql += " ORDER BY t.priority DESC, t.created_at ASC LIMIT ?";

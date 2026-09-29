@@ -203,7 +203,10 @@ describe("AgentQ MCP server", () => {
       tool: "TestAgent",
       model: "test-model",
       agentId: "testagent@1.0|test-model",
-      sessionKey: expect.stringMatching(/^mcp:/),
+      // The conversation, then this server process.
+      sessionKey: "session:testagent:session-mcp",
+      identities: ["session:testagent:session-mcp", expect.stringMatching(/^mcp:/)],
+      modelKey: "test-model",
     });
     // The token comes back once, to the claimer; the task itself never shows it.
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
@@ -997,6 +1000,38 @@ describe("AgentQ MCP claims and blockers", () => {
     const job = await connect({ claims: { [task.id]: claimed.claimToken } });
     const out = await call(job, "submit_plan", { taskId: task.id, message: "plan", context: "c" });
     expect(out.isError).toBeFalsy();
+  });
+
+  it("a runner job's server has no claim_task: the job cannot claim more work, such as its own review", async () => {
+    const task = createTask({ title: "job claim", description: "d", projectId, requiresPlan: true });
+    const claimer = await connect();
+    const claimed = parse(await call(claimer, "claim_task", { ...agent, roles: ["plan"], sessionId: "s2j", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const job = await connect({ claims: { [task.id]: claimed.claimToken } });
+    const names = (await job.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("claim_task");
+    for (const tool of RUNNER_MCP_TOOLS) expect(names).toContain(tool);
+    const denied = await call(job, "claim_task", { ...agent, roles: ["plan_review"], sessionId: "s2j", projectId });
+    expect(denied.isError).toBe(true);
+  });
+
+  it("a conversation stays the same agent after its MCP server restarts", async () => {
+    const restartProject = `${projectId}-restart`;
+    createProject({ id: restartProject, displayName: "Restart", workingDirectory: "/tmp/restart" });
+    const task = createTask({ title: "restart", description: "d", projectId: restartProject });
+    const before = await connect();
+    const roles = ["code", "review"];
+    parse(await call(before, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    const coded = parse(await call(before, "submit_code", { taskId: task.id, message: "c", worktree: "/w", context: "c" }));
+    expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
+
+    // Claude Code resumed the conversation with a new server process.
+    const after = await connect();
+    const own = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    expect(own.reason).toBe("no_tasks_available");
+    const other = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-2", projectId: restartProject }));
+    expect(other.task).toMatchObject({ id: task.id, status: TaskStatus.Reviewing });
+    removeProjectTasks(restartProject);
   });
 
   it("report_blocker moves the task to needs_human and releases it", async () => {

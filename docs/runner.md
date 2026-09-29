@@ -188,11 +188,17 @@ anything the dying agent still submits is refused.
 ### Separation of duties and restarts
 
 A runner claims with its id, so every claim of the same runner has the same
-`sessionKey` (`runner:<id>`) across jobs. Submits record it as the producer of
-the artifact, and a claim never returns the review of code the same runner
-wrote. On an L1+ project a runner with both `code` and `review` therefore needs a
-second runner with `review`; the Runners page says so. Reviews nobody eligible picks
-up go to a person after the project's `reviewStarvationMin`.
+`sessionKey` (`runner:<id>`) across jobs. Submits record it as a producer of
+the artifact, and a claim never returns the plan critique, verification or review
+of a plan or code the same runner wrote in any round. On an L1+ project a runner
+with both `code` and `review` therefore needs a second runner with `review` (on
+another model when the project sets `requireDifferentModel`; a runner with no
+model runs its tool's default, which differs from another tool's). The Runners page
+warns, per project, when no enabled runner may take such a check. Reviews nobody
+eligible picks up go to a person after the project's `reviewStarvationMin`.
+
+The job's own MCP server has no `claim_task`: the runner already claimed the task,
+and a claim from the job would not carry the runner's identity.
 
 When the server starts, tasks that a runner job held when the server went down
 go back to the queue (`recoverOrphans`), before any runner claims again. The

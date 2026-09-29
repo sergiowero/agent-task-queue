@@ -13,6 +13,7 @@ import {
   getAgentById,
   getActivityEvents,
   getProjectById,
+  setAppState,
   patchTask,
   updateProject,
 } from "./database.js";
@@ -125,7 +126,9 @@ describe("claimNextTask", () => {
     expect(a!.task.assignedAgent).toMatchObject({
       ...buildAgentRef(agentA.toolName, agentA.model),
       agentId: a!.agent.id,
-      sessionKey: "session:session-a",
+      sessionKey: "session:agenta:session-a",
+      identities: ["session:agenta:session-a"],
+      modelKey: "model-a",
     });
     expect(b!.task.assignedAgent).toMatchObject(buildAgentRef(agentB.toolName, agentB.model));
     expect(a!.claimToken).toBeTruthy();
@@ -615,7 +618,12 @@ describe("autonomy L2: reviews that decide", () => {
   it("submit_code asks for an AI review without a click, and the coder cannot take it", () => {
     const id = coded();
     expect(claimNextTask({ roles: ["code", "review"], agent: coder, projectId })).toBeNull();
-    expect(getTaskById(id)!.producers.code).toMatchObject({ sessionKey: "session:s-coder", model: "sonnet" });
+    expect(getTaskById(id)!.producers.code).toMatchObject({
+      sessionKey: "session:coder:s-coder",
+      identities: ["session:coder:s-coder"],
+      model: "sonnet",
+      modelKeys: ["claude-sonnet"],
+    });
   });
 
   it("approve moves the task to approved; the verdict is recorded", () => {
@@ -689,6 +697,114 @@ describe("autonomy L2: reviews that decide", () => {
     const sameModel = { ...reviewer, model: "sonnet" };
     expect(claimNextTask({ roles: ["review"], agent: sameModel, projectId })).toBeNull();
     expect(claimNextTask({ roles: ["review"], agent: reviewer, projectId })!.task.id).toBe(id);
+  });
+
+  it("requireDifferentModel compares normalized models; a blank model is its tool's default", () => {
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const id = coded();
+    for (const model of ["Sonnet", "anthropic/sonnet", "claude-sonnet-4-5-20250929", "us.anthropic.claude-sonnet-4-v1:0"]) {
+      const claim = claimNextTask({ roles: ["review"], agent: { ...reviewer, model }, projectId });
+      expect({ model, claim }).toEqual({ model, claim: null });
+    }
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "claude-opus-4-5" }, projectId })!.task.id).toBe(id);
+
+    // Runners with no model: a claude runner's code is not refused to a codex runner.
+    const task = createTask({ title: "defaults", description: "d", projectId });
+    createdTaskIds.push(task.id);
+    const runner = (tool: string, runnerId: string) => ({
+      roles: ["code", "review"] as Role[],
+      projectId,
+      runnerId,
+      agent: { toolName: tool, version: "1", model: "default", sessionId: runnerId },
+    });
+    const c = claimNextTask(runner("claude", "claude-1"))!;
+    expect(c.task.assignedAgent).toMatchObject({ sessionKey: "runner:claude-1", modelKey: "claude:default" });
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    expect(claimNextTask(runner("claude", "claude-2"))).toBeNull();
+    expect(claimNextTask({ ...runner("Claude Code", "s-claude"), runnerId: undefined })).toBeNull();
+    expect(claimNextTask(runner("codex", "codex-1"))!.task.id).toBe(task.id);
+  });
+
+  it("every session that coded a round is kept off the review, and under requireDifferentModel every coder's model", () => {
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const id = coded();
+    review(id, { verdict: "request_changes", message: "fix", findings: [{ severity: "major", text: "no tests" }] });
+    const fixer = { toolName: "Fixer", version: "1", model: "gpt-5", sessionId: "s-fixer" };
+    const c = claimNextTask({ roles: ["code"], agent: fixer, projectId })!;
+    expect(c.task.id).toBe(id);
+    submitCode(id, {
+      message: "fixed",
+      worktree: "/w",
+      claimToken: c.claimToken,
+      findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "added" }],
+    });
+    expect(getTaskById(id)!.producers.code).toMatchObject({
+      sessionKey: "session:fixer:s-fixer",
+      identities: ["session:coder:s-coder", "session:fixer:s-fixer"],
+      modelKeys: ["claude-sonnet", "gpt-5"],
+    });
+    // The round-1 coder's commits are still on the branch.
+    expect(claimNextTask({ roles: ["review"], agent: { ...coder, model: "gemini-2.5-pro" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "sonnet" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "gpt-5" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: reviewer, projectId })!.task.id).toBe(id);
+  });
+
+  it("the coder never verifies its own code, nor its model under requireDifferentModel; the built-in verifier always can", () => {
+    const verifiable = () => {
+      const task = createTask({ title: "verify", description: "d", projectId, acceptanceCriteria: ["works $ bun test works"] });
+      createdTaskIds.push(task.id);
+      const c = claimNextTask({ roles: ["code", "verify"], agent: coder, projectId, runnerId: "both" })!;
+      expect(c.task.id).toBe(task.id);
+      // The verifier is online only for this submit: other tests expect code to go straight to review.
+      setAppState("verifier_heartbeat", new Date().toISOString());
+      try {
+        expect(submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken }).newStatus).toBe(
+          TaskStatus.VerifyRequested,
+        );
+      } finally {
+        setAppState("verifier_heartbeat", new Date(0).toISOString());
+      }
+      return task.id;
+    };
+    const builtin = { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
+
+    const first = verifiable();
+    expect(claimNextTask({ roles: ["code", "verify"], agent: coder, projectId, runnerId: "both" })).toBeNull();
+    expect(claimNextTask({ roles: ["verify"], agent: reviewer, projectId })!.task.id).toBe(first);
+
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const second = verifiable();
+    expect(claimNextTask({ roles: ["verify"], agent: { ...reviewer, model: "sonnet" }, projectId })).toBeNull();
+    const v = claimNextTask({ roles: ["verify"], agent: builtin, projectId, runnerId: "builtin:verifier" })!;
+    expect(v.task.id).toBe(second);
+    expect(v.task.status).toBe(TaskStatus.Verifying);
+  });
+
+  it("an MCP conversation stays the same agent after its server restarts; a placeholder sessionId falls back to the server", () => {
+    const task = createTask({ title: "restart", description: "d", projectId });
+    createdTaskIds.push(task.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId, instanceKey: "mcp:A" })!;
+    expect(c.task.assignedAgent).toMatchObject({
+      sessionKey: "session:coder:s-coder",
+      identities: ["session:coder:s-coder", "mcp:A"],
+    });
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    // Same conversation on a restarted server, or another sessionId on the same server: still the coder.
+    expect(claimNextTask({ roles: ["review"], agent: coder, projectId, instanceKey: "mcp:B" })).toBeNull();
+    const other = { ...coder, sessionId: "other" };
+    expect(claimNextTask({ roles: ["review"], agent: other, projectId, instanceKey: "mcp:A" })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: other, projectId, instanceKey: "mcp:B" })!.task.id).toBe(task.id);
+
+    // "unknown" names no conversation, so it does not lump every "unknown" session together.
+    const unnamed = createTask({ title: "unnamed", description: "d", projectId });
+    createdTaskIds.push(unnamed.id);
+    const unknown = { ...coder, sessionId: "unknown" };
+    const u = claimNextTask({ roles: ["code"], agent: unknown, projectId, instanceKey: "mcp:C" })!;
+    expect(u.task.assignedAgent).toMatchObject({ sessionKey: "mcp:C", identities: ["mcp:C"] });
+    submitCode(unnamed.id, { message: "c", worktree: "/w", claimToken: u.claimToken });
+    expect(claimNextTask({ roles: ["review"], agent: unknown, projectId, instanceKey: "mcp:C" })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: unknown, projectId, instanceKey: "mcp:D" })!.task.id).toBe(unnamed.id);
   });
 
   it("claims by hand-opened sessions get a lease; the sweeper returns expired ones to the queue", () => {
