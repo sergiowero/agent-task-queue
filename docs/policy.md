@@ -98,8 +98,12 @@ fresh set of rounds.
 
 The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens
 the PR with the body AgentQ writes (`brief.pr.body`: summary, each acceptance criterion
-with its evidence, the verification, the AI review and the findings it addressed, the
-risk), then calls `submit_pr`: the task waits in `pr_open`. The human review happens on
+with its evidence, the verification, the review, the risk), then calls `submit_pr`: the
+task waits in `pr_open`. The review section gives the latest AI verdict with the commit it
+saw (or says it was about an earlier submission, when the code changed since and no AI
+reviewed it again), the person who approved the code when a person did, the findings
+addressed, and the open findings: blocker and major ones apart ("a person accepted"),
+since only a person can approve code with those open, then the non-blocking ones. The human review happens on
 the PR, where the diff and CI are.
 
 With the `gh` CLI installed and logged in, the web server checks every open PR each
@@ -156,8 +160,9 @@ approved later.
 The **Needs you** page lists every task waiting for a person, grouped by what they must
 do and oldest first: answer a blocker, approve a plan (medium or high risk), review code
 (high risk, a spot check, or no reviewer available), merge a PR, or refine a draft that
-is not ready. On a code review the task page shows the AI verdict, the verification, the
-diff size, the risk and the criteria in one panel; answered findings can be ticked to
+is not ready. On a code review the task page shows the AI verdict (marked "before the
+last change" when the code was submitted again since), the verification, the diff size,
+the risk and the criteria in one panel; answered findings can be ticked to
 reopen them with the change request, which becomes a finding (`H<round>-<n>`) the coder
 must answer by id.
 

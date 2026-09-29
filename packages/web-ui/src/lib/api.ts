@@ -44,7 +44,8 @@ export interface Task {
   /** AI code reviews so far. */
   codeRound: number;
   verifyFailures: number;
-  lastReview: { round: number; verdict: Verdict; by: string; at: string; sha?: string | null } | null;
+  /** The latest AI verdict; `stale` once the code was submitted again after it. */
+  lastReview: { round: number; verdict: Verdict; by: string; at: string; sha?: string | null; stale?: boolean } | null;
   /** Who approved the code for the pull request, and the commit the PR ships. */
   approval: { sha: string | null; by: string; human: boolean; round: number; at: string } | null;
   validationPlan: ValidationPlan | null;

@@ -33,8 +33,12 @@ export function DecisionPanel({ task, findings, evidence, selected, onToggle }: 
     <div className="mt-4 space-y-3 rounded-lg border border-border-light p-3">
       <div className="flex flex-wrap items-center gap-1.5 text-sm">
         {task.lastReview ? (
-          <Badge tone={VERDICT[task.lastReview.verdict].tone}>
-            {VERDICT[task.lastReview.verdict].label} (round {task.lastReview.round})
+          <Badge
+            tone={task.lastReview.stale ? "neutral" : VERDICT[task.lastReview.verdict].tone}
+            title={task.lastReview.stale ? "Not AI-reviewed since the last change" : undefined}
+          >
+            {VERDICT[task.lastReview.verdict].label} (round {task.lastReview.round}
+            {task.lastReview.stale ? ", before the last change" : ""})
           </Badge>
         ) : (
           <Badge tone="neutral">No AI review</Badge>

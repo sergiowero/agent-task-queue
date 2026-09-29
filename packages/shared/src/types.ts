@@ -64,6 +64,8 @@ export interface LastReview {
   at: string;
   /** The commit the reviewer looked at (absent on old reviews). */
   sha?: string | null;
+  /** The code was submitted again since: this verdict is about an earlier submission. */
+  stale?: boolean;
 }
 
 /**

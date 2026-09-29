@@ -1447,6 +1447,8 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
           commits: withCommit(task, "code", sha, round, branch),
           acceptanceCriteria: criteria,
           verification,
+          // The last AI verdict was about the previous submission.
+          ...(task.lastReview ? { lastReview: { ...task.lastReview, stale: true } } : {}),
         },
       };
     },
