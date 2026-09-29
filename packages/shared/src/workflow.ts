@@ -1009,12 +1009,31 @@ export interface SubmitPlanInput extends SubmitInput {
   touchedPaths?: string[];
 }
 
-function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
+/**
+ * A plan must say how every acceptance criterion (except waived ones) is
+ * checked: at least one validationPlan item per criterion, a command or, for a
+ * manual check, just `how`. A task without criteria needs none.
+ */
+function checkValidationPlan(task: Task, plan: ValidationPlan | undefined): ValidationPlan | undefined {
   const ids = new Set(task.acceptanceCriteria.map((c) => c.id));
+  const required = task.acceptanceCriteria.filter((c) => c.status !== "waived").map((c) => c.id);
+  if (!plan) {
+    if (!required.length) return undefined;
+    throw new WorkflowError(
+      `validationPlan is required: add an item per acceptance criterion (${required.join(", ")}); use "how" alone for a manual check.`,
+    );
+  }
   const unknown = plan.items.map((i) => i.criterionId).filter((id) => !ids.has(id));
   if (unknown.length) {
     throw new WorkflowError(
       `validationPlan names unknown criteria: ${unknown.join(", ")}. The task's criteria are ${[...ids].join(", ") || "none"}.`,
+    );
+  }
+  const covered = new Set(plan.items.map((i) => i.criterionId));
+  const missing = required.filter((id) => !covered.has(id));
+  if (missing.length) {
+    throw new WorkflowError(
+      `validationPlan misses criteria: ${missing.join(", ")} (add an item per criterion; use "how" alone for a manual check).`,
     );
   }
   return {
@@ -1029,6 +1048,7 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
     { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
     (task, policy) => {
+      const validationPlan = checkValidationPlan(task, input.validationPlan);
       const project = task.projectId ? getProjectById(task.projectId) : null;
       const protectedPaths = resolveProfile(project?.profile).protectedPaths;
       const questions = (input.openQuestions ?? []).map((q) => ({ text: q.text.trim(), blocking: !!q.blocking })).filter((q) => q.text);
@@ -1068,7 +1088,7 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
         message: input.message,
         events: newReasons.length ? [{ event: "risk_raised", details: newReasons.join("; ") }] : [],
         patch: {
-          ...(input.validationPlan ? { validationPlan: checkValidationPlan(task, input.validationPlan) } : {}),
+          ...(validationPlan ? { validationPlan } : {}),
           planSubmission: submission,
           risk,
           riskReasons: [...task.riskReasons, ...newReasons],

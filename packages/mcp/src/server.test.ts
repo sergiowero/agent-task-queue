@@ -212,9 +212,24 @@ describe("AgentQ MCP server", () => {
     expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
     expect(claimed.task.contexts).toEqual(["initial context", "claim context"]);
 
+    // Every criterion needs a line in the validation plan.
+    const uncovered = parse(
+      (await client.callTool({
+        name: "submit_plan",
+        arguments: { taskId, message: "1. do it", context: "plan context" },
+      })) as CallToolResult,
+    );
+    expect(uncovered.success).toBe(false);
+    expect(uncovered.error).toContain("validationPlan is required");
+
     const planResult = (await client.callTool({
       name: "submit_plan",
-      arguments: { taskId, message: "1. do it", context: "plan context" },
+      arguments: {
+        taskId,
+        message: "1. do it",
+        context: "plan context",
+        validationPlan: { items: [{ criterionId: "AC1", how: "run the suite", command: "bun test" }], regressionCommands: [] },
+      },
     })) as CallToolResult;
     expect(planResult.isError).toBeFalsy();
     const plan = parse(planResult);
@@ -1135,12 +1150,27 @@ describe("AgentQ MCP claims and blockers", () => {
       }),
     );
     expect(bad.error).toContain("unknown criteria: AC3");
-    parse(
+    const partial = parse(
       await call(agentClient, "submit_plan", {
         taskId: created.task.id,
         message: "p",
         context: "c",
         validationPlan: { items: [{ criterionId: "AC2", how: "test", command: "bun test x" }], regressionCommands: ["bun test"] },
+      }),
+    );
+    expect(partial.error).toContain("validationPlan misses criteria: AC1");
+    parse(
+      await call(agentClient, "submit_plan", {
+        taskId: created.task.id,
+        message: "p",
+        context: "c",
+        validationPlan: {
+          items: [
+            { criterionId: "AC1", how: "read the diff" },
+            { criterionId: "AC2", how: "test", command: "bun test x" },
+          ],
+          regressionCommands: ["bun test"],
+        },
       }),
     );
     expect(getTaskById(created.task.id)!.validationPlan?.regressionCommands).toEqual(["bun test"]);

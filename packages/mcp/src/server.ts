@@ -340,7 +340,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
+        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified: required, with at least one item per criterion, when the task has criteria), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
@@ -350,17 +350,18 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
               .array(
                 z.object({
                   criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
-                  how: z.string().min(1).describe("How it is verified"),
+                  how: z.string().min(1).describe("How it is verified (alone, without command: a manual check)"),
                   command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
                   newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
                 }),
               )
-              .describe("One item per acceptance criterion"),
+              .describe("At least one item per acceptance criterion (waived ones excepted)"),
             regressionCommands: z
               .array(z.string())
-              .describe("Commands that must keep passing (e.g. bun test, bun run typecheck)"),
+              .describe("Commands that must keep passing, run in addition to the project's own commands (e.g. bun test src/foo.test.ts)"),
           })
-          .optional(),
+          .optional()
+          .describe("Required when the task has acceptance criteria"),
         openQuestions: z
           .array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) }))
           .max(20)
