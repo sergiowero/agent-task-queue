@@ -6,6 +6,7 @@ import { dirname, join } from "path";
 import type { Task } from "@agentq/shared";
 import {
   TaskStatus,
+  analyzeDiff,
   claimNextTask,
   createProject,
   createTask,
@@ -18,7 +19,7 @@ import {
   submitVerification,
   updateProject,
 } from "@agentq/shared";
-import { analyzeDiff, runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
+import { runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
 const HOME = mkdtempSync(join(tmpdir(), "agentq-verify-home-"));
