@@ -126,7 +126,7 @@ A unit of work assigned to an agent. Contains:
 - **Subtasks**: parentId, blockedBy (claimable only when those are complete), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths)
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
-- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons, approval (who approved the code and the commit the PR ships); evidence rows live in `task_evidence`
+- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, commits (the commit of every code submission, verification and PR, with its round and branch, read from the worktree by the server), diffStats, verification, riskReasons, approval (who approved the code and the commit the PR ships); evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
 - **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)

@@ -9,6 +9,7 @@ import {
   embedMarkdown,
   extractAgentSessions,
   findPullRequests,
+  mergeRecordOf,
   parseMergeRecord,
 } from "./archive.js";
 import {
@@ -112,6 +113,17 @@ describe("parseMergeRecord", () => {
       worktree: "/w/t",
     });
     expect(parseMergeRecord([entry("hi", "agent")])).toBeNull();
+  });
+});
+
+describe("mergeRecordOf", () => {
+  it("prefers what submit_pr recorded on the PR, and falls back to the merge message of older tasks", () => {
+    const conversation = [entry("PR opened: u. Branch: develop, Commit: abc1234, Authors: dev1, Worktree: /w/t", "merge", 1)];
+    const old = { conversation, pullRequest: null } as unknown as Task;
+    expect(mergeRecordOf(old)).toEqual({ branch: "develop", commit: "abc1234", authors: "dev1", worktree: "/w/t" });
+    const recorded = { conversation, pullRequest: { base: "main", headSha: "fedcba9876543210", authors: "dev1, dev2" } } as unknown as Task;
+    expect(mergeRecordOf(recorded)).toEqual({ branch: "main", commit: "fedcba9876543210", authors: "dev1, dev2", worktree: "/w/t" });
+    expect(mergeRecordOf({ conversation: [], pullRequest: null } as unknown as Task)).toBeNull();
   });
 });
 

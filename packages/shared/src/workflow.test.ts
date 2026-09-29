@@ -43,6 +43,7 @@ import {
   submitPlan,
   submitPr,
   submitReview,
+  submitVerification,
   touchLease,
   transitionTask,
   unblockTask,
@@ -909,6 +910,93 @@ describe("evidence, validation plans and findings by id", () => {
   });
 });
 
+/** A git repo in `parent` on branch feat/x with one commit; commit() adds another and returns its sha. */
+function gitWorktree(parent: string) {
+  const dir = mkdtempSync(join(parent, "wt-"));
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args], { stdout: "pipe" });
+  git("init", "-q", "-b", "feat/x");
+  const commit = () => {
+    git("commit", "-q", "--allow-empty", "-m", "change");
+    return git("rev-parse", "HEAD").stdout.toString().trim();
+  };
+  return { dir, head: commit(), commit };
+}
+
+describe("commits recorded per round", () => {
+  const root = mkdtempSync(join(tmpdir(), "agentq-commits-"));
+  const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "c-coder" };
+
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  /** A task in a project of its own (L0), claimed by the coder. */
+  function claimed() {
+    const projectId = `commits-${Math.random().toString(36).slice(2)}`;
+    createProject({ id: projectId, displayName: "Commits", workingDirectory: root, autonomy: 0 });
+    const task = createTask({ title: "commits", description: "d", projectId, mergeBranch: "main" });
+    return { id: task.id, projectId, claim: () => claimNextTask({ roles: ["code"], agent: coder, projectId })! };
+  }
+
+  it("keeps every round's commit; a submission that names none keeps the latest instead of erasing it", () => {
+    const { id, claim } = claimed();
+    submitCode(id, { message: "c1", worktree: "/w", headSha: "aaaaaaa1", branch: "feat/c", claimToken: claim().claimToken });
+    requestCodeChanges(id, { message: "again" });
+    submitCode(id, {
+      message: "c2",
+      worktree: "/w",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "done" }],
+      claimToken: claim().claimToken,
+    });
+    const task = getTaskById(id)!;
+    expect(task.headSha).toBe("aaaaaaa1");
+    expect(task.realBranch).toBe("feat/c");
+    expect(task.commits.map((c) => [c.phase, c.round, c.sha, c.branch])).toEqual([["code", 1, "aaaaaaa1", "feat/c"]]);
+  });
+
+  it("reads the commit and branch from the worktree, over what the agent said", () => {
+    const { id, claim } = claimed();
+    const wt = gitWorktree(root);
+    submitCode(id, { message: "c1", worktree: wt.dir, claimToken: claim().claimToken });
+    expect(getTaskById(id)).toMatchObject({ headSha: wt.head, realBranch: "feat/x" });
+
+    requestCodeChanges(id, { message: "again" });
+    const second = wt.commit();
+    submitCode(id, {
+      message: "c2",
+      worktree: wt.dir,
+      headSha: "stale00",
+      branch: "wrong",
+      findingResolutions: [{ id: "H1-1", status: "fixed", resolution: "done" }],
+      claimToken: claim().claimToken,
+    });
+    const task = getTaskById(id)!;
+    expect(task.headSha).toBe(second);
+    expect(task.commits.map((c) => [c.phase, c.sha, c.branch])).toEqual([
+      ["code", wt.head, "feat/x"],
+      ["code", second, "feat/x"],
+    ]);
+  });
+
+  it("records the verified commit and the PR's commit, base and authors, and flags a base other than the merge branch", () => {
+    const { id, claim } = claimed();
+    submitCode(id, { message: "c1", worktree: "/w", headSha: "bbbbbbb1", claimToken: claim().claimToken });
+    updateTask(id, { status: TaskStatus.Verifying });
+    submitVerification(id, { passed: true, evidence: [], verifiedSha: "bbbbbbb1" });
+    updateTask(id, { status: TaskStatus.Merging });
+    const out = submitPr(id, { prUrl: "https://github.com/org/repo/pull/3", branch: "develop", headBranch: "feat/c", commit: "bbbbbbb1", authors: "coder, Ana", worktree: "/w" });
+    expect(out.newStatus).toBe(TaskStatus.PrOpen);
+    expect(out.task.pullRequest).toMatchObject({ base: "develop", authors: "coder, Ana", headSha: "bbbbbbb1", branch: "feat/c" });
+    expect(out.task.commits.map((c) => [c.phase, c.round, c.sha])).toEqual([
+      ["code", 1, "bbbbbbb1"],
+      ["verify", 1, "bbbbbbb1"],
+      ["pr", 1, "bbbbbbb1"],
+    ]);
+    expect(getActivityEvents({ taskId: id }).find((e) => e.eventType === "pr_base_mismatch")?.details).toBe(
+      "The pull request targets develop, not the task's merge branch main.",
+    );
+  });
+});
+
 describe("the approved commit is the one that ships", () => {
   const root = mkdtempSync(join(tmpdir(), "agentq-approval-"));
   const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "a-coder" };
@@ -916,18 +1004,7 @@ describe("the approved commit is the one that ships", () => {
 
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  /** A git worktree on a feature branch with one commit; commit() adds another and returns its sha. */
-  function worktree() {
-    const dir = mkdtempSync(join(root, "wt-"));
-    const git = (...args: string[]) =>
-      Bun.spawnSync(["git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args], { stdout: "pipe" });
-    git("init", "-q", "-b", "feat/x");
-    const commit = () => {
-      git("commit", "-q", "--allow-empty", "-m", "change");
-      return git("rev-parse", "HEAD").stdout.toString().trim();
-    };
-    return { dir, head: commit(), commit };
-  }
+  const worktree = () => gitWorktree(root);
 
   /** A task coded in a real worktree, in a project of its own at `autonomy`. */
   function coded(autonomy: 0 | 2) {

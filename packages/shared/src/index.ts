@@ -12,6 +12,7 @@ export {
   type ValidationPlan,
   type ApprovedPlan,
   type DiffStats,
+  type CommitRecord,
   type Verification,
   type AcceptanceCriterion,
   type ProjectProfile,

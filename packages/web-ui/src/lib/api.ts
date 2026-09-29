@@ -50,6 +50,8 @@ export interface Task {
   validationPlan: ValidationPlan | null;
   approvedPlan: { markdown: string; validation: ValidationPlan | null; approvedBy: string; at: string } | null;
   headSha: string | null;
+  /** Every commit recorded along the way (code submissions, verifications, the PR). */
+  commits?: { round: number; phase: "code" | "verify" | "pr"; sha: string; branch: string | null; at: string }[];
   diffStats: { files: number; insertions: number; deletions: number } | null;
   verification: {
     round: number;
@@ -92,6 +94,9 @@ export interface PullRequest {
   number: number | null;
   state: "open" | "merged" | "closed";
   branch: string | null;
+  /** Base branch and authors submit_pr named (absent on old tasks). */
+  base?: string | null;
+  authors?: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
   /** The PR's head commit (absent on old tasks). */

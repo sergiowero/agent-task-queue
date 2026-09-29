@@ -618,6 +618,14 @@ const MIGRATIONS: Migration[] = [
       try { d.exec("UPDATE tasks SET approval = NULL"); } catch {}
     },
   },
+  {
+    // The commit of every code submission, verification and PR, with its round and branch.
+    name: "029_task_commits",
+    up: (d) => addColumn(d, "tasks", "commits TEXT DEFAULT '[]'"),
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET commits = '[]'"); } catch {}
+    },
+  },
 ];
 
 function runMigrations(): void {
@@ -734,6 +742,7 @@ function rowToTask(row: any): Task {
     validationPlan: parseJson(row.validation_plan, null),
     approvedPlan: parseJson(row.approved_plan, null),
     headSha: row.head_sha ?? null,
+    commits: parseJson(row.commits, []),
     diffStats: parseJson(row.diff_stats, null),
     verification: parseJson(row.verification, null),
     riskReasons: parseJson(row.risk_reasons, []),
@@ -895,6 +904,7 @@ export function createTask(data: {
     validationPlan: null,
     approvedPlan: null,
     headSha: null,
+    commits: [],
     diffStats: null,
     verification: null,
     riskReasons: [],
@@ -1075,6 +1085,7 @@ const TASK_COLUMNS = {
   validationPlan: { column: "validation_plan", json: true },
   approvedPlan: { column: "approved_plan", json: true },
   headSha: { column: "head_sha", json: false },
+  commits: { column: "commits", json: true },
   diffStats: { column: "diff_stats", json: true },
   verification: { column: "verification", json: true },
   riskReasons: { column: "risk_reasons", json: true },

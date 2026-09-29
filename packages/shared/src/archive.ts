@@ -332,6 +332,23 @@ export function parseMergeRecord(entries: ConversationEntry[]): MergeRecord | nu
   };
 }
 
+/**
+ * Base branch, commit and authors of the task's pull request: what submit_pr
+ * recorded on it (the commit as the PR sync last saw it), else the merge
+ * message, which is all older tasks have.
+ */
+export function mergeRecordOf(task: Task): MergeRecord | null {
+  const parsed = parseMergeRecord(task.conversation);
+  const pr = task.pullRequest;
+  if (!parsed && !pr) return null;
+  return {
+    branch: pr?.base ?? parsed?.branch ?? null,
+    commit: pr?.headSha ?? parsed?.commit ?? null,
+    authors: pr?.authors ?? parsed?.authors ?? null,
+    worktree: parsed?.worktree ?? null,
+  };
+}
+
 const CLAIM_RE = /^Claimed task\. Transitioning to ([a-z_]+)\./;
 
 /**
@@ -432,7 +449,7 @@ export function buildArchiveDocuments(input: ArchiveDocumentsInput): ArchiveDocu
 function renderSummary(input: ArchiveDocumentsInput): string {
   const { task, project, archivedAt, pullRequests } = input;
   const sessions = extractAgentSessions(task);
-  const merge = parseMergeRecord(task.conversation);
+  const merge = mergeRecordOf(task);
   const done = completedAt(task);
   const agentIds = uniqueAgentIds(sessions);
   const iterations = iterationsLine(task);
@@ -547,7 +564,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
 function renderDetailed(input: ArchiveDocumentsInput): string {
   const { task, project, archivedAt, pullRequests } = input;
   const sessions = extractAgentSessions(task);
-  const merge = parseMergeRecord(task.conversation);
+  const merge = mergeRecordOf(task);
   const done = completedAt(task);
 
   const out: string[] = [

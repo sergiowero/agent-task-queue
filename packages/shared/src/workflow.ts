@@ -69,6 +69,7 @@ import type {
   Agent,
   Approval,
   ApprovedPlan,
+  CommitRecord,
   PlanSubmission,
   PullRequest,
   Blocker,
@@ -655,13 +656,29 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
 }
 
 /**
- * The commit a review of the task looks at: the worktree's HEAD, else the
- * submitted commit. Read it before a transaction: git can take a while.
+ * The commit and branch a worktree has checked out, as the server reads them
+ * (nulls without a worktree, or when git cannot read it). Read them before a
+ * transaction: git can take a while.
  */
+function checkedOut(worktree: string | null | undefined): { sha: string | null; branch: string | null } {
+  if (!worktree) return { sha: null, branch: null };
+  return {
+    sha: git(worktree, ["rev-parse", "HEAD"]) || null,
+    // Empty on a detached HEAD.
+    branch: git(worktree, ["branch", "--show-current"]) || null,
+  };
+}
+
+/** The commit a review of the task looks at: the worktree's HEAD, else the submitted commit. */
 function reviewedHead(task: Task | null): string | null {
   if (!task) return null;
-  const head = task.worktreePath ? git(task.worktreePath, ["rev-parse", "HEAD"]) : null;
-  return head || task.headSha || task.verification?.verifiedSha || null;
+  return checkedOut(task.worktreePath).sha || task.headSha || task.verification?.verifiedSha || null;
+}
+
+/** The task's commit log with one more entry (unchanged without a sha). */
+function withCommit(task: Task, phase: CommitRecord["phase"], sha: string | null | undefined, round: number, branch: string | null): CommitRecord[] {
+  const id = sha?.trim();
+  return id ? [...task.commits, { round, phase, sha: id, branch, at: new Date().toISOString() }] : task.commits;
 }
 
 function approvalOf(task: Task, sha: string | null, by: string, human: boolean): Approval {
@@ -1363,6 +1380,9 @@ export function hasVerificationCommands(task: Task): boolean {
 }
 
 export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitResult {
+  // The server reads the submitted commit and branch from the worktree itself (before
+  // the transaction); the agent's headSha and branch only count when it cannot.
+  const head = checkedOut(input.worktree);
   return submit(
     taskId,
     { from: TaskStatus.Coding, phase: "code", messageType: "code", event: "code_submitted", done: "Code submitted" },
@@ -1414,13 +1434,17 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
             at: new Date().toISOString(),
           };
 
+      const sha = head.sha ?? (input.headSha?.trim() || null);
+      const branch = head.branch ?? (input.branch?.trim() || task.realBranch);
       return {
         to: afterCode(task, policy, { verify: verifyNow }),
         message: input.message,
         patch: {
           worktreePath: input.worktree ?? null,
-          realBranch: input.branch?.trim() || task.realBranch,
-          headSha: input.headSha?.trim() || null,
+          realBranch: branch,
+          // A submission that names no commit keeps the previous one rather than erasing it.
+          headSha: sha ?? task.headSha,
+          commits: withCommit(task, "code", sha, round, branch),
           acceptanceCriteria: criteria,
           verification,
         },
@@ -1564,6 +1588,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         diffStats: input.diffStats ?? task.diffStats,
         risk,
         riskReasons: [...task.riskReasons, ...newReasons],
+        commits: withCommit(task, "verify", input.verifiedSha, round, task.realBranch),
         producers: { ...task.producers, verify: producerOf(task) },
         ...(blocker ? { blocker } : {}),
       },
@@ -1761,6 +1786,13 @@ export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
               at: new Date().toISOString(),
             }
           : null;
+      const base = input.branch.trim();
+      if (base && base !== task.mergeBranch) {
+        addActivity(taskId, "pr_base_mismatch", "system", `The pull request targets ${base}, not the task's merge branch ${task.mergeBranch}.`);
+      }
+      const headBranch = input.headBranch?.trim() || task.realBranch || task.recommendedBranch;
+      // The PR's commit belongs to the round of the latest code submission.
+      const round = task.commits.filter((c) => c.phase === "code").at(-1)?.round ?? Math.max(1, task.codeRound);
       return {
         to: blocker ? TaskStatus.NeedsHuman : TaskStatus.PrOpen,
         message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
@@ -1768,12 +1800,15 @@ export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
         ...(blocker ? { note: { message: `**Blocked:** ${blocker.reason}\n\n**Question:** ${blocker.question}`, event: "task_blocked" } } : {}),
         patch: {
           headSha: pushed || task.headSha,
-          realBranch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+          realBranch: headBranch,
+          commits: withCommit(task, "pr", pushed, round, headBranch),
           pullRequest: {
             url: url ?? null,
             number: input.prNumber ?? prNumberOf(url),
             state: "open",
-            branch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
+            branch: headBranch,
+            base: base || null,
+            authors: input.authors.trim() || null,
             headSha: pushed || null,
             mergedAt: null,
             mergedBy: null,

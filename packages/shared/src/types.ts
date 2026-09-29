@@ -135,6 +135,17 @@ export interface Evidence {
   createdAt: string;
 }
 
+/** A commit the task's work went through: one per code submission, verification and pull request. */
+export interface CommitRecord {
+  /** The code round it belongs to (the round its code submission is reviewed in). */
+  round: number;
+  /** code: the coder submitted it · verify: the verifier checked it · pr: the pull request's head. */
+  phase: "code" | "verify" | "pr";
+  sha: string;
+  branch: string | null;
+  at: string;
+}
+
 export interface DiffStats {
   files: number;
   insertions: number;
@@ -172,6 +183,10 @@ export interface PullRequest {
   state: "open" | "merged" | "closed";
   /** Head branch, used to find the PR when the URL is unknown. */
   branch: string | null;
+  /** Base branch submit_pr named (absent on old tasks). */
+  base?: string | null;
+  /** Who wrote the code, as submit_pr named them (absent on old tasks). */
+  authors?: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
   /** The PR's head commit: what submit_pr pushed, then what GitHub reports (absent on old tasks). */
@@ -271,8 +286,10 @@ export interface Task {
   validationPlan: ValidationPlan | null;
   /** Frozen when the plan is approved; the coder may not change it. */
   approvedPlan: ApprovedPlan | null;
-  /** Commit the coder says it submitted. */
+  /** The latest submitted commit: the worktree's HEAD when the server can read it, else what the agent said. */
   headSha: string | null;
+  /** Every commit recorded along the way, oldest first (code submissions, verifications, the PR). */
+  commits: CommitRecord[];
   diffStats: DiffStats | null;
   verification: Verification | null;
   /** Why the risk was raised (touched protected paths, a large diff, the plan). */

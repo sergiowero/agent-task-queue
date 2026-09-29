@@ -651,6 +651,7 @@ export const EVENT_TYPES: Record<string, string> = {
   pr_auto_merged: "PR auto-merged",
   pr_closed: "PR closed without merging",
   pr_changes_requested: "PR changes requested",
+  pr_base_mismatch: "PR base is not the merge branch",
   task_reverted: "Reverted",
   task_archived: "Archived",
   archive_failed: "Archive failed",
