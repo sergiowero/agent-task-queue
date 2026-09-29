@@ -23,7 +23,7 @@ REST:
 | Method | Route | Purpose |
 |--------|-------|---------|
 | `GET` | `/api/runners` | Config + live state (`state.running`, `activeJobs`, `lastError`, `lastJob`) |
-| `POST` | `/api/runners` | Create (`enabled: true` starts it immediately) |
+| `POST` | `/api/runners` | Create (`enabled: true` starts it immediately; a custom argv runner needs the opt-in below) |
 | `GET` / `PUT` / `DELETE` | `/api/runners/:id` | Read / update / delete (delete stops it first and releases its tasks) |
 | `POST` | `/api/runners/:id/start` | Start and persist `enabled = true` |
 | `POST` | `/api/runners/:id/stop` | Stop (SIGTERM, SIGKILL after 10 s), release its tasks, persist `enabled = false` |
@@ -40,6 +40,13 @@ Runner fields: `name`, `tool`, `roles` (one or more of `refine`, `plan`, `plan_r
 `pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`), `extraArgs` (string
 array), `enabled`. A runner claims the tasks of any of its roles; roles are stored
 without duplicates, in that order.
+
+**Custom argv runners need an opt-in.** Tool `custom`, or a non-empty `extraArgs` on any
+tool (an inline `--mcp-config` or a Codex `-c` override can start any command), runs
+whatever command the runner was given. The server creates, starts or enables such a
+runner only when it was started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`; otherwise the API
+answers 400, and a custom runner persisted as enabled does not start (its `lastError`
+says why). Renaming, stopping or deleting one, or clearing its `extraArgs`, stays possible.
 
 ## Tools and the commands they run
 
@@ -201,6 +208,10 @@ also writes it into the prompt's submit arguments for tools that end up using an
 `agentq` server. The runner claims with `runnerId`, which becomes the claim's stable
 `sessionKey` (`runner:<id>`).
 
+The token never leaves the server over HTTP: no API response or SSE event includes a
+task's `claimToken`, and a job's output (log file, live output, the revert note) shows
+`[claimToken]` wherever the tool printed its token, since tools echo their MCP calls.
+
 ## Verification
 
 The web server also runs a **built-in verifier** (no LLM; `packages/web/src/runner/verify.ts`).
@@ -242,6 +253,7 @@ its status.
 | `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
 | `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
+| `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
 
 ## Live updates
 
@@ -281,7 +293,7 @@ curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
 #    → complete once the PR is merged on GitHub (or "Mark merged" on the task page)
 ```
 
-For tests, use `tool: "custom"` with `extraArgs` such as
+For tests, start the server with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1` and use `tool: "custom"` with `extraArgs` such as
 `["bun", "packages/web/src/runner/testing/fake-agent.ts", "submit_plan", "{\"message\":\"## Plan\"}"]`:
 the fake agent starts the server from `$AGENTQ_MCP_CONFIG` and calls the tool for
 `$AGENTQ_TASK_ID`, as a real coding tool would.

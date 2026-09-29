@@ -90,7 +90,7 @@ A runner job only needs `get_task`, `post_comment`, the four `submit_*` tools an
 
 ### Claim tokens
 
-Every claim gets a `claimToken`, stored on the task and returned once by `claim_task` (it is never included in `get_task`, `list_tasks` or the task resource). `submit_*` and `report_blocker` are refused unless they present it, so an agent whose task was unblocked and claimed by someone else cannot overwrite the new claim. The server remembers the tokens of the claims made in its session, so a hand-opened agent does not have to pass it; a runner job's server starts out holding the job's claim (`AGENTQ_TASK_ID` / `AGENTQ_CLAIM_TOKEN` in its launch env), and the runner also writes the token into the prompt. Tasks claimed before tokens existed (no token stored) accept submits as before.
+Every claim gets a `claimToken`, stored on the task and returned once by `claim_task` (it is never included in `get_task`, `list_tasks` or the task resource, nor in any web API response or SSE event). `submit_*` and `report_blocker` are refused unless they present it, so an agent whose task was unblocked and claimed by someone else cannot overwrite the new claim. The server remembers the tokens of the claims made in its session, so a hand-opened agent does not have to pass it; a runner job's server starts out holding the job's claim (`AGENTQ_TASK_ID` / `AGENTQ_CLAIM_TOKEN` in its launch env), and the runner also writes the token into the prompt. Tasks claimed before tokens existed (no token stored) accept submits as before.
 
 ## Resources
 

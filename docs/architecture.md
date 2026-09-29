@@ -79,6 +79,9 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - Request validation via Zod schemas
 - Automatic Vite dev server management in development mode
 - CORS support for development
+- Local user only: it listens on loopback (`AGENTQ_HOST`), and before any route runs it refuses requests a web page could forge: a `Host` that is not localhost, an IP address or listed in `AGENTQ_ALLOWED_HOSTS` (403), a state-changing request from another `Origin` (403), a POST/PUT/PATCH that is not `application/json` (415)
+- Claim tokens never leave it: every JSON response and SSE event drops `claimToken`, and runner job output shows `[claimToken]` in its place
+- Custom argv runners (tool `custom`, or `extraArgs`) only with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`
 
 ### MCP Server
 Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction; see `docs/mcp.md`. Tools:
