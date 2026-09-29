@@ -3,7 +3,7 @@ name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan, mcp__agentq__create_subtask, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.0.0"
+  version: "6.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -41,7 +41,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
 5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). Add the regression commands that must keep passing (usually the project's test, typecheck and lint commands)
 6. List **open questions** (mark one `blocking` only if you cannot plan without a person's answer: the task then goes to that person first), your **risk** estimate (`suggestedRisk`; migrations, auth, CI and public APIs are high) and the **paths** the plan touches (`touchedPaths`; protected ones raise the risk to high)
-7. **Size**: when the work is bigger than one reviewable PR (~400 changed lines or many criteria), split it: call `create_subtask` for each part (with `blockedBy` for order) while you still hold the task, and list them in the plan. Subtasks wait until this plan is approved; then they run and this task completes when they all do
+7. **Size**: when the work is bigger than one reviewable PR (over `brief.sizeLimits`: more than `maxDiffLines` changed lines, `maxPlanFiles` files or `maxCriteria` criteria), split it: call `create_subtask` for each part (with `blockedBy` naming earlier subtasks, never this task) while you still hold the task, and list them in the plan. Each subtask needs a real description and criteria: the project's Definition of Ready applies to it. Subtasks wait until this plan is approved; then they run and this task completes when they all do. A plan over the limits that creates no subtasks is submitted with size warnings for the critic and the person who approves it
 8. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
 
 Under autonomy L2 and higher an AI critic reviews the plan first (a different agent): a low-risk plan it approves goes straight to coding; otherwise a person approves it too. Critique findings have ids like `P1-2`; when revising, address each one.

@@ -57,6 +57,8 @@ export const projectProfileSchema = z
     protectedPaths: z.array(z.string().max(300)).max(100),
     guardrails: z.array(z.string().max(1000)).max(50),
     maxDiffLines: z.number().int().min(10).max(100_000),
+    maxPlanFiles: z.number().int().min(1).max(1000),
+    maxCriteria: z.number().int().min(1).max(100),
     verifyTimeoutSec: z.number().int().min(10).max(7200),
     verifyAllowlist: z.array(z.string().max(300)).max(100),
     autoArchive: z.boolean(),

@@ -152,6 +152,36 @@ describe("subtasks", () => {
     expect(getTaskById(parent.id)!.status).toBe(TaskStatus.Complete);
   });
 
+  it("a plan over the project's size limits that does not split the work gets warnings", () => {
+    const pid = project({ autonomy: 1, profile: { maxPlanFiles: 2, maxCriteria: 1 } });
+    const { task, claimToken } = planned(pid, { acceptanceCriteria: ["a $ bun test a", "b $ bun test b"] });
+    const out = submitPlan(task.id, {
+      message: "## Big",
+      claimToken,
+      touchedPaths: ["a.ts", "b.ts", "c.ts"],
+      proposedSubtasks: ["A", "B"],
+      validationPlan: {
+        items: [
+          { criterionId: "AC1", how: "t", command: "bun test a" },
+          { criterionId: "AC2", how: "t", command: "bun test b" },
+        ],
+        regressionCommands: [],
+      },
+    });
+    expect(out.task.planSubmission!.sizeWarnings).toEqual([
+      "The plan touches 3 files (the project's limit is 2) and creates no subtasks.",
+      "The task has 2 acceptance criteria (the project's limit is 1) and the plan creates no subtasks.",
+      "The plan proposes 2 subtasks but created none with create_subtask.",
+    ]);
+    expect(out.task.conversation.at(-1)).toMatchObject({ messageType: "system", message: expect.stringContaining("**Plan size:**") });
+
+    // Split into subtasks: no warnings.
+    const split = planned(pid);
+    createSubtask(split.task.id, { title: "A", description: DESCRIPTION, claimToken: split.claimToken });
+    const ok = submitPlan(split.task.id, { message: "## Split", claimToken: split.claimToken, touchedPaths: ["a.ts", "b.ts", "c.ts"], proposedSubtasks: ["A"] });
+    expect(ok.task.planSubmission!.sizeWarnings).toEqual([]);
+  });
+
   it("re-planning drops the subtasks of the previous plan", () => {
     const pid = project({ autonomy: 1 });
     const { task: parent, claimToken } = planned(pid);

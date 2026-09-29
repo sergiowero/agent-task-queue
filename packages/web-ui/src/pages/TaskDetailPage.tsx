@@ -889,6 +889,15 @@ export function TaskDetailPage() {
                 </ul>
               </Alert>
             )}
+            {task.planSubmission?.sizeWarnings && task.planSubmission.sizeWarnings.length > 0 && (
+              <Alert tone="warning" title="The plan is bigger than this project's size limits" className="mb-4">
+                <ul className="list-disc pl-4">
+                  {task.planSubmission.sizeWarnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
             {(subtasks.length > 0 || task.parentId || task.blockedBy.length > 0) && (
               <div className="card mb-4 p-4">
                 <h2 className="eyebrow mb-2">Related tasks</h2>

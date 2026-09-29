@@ -8,6 +8,7 @@ import {
   addUserComment,
   approvePlan,
   claimNextTask,
+  createSubtask,
   createTaskForProject,
   postComment,
   reportBlocker,
@@ -379,6 +380,30 @@ describe("independent checks", () => {
     expect(brief.verification).toBeNull();
     expect(brief.isolation).toContain("Independent critique");
     expect(leaks(brief)).toEqual([]);
+  });
+
+  it("the plan critic sees the project's size limits and the subtasks the plan created", () => {
+    const projectId = project({ maxDiffLines: 200, maxPlanFiles: 3 });
+    const task = createTaskForProject({
+      title: "split critique",
+      description: "Users can export their data as CSV from the settings page.",
+      projectId,
+      requiresPlan: true,
+      autonomy: 2,
+    });
+    const c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
+    const first = createSubtask(task.id, { title: "Backend", description: "The export endpoint returns CSV rows.", claimToken: c.claimToken });
+    createSubtask(task.id, { title: "UI", description: "The settings page offers a download button.", claimToken: c.claimToken, blockedBy: [first.id] });
+    submitPlan(task.id, { message: "## Split", claimToken: c.claimToken, proposedSubtasks: ["Backend", "UI"] });
+    const critic = claimNextTask({ roles: ["plan_review"], agent: reviewer, projectId })!;
+    const brief = buildAgentBrief(critic.task) as IndependentBrief;
+    expect(brief.sizeLimits).toEqual({ maxDiffLines: 200, maxPlanFiles: 3, maxCriteria: 6 });
+    expect(brief.subtasks!.map((s) => [s.title, s.blockedBy])).toEqual([
+      ["Backend", []],
+      ["UI", [first.id]],
+    ]);
+    expect(brief.planSubmission!.sizeWarnings).toEqual([]);
+    expect(buildTaskBrief(task.id)!.sizeLimits.maxDiffLines).toBe(200);
   });
 
   it("the verifier gets the criteria, the plan and the commands, never the coder's evidence", () => {

@@ -71,6 +71,7 @@ export interface Task {
     suggestedRisk: Risk | null;
     proposedSubtasks: string[];
     touchedPaths: string[];
+    sizeWarnings?: string[];
   } | null;
   /** A subtask waiting for its parent's plan to be approved. */
   held: boolean;

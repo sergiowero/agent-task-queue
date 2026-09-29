@@ -1176,6 +1176,28 @@ function checkValidationPlan(task: Task, plan: ValidationPlan): ValidationPlan {
   };
 }
 
+/**
+ * Where a plan is bigger than one reviewable PR (the project's maxPlanFiles and
+ * maxCriteria) without splitting the work, or proposes subtasks it did not
+ * create. Warnings for the critic and the person approving, never a refusal.
+ */
+function planSizeWarnings(task: Task, touched: string[], proposed: string[]): string[] {
+  const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
+  const created = getSubtasks(task.id).filter((c) => c.held).length;
+  const warnings: string[] = [];
+  if (!created && touched.length > profile.maxPlanFiles) {
+    warnings.push(`The plan touches ${touched.length} files (the project's limit is ${profile.maxPlanFiles}) and creates no subtasks.`);
+  }
+  const criteria = task.acceptanceCriteria.filter((c) => c.status !== "waived").length;
+  if (!created && criteria > profile.maxCriteria) {
+    warnings.push(`The task has ${criteria} acceptance criteria (the project's limit is ${profile.maxCriteria}) and the plan creates no subtasks.`);
+  }
+  if (proposed.length && !created) {
+    warnings.push(`The plan proposes ${proposed.length} subtasks but created none with create_subtask.`);
+  }
+  return warnings;
+}
+
 export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitResult {
   return submit(
     taskId,
@@ -1186,11 +1208,14 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
       const protectedPaths = resolveProfile(project?.profile).protectedPaths;
       const questions = (input.openQuestions ?? []).map((q) => ({ text: q.text.trim(), blocking: !!q.blocking })).filter((q) => q.text);
       const touched = (input.touchedPaths ?? []).map((p) => p.trim()).filter(Boolean);
+      const proposed = (input.proposedSubtasks ?? []).map((x) => x.trim()).filter(Boolean);
+      const sizeWarnings = planSizeWarnings(task, touched, proposed);
       const submission: PlanSubmission = {
         openQuestions: questions,
         suggestedRisk: input.suggestedRisk ?? null,
-        proposedSubtasks: (input.proposedSubtasks ?? []).map((x) => x.trim()).filter(Boolean),
+        proposedSubtasks: proposed,
         touchedPaths: touched,
+        sizeWarnings,
       };
       // Risk only goes up: the planner's estimate, or protected paths the plan touches.
       const reasons: string[] = [];
@@ -1218,6 +1243,7 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
       return {
         to: afterPlan({ ...task, risk }, policy, { blockingQuestions: blocking.length > 0 }),
         message: input.message,
+        ...(sizeWarnings.length ? { note: { message: ["**Plan size:**", ...sizeWarnings.map((w) => `- ${w}`)].join("\n") } } : {}),
         patch: {
           // A revision without a validation plan clears the previous one: approval freezes only this plan's.
           validationPlan: input.validationPlan ? checkValidationPlan(task, input.validationPlan) : null,
