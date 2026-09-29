@@ -3,7 +3,7 @@ name: agentq-verify
 description: Verification phase of the AgentQ workflow, for LLM agents with the `verify` role. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `verify_requested`, now in `verifying`. Works from an independent brief without the coder's context: runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The AgentQ web server has a built-in verifier that usually does this; this skill is for when an agent does it instead. Never edits code.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_verification, mcp__agentq__report_blocker, mcp__agentq__get_task, Bash(git:*), Bash(bun:*), Bash(npm:*), Bash(npx:*)
 metadata:
-  version: "6.0.0"
+  version: "6.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -25,8 +25,11 @@ Your **brief** (`brief` in the claim result, or `get_task_brief`) is an independ
 ```json
 { "taskId": "<task.id>", "claimToken": "<claimToken>", "passed": true,
   "evidence": [{ "kind": "command", "criterionId": "AC1", "command": "bun test export", "exitCode": 0, "summary": "4 pass" }],
-  "tampering": [], "verifiedSha": "<git rev-parse HEAD>" }
+  "tampering": [], "verifiedSha": "<git rev-parse HEAD>",
+  "context": "<for the coder: what failed and whether it is the code or the environment>", "next": ["<what to fix first>"] }
 ```
+
+`context` (with the optional `decisions`, `risks` and `next`) is optional on `submit_verification`, because the built-in verifier sends none, but pass it: the coder reads it next to the failing commands. The reviewer never sees it.
 
 ## Guardrails
 

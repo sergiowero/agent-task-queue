@@ -16,6 +16,8 @@ import {
   updateTask,
   ROLES,
   TaskStatus,
+  listSkills,
+  readSkill,
   skillsBundleVersion,
 } from "@agentq/shared";
 import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
@@ -1326,7 +1328,7 @@ describe("AgentQ MCP claims and blockers", () => {
   it("refuses a claim without skillsVersion, e.g. from skills that still send the old single role", async () => {
     createTask({ title: "no version", description: "d", projectId, requiresPlan: true, priority: 99 });
     const client = await connect();
-    const { skillsVersion: _v, ...unversioned } = agent;
+    const unversioned = { toolName: agent.toolName, version: agent.version, model: agent.model };
     for (const args of [
       { ...unversioned, roles: ["plan"], sessionId: "nv1", projectId },
       { ...unversioned, role: "code", sessionId: "nv2", projectId },
@@ -1337,6 +1339,79 @@ describe("AgentQ MCP claims and blockers", () => {
     }
     const ok = parse(await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "nv3", projectId }));
     expect(ok).toMatchObject({ success: true, task: { title: "no version" } });
+  });
+});
+
+/** Top-level keys of a JSON-ish example (placeholders such as `null | "..."` or `[...]` are fine). */
+function topLevelKeys(example: string): string[] {
+  const keys: string[] = [];
+  let depth = 0;
+  for (let i = 0; i < example.length; i++) {
+    const ch = example[i];
+    if (ch === '"') {
+      let end = i + 1;
+      while (end < example.length && example[end] !== '"') end += example[end] === "\\" ? 2 : 1;
+      if (depth === 1 && example.slice(end + 1).trimStart().startsWith(":")) keys.push(example.slice(i + 1, end));
+      i = end;
+    } else if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+  }
+  return keys;
+}
+
+describe("AgentQ MCP contracts", () => {
+  let client: Client;
+  let tools: Awaited<ReturnType<Client["listTools"]>>["tools"];
+
+  beforeAll(async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    client = new Client({ name: "contracts-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+    tools = (await client.listTools()).tools;
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  const argsOf = (tool: string) => Object.keys(tools.find((t) => t.name === tool)?.inputSchema.properties ?? {});
+
+  it("every tool call a skill shows uses only that tool's arguments, and all its required ones", () => {
+    const names = tools.map((t) => t.name);
+    const toolMention = new RegExp(`\`(${names.join("|")})\``, "g");
+    let checked = 0;
+    for (const skill of listSkills()) {
+      const body = readSkill(skill)!.body;
+      for (const block of body.matchAll(/```json\n([\s\S]*?)```/g)) {
+        const keys = topLevelKeys(block[1]);
+        // Tool calls, not results.
+        if (keys.length === 0 || keys.includes("success")) continue;
+        const tool = [...body.slice(0, block.index).matchAll(toolMention)].at(-1)?.[1];
+        expect({ skill, tool: tool ?? null }).toEqual({ skill, tool: expect.any(String) });
+        const unknown = keys.filter((k) => !argsOf(tool!).includes(k));
+        expect({ skill, tool, unknown }).toEqual({ skill, tool, unknown: [] });
+        const required = (tools.find((t) => t.name === tool)!.inputSchema.required ?? []) as string[];
+        expect({ skill, tool, missing: required.filter((k) => !keys.includes(k)) }).toEqual({ skill, tool, missing: [] });
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(12);
+  });
+
+  it("every submit_* tool takes the handoff: context, decisions, risks and next", () => {
+    for (const tool of tools.filter((t) => t.name.startsWith("submit_"))) {
+      expect({ tool: tool.name, args: argsOf(tool.name) }).toEqual({
+        tool: tool.name,
+        args: expect.arrayContaining(["context", "decisions", "risks", "next"]),
+      });
+      // context is required everywhere but on submit_verification (the built-in verifier sends none).
+      expect({ tool: tool.name, required: (tool.inputSchema.required ?? []).includes("context") }).toEqual({
+        tool: tool.name,
+        required: tool.name !== "submit_verification",
+      });
+    }
+    expect(argsOf("submit_plan")).toContain("findingResolutions");
   });
 });
 
