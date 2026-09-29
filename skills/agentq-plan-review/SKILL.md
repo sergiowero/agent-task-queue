@@ -3,7 +3,7 @@ name: agentq-plan-review
 description: Plan-critique phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the agentq-claim router sends you here). Works from an independent brief without the planner's handoff notes or the conversation: reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.0.0"
+  version: "6.1.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -22,21 +22,21 @@ Read-only, in `task.project.workingDirectory`: read files, `git log`, `git show`
 ## Steps
 
 1. Read the plan (`brief.latestPlan`, `brief.validationPlan`, `brief.planSubmission`), the task (`brief.task`: description, steerDetails, non-goals; `brief.guardrails`, `brief.criteria`) and what people decided (`brief.humanDecisions`, `brief.humanNotes`)
-2. **Verify earlier findings first**: for every `P…` finding not yet verified, pass it in `verifiedFindings` as `verified` (addressed) or `open`
+2. **Verify earlier findings first**: for every `P…` finding not yet verified, pass it in `verifiedFindings` as `verified` (addressed) or `open`. A `blocker` or `major` finding you do not pass as `verified` blocks approve
 3. Check the plan against the checklist below, reading the code it refers to
 4. Pick the verdict (see Verdict Rules) and submit with `submit_plan_review`
 
 ## Checklist
 
 - **Coverage**: every acceptance criterion is addressed by a step, and the plan does nothing outside the task's scope or non-goals
-- **Validation**: every criterion has an executable check (a command or a test to add) or a reason to be manual; the regression commands exist in this project
+- **Validation**: every criterion has an executable check (a command or a test to add) or a reason to be manual (the server already refuses a plan with a criterion that has no item at all); the regression commands exist in this project
 - **Grounded**: the files and functions it cites exist; the approach fits the codebase's existing patterns
 - **Risk**: protected areas (migrations, auth, CI, public APIs) are identified; if the plan is riskier than the task's risk, pass `suggestedRisk` (it can only go up)
 - **Size**: a plan bigger than one reviewable PR (~400 changed lines) should be split into subtasks
 
 ## Verdict Rules
 
-- `approve` — no open `blocker` or `major` finding (the server refuses otherwise). A **low-risk** plan then goes straight to coding; otherwise a person approves it after you.
+- `approve` — no `blocker` or `major` finding left open or unverified (the server refuses otherwise). A **low-risk** plan then goes straight to coding; otherwise a person approves it after you.
 - `request_changes` — at least one open finding the planner must address. After the project's limit (2 rounds) a person decides.
 - `needs_human` — a product or risk decision only a person can make. Pass `question`.
 

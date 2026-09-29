@@ -340,7 +340,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
+        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified: required, with at least one item per criterion, when the task has criteria), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("The plan (markdown)"),
@@ -350,17 +350,18 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
               .array(
                 z.object({
                   criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
-                  how: z.string().min(1).describe("How it is verified"),
+                  how: z.string().min(1).describe("How it is verified (alone, without command: a manual check)"),
                   command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
                   newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
                 }),
               )
-              .describe("One item per acceptance criterion"),
+              .describe("At least one item per acceptance criterion (waived ones excepted)"),
             regressionCommands: z
               .array(z.string())
-              .describe("Commands that must keep passing (e.g. bun test, bun run typecheck)"),
+              .describe("Commands that must keep passing, run in addition to the project's own commands (e.g. bun test src/foo.test.ts)"),
           })
-          .optional(),
+          .optional()
+          .describe("Required when the task has acceptance criteria"),
         openQuestions: z
           .array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) }))
           .max(20)
@@ -404,7 +405,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review.",
+        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Summary of the changes (markdown)"),
@@ -524,7 +525,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit verification",
       description:
-        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
+        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person). The server also reads the worktree's diff itself: tampering it finds counts as red even if you report none, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         passed: z.boolean().describe("Every command passed and no tests were weakened"),
