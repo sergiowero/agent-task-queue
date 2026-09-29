@@ -190,7 +190,7 @@ stateDiagram-v2
     needs_human --> approved: you answer
 ```
 
-Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first: answers to blockers, plans to approve, code to review and PRs to merge. Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever.
+Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first: answers to blockers, plans to approve, code to review and PRs to merge. Any active task can also be **canceled**, and a stuck task can be **unblocked** from the task page. When an agent cannot finish (a rejected push, missing credentials, a contradictory task) it calls `report_blocker`: the task goes to **needs_human** with its question, and you answer from the task page and choose where it goes next. A runner job that ends three times in a row without submitting lands there too, instead of retrying forever. When the approved plan itself turns out wrong, send the task back to planning: answer its blocker with **Plan changes requested**, or click **Re-plan** on a code review.
 
 ### Autonomy
 
