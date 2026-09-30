@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { homedir, hostname } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { claimEnv, mcpServerLaunch, mcpServersConfig } from "@agentq/mcp";
-import type { Agent, Role, Runner, RunnerTool, Task } from "@agentq/shared";
+import type { Agent, Project, Role, Runner, RunnerTool, Task } from "@agentq/shared";
 import {
   TaskStatus,
   claimNextTask,
@@ -19,6 +19,7 @@ import {
 import type { BuiltCommand, CommandBuilder } from "./commands.js";
 import {
   CUSTOM_RUNNERS_DISABLED,
+  accessOf,
   buildCommand as defaultBuildCommand,
   customRunnersAllowed,
   runsCustomArgv,
@@ -26,6 +27,7 @@ import {
   toolBinary,
 } from "./commands.js";
 import { buildPrompt, phaseForStatus, type Phase } from "./prompt.js";
+import { isAllowed, verificationCommands } from "./verify.js";
 
 /** reverted: released for a retry · blocked: the task went to needs_human (no retry). */
 export type JobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
@@ -113,6 +115,36 @@ function expandHome(p: string): string {
   if (p === "~") return homedir();
   if (p.startsWith("~/")) return join(homedir(), p.slice(2));
   return p;
+}
+
+/**
+ * The directory a job starts in. A review or verification works in the task's worktree, so what
+ * it runs and writes stays out of the main checkout. The path is the coder's word: one that is
+ * gone, or that does not lie inside the project, leaves the job in the project directory.
+ */
+export function jobCwd(role: Role, task: Pick<Task, "worktreePath">, projectDir: string): string {
+  if (accessOf(role) !== "run" || !task.worktreePath) return projectDir;
+  const worktree = expandHome(task.worktreePath);
+  try {
+    const real = realpathSync(worktree);
+    const root = realpathSync(projectDir);
+    return real !== root && real.startsWith(root + sep) ? worktree : projectDir;
+  } catch {
+    return projectDir;
+  }
+}
+
+/**
+ * The commands a safe-mode job of `role` may run beyond its role's basics. The coder: the
+ * project's commands and everything the plan and the criteria run. A review or verification
+ * only what the built-in verifier would trust: the project's own commands, and the plan's and
+ * criteria's once a person approved the plan or they match the allowlist.
+ */
+export function jobCommands(role: Role, task: Task, project: Project | null): string[] {
+  const access = accessOf(role);
+  if (access !== "edit" && access !== "run") return [];
+  const all = verificationCommands(task, project);
+  return (access === "edit" ? all : all.filter((c) => isAllowed(c, task, project))).map((c) => c.command);
 }
 
 export const REDACTED_CLAIM_TOKEN = "[claimToken]";
@@ -462,20 +494,22 @@ export class RunnerEngine {
     let built: BuiltCommand;
     try {
       mkdirSync(dir, { recursive: true });
-      const prompt = buildPrompt({ task, project, agent, role, claimToken });
+      const jobDir = jobCwd(role, task, cwd);
+      const prompt = buildPrompt({ task, project, agent, role, claimToken, worktree: jobDir === cwd ? undefined : jobDir });
       writeFileSync(promptFile, prompt);
       // Every job gets the AgentQ MCP server, bound to this server's database and
       // holding the job's claim (so the agent's submits carry the claim token).
       const mcp = mcpServerLaunch(getDbPath(), undefined, claimEnv(task.id, claimToken, agent.id));
       writeFileSync(mcpConfigFile, JSON.stringify(mcpServersConfig(mcp), null, 2));
       built = this.build(runner.tool, {
-        cwd,
+        cwd: jobDir,
         prompt,
         promptFile,
         mcp,
         mcpConfigFile,
         taskId: task.id,
         role,
+        commands: jobCommands(role, task, project),
         model: runner.model,
         effort: runner.effort,
         permissionMode: runner.permissionMode,

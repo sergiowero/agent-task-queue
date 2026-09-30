@@ -62,20 +62,18 @@ Push rejected → do not open the PR; call `report_blocker` with the full output
 
 ```bash
 cd {task.project.workingDirectory}
-cat > .git/agentq-pr-body.md <<'EOF'
-{brief.pr.body}
-EOF
 gh pr create \
   --base {task.mergeBranch} \
   --head {feature branch} \
   --title "{task.title}" \
-  --body-file .git/agentq-pr-body.md
-rm .git/agentq-pr-body.md
+  --body-file - <<'EOF'
+{brief.pr.body}
+EOF
 ```
 
-- Keep the body file inside `.git/` so it is never committed.
+- The body goes in on standard input (`--body-file -`, quoted `'EOF'` so nothing in it is expanded): you write no file, and this phase has no file-editing tools.
 - Capture the **PR URL** printed by `gh pr create`.
-- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file .git/agentq-pr-body.md`) and record it with `submit_pr` as usual.
+- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file - <<'EOF'` … `EOF`, the same way) and record it with `submit_pr` as usual.
 - `gh` missing, not authenticated or failing → `report_blocker` with the output. Never call `submit_pr` for a PR that does not exist.
 
 ### 4. Record it with `submit_pr`

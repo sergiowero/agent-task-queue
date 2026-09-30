@@ -56,7 +56,7 @@ config to `<jobId>.mcp.json` next to it, and runs:
 | Tool | Command |
 |------|---------|
 | `claude` | `claude -p <prompt> --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
-| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` |
+| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
 | `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
 | `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
 | `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$AGENTQ_PROMPT` |
@@ -66,7 +66,11 @@ Every child gets `AGENTQ_TASK_ID`, `AGENTQ_ROLE`, `AGENTQ_PROMPT_FILE`,
 database) in its environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner started
 from inside a Claude Code session does not trip the nested-session guard. The working
 directory is the project's `workingDirectory` (with `~` expanded); if it does not exist
-the task is released immediately and the job is marked reverted.
+the task is released immediately and the job is marked reverted. A **code review or
+verification** job starts in the task's worktree instead (`task.worktreePath`), so what it
+runs and writes stays out of the main checkout; the runner only does so when that folder
+exists and lies inside the project's working directory (the path is the coder's word), and
+the prompt says where the job is.
 
 ### The AgentQ MCP server in every job
 
@@ -112,19 +116,55 @@ Empty means the tool's default effort.
 
 ### Permission modes
 
-- **safe** (default) — the tool may edit files, run a fixed allow-list of commands and
-  call the AgentQ tools a claimed job needs. For Claude Code: `--permission-mode
-  acceptEdits --allowedTools mcp__agentq__get_task mcp__agentq__post_comment
-  mcp__agentq__submit_plan mcp__agentq__submit_code mcp__agentq__submit_review
-  mcp__agentq__submit_pr mcp__agentq__submit_merge "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)"
-  "Bash(npx:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(grep:*)" "Bash(find:*)" Edit Write Read
-  Glob Grep`. `claim_task`, `create_task`, `list_tasks` and `archive_task` are not
-  allowed: the runner already claimed the task. Codex runs with `--full-auto` (sandboxed
-  workspace-write; its MCP servers run outside the sandbox, so the AgentQ server can write
-  the database).
-- **full** — no prompts, no sandbox: Claude gets `--dangerously-skip-permissions`, Codex
-  `--dangerously-bypass-approvals-and-sandbox`. Use only for repositories you trust the
-  agent to operate in unattended.
+- **safe** (default) — the tool gets what the job's **role** needs and no more. Only the
+  coder changes files; the roles that critique, review or verify never do:
+
+  | Role | Changes files | Claude Code | Codex |
+  |------|:---:|-------------|-------|
+  | `refine`, `plan`, `plan_review` | no | `Read Glob Grep` and a read-only shell: `git log`, `diff`, `show`, `status`, `rev-parse`, `rev-list`, `merge-base`, `ls-files`, `blame`, `branch --show-current`, `ls`, `cd`. No `bun`, `npm`, `npx`, `find` or `cat` (nothing that runs or deletes) | `--sandbox read-only` (no writes, no network) |
+  | `review`, `verify` | no | The same, plus the project's commands **exactly as configured** (below). They start in the task's worktree | `--sandbox workspace-write`, no network for a review, network for a verification (its `install` command) |
+  | `pr` | no | `git`, `gh`, `ls`, `cd`. Denied: `git commit`, `add`, `rm`, `mv`, `reset`, `checkout`, `switch`, `restore`, `clean`, `stash`, `merge`, `rebase`, `cherry-pick`, `apply`, `am` and `gh pr merge` | `--sandbox workspace-write` with network (push, `gh`) |
+  | `code` | yes | `Edit Write Read Glob Grep`, `git`, `gh`, `bun`, `npm`, `npx`, `ls`, `cat`, `grep`, `find`, and the program of each of the project's commands (`pytest`, `make`, `cargo`...) | `--sandbox workspace-write` with network (dependency installs) |
+
+  For Claude Code every role gets `--allowedTools` with only the AgentQ tools of its
+  phase (`get_task`, `get_task_brief`, `get_skill`, `post_comment`, `report_blocker`
+  and its own `submit_*`; the planner also `create_subtask`): `claim_task`, `create_task`,
+  `list_tasks` and `archive_task` are never allowed, since the runner already claimed
+  the task. The roles that do not edit also get `--disallowedTools Edit Write
+  NotebookEdit`, which wins over any allow rule or permission mode in your own Claude
+  settings, and only the coder is started with `--permission-mode acceptEdits`. Codex
+  MCP servers run outside its sandbox, so the AgentQ server can write the database in
+  every role. A role this file does not know gets the read-only profile.
+
+  **What a review or verification may run.** The project's commands (**Projects → Edit →
+  Commands**), the approved plan's `regressionCommands` and the commands of its items and
+  criteria: the same ones, under the same trust rule, as the built-in verifier (a plan
+  that a person approved, or a command that starts with an allowlisted prefix; see
+  [Verification](#verification)). Each simple command of them (`a && b | c` is `a`, `b` and
+  `c`) becomes a rule that matches exactly that command, e.g. `Bash(pytest -q)` or `Bash(make
+  lint)`: no arguments can be appended, and no interpreter or package runner is allowed, so
+  a job that must not write code cannot run new code either. That works for any language,
+  not only `bun`/`npm`. A command with quotes, globs, substitutions or redirections gets no
+  rule. The coder additionally gets a wildcard rule for the program of each command (except
+  shells, `rm` and the like, which only get the exact rule).
+
+  The Bash rules are not a sandbox: they stop a tool from running what its role does not
+  need, but a program you allowed still does what it does (a test suite can write files).
+  The server also reads the worktree itself on `submit_code` and `submit_verification`.
+  **`opencode`, `gemini` and `custom` runners have no per-role limits**: they run with
+  their usual automatic-approval flag whatever the role, and what a role must not do is
+  only in the prompt. Use Claude Code or Codex for the roles that must not edit (`plan`,
+  `plan_review`, `review`, `verify`).
+
+  Codex's `workspace-write` sandbox has no network unless
+  `sandbox_workspace_write.network_access` is on, which the runner turns on for the
+  roles that need it (`code`, `verify`, `pr`). A `git push` may still need credentials
+  the sandbox cannot reach (an SSH agent, the keychain): if the `pr` phase fails inside the
+  sandbox, give the runner that has the `pr` role mode `full`. The runner passes
+  `--sandbox` instead of `--full-auto`, which current Codex releases no longer accept.
+- **full** — no prompts, no sandbox, no per-role limits: Claude gets
+  `--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`.
+  Use only for repositories you trust the agent to operate in unattended.
 
 ### The prompt
 

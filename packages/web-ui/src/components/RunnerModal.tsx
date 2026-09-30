@@ -151,6 +151,8 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   });
 
   const isCustomTool = effectiveTool === "custom";
+  // Only Claude Code and Codex are started with per-role limits (see docs/runner.md).
+  const limitsPerRole = effectiveTool === "claude" || effectiveTool === "codex";
   const customNeedsArgs = isCustomTool && !parseExtraArgs(extraArgs);
   const canSave =
     !!name.trim() && !!effectiveTool && roles.length > 0 && !customNeedsArgs && !mutation.isPending;
@@ -245,7 +247,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
           hint={
             roles.length === 0
               ? "Pick at least one role."
-              : "The phases this runner works. The server verifies code itself, so verify is rarely needed."
+              : "The phases this runner works. The server verifies code itself, so verify is only for projects set to agent verification (Edit project → Autonomy) or when the server's verifier is off."
           }
         >
           <div role="group" className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-lg border border-border p-3">
@@ -319,7 +321,9 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
           hint={
             permissionMode === "full"
               ? "Full skips every permission prompt and sandbox: the tool can run any command in the project directory."
-              : "Safe auto-accepts edits and allows agentq, git, gh, bun/npm and read-only shell commands."
+              : limitsPerRole || !effectiveTool
+                ? "Safe limits each role: only the coder edits files, reviews and verifications re-run the project's commands, planners and critics only read."
+                : "This tool has no per-role limits: what plan, review and verify jobs must not do (edit files) is only in the prompt. Prefer Claude Code or Codex for those roles."
           }
         >
           <SegmentedControl

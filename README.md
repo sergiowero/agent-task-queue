@@ -298,8 +298,8 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 
 - **Model and effort**: type any model id the tool accepts, or leave it empty to use the tool's default; pick an effort level for tools that have one.
 - **Live logs**: follow every job's output from the Runners page.
-- **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
-- **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
+- **`safe` mode** (default): each role gets only what it needs. Only the coder edits files; planners and critics only read (Codex: read-only sandbox), reviews and verifications also re-run the project's own commands in the task's worktree (any language: the commands come from **Projects → Edit → Commands**), and the `pr` role runs `git` and `gh` but never commits or merges. Every role gets only the MCP tools of its phase. Claude Code and Codex enforce this; OpenCode, Gemini and custom runners have no per-role limits (see [docs/runner.md](docs/runner.md#permission-modes)).
+- **`full` mode**: no permission prompts, no sandbox and no per-role limits. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
 - **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`.
 

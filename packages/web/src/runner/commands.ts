@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { McpServerLaunch } from "@agentq/mcp";
-import { MCP_SERVER_NAME, RUNNER_MCP_TOOLS, mcpServersConfig } from "@agentq/mcp";
-import type { RunnerPermissionMode, RunnerTool } from "@agentq/shared";
+import type { McpServerLaunch, RUNNER_MCP_TOOLS } from "@agentq/mcp";
+import { MCP_SERVER_NAME, mcpServersConfig } from "@agentq/mcp";
+import type { Role, RunnerPermissionMode, RunnerTool } from "@agentq/shared";
 
 export interface CommandContext {
   /** Absolute working directory the tool runs in (the project's repo). */
@@ -20,8 +20,17 @@ export interface CommandContext {
    */
   mcpConfigFile: string;
   taskId: string;
-  /** The role the claim acts as (exported as AGENTQ_ROLE). */
+  /**
+   * The role the claim acts as (exported as AGENTQ_ROLE). In safe mode it decides what the
+   * tool may do (see ROLE_ACCESS); a role this file does not know gets the least.
+   */
   role: string;
+  /**
+   * Commands the job may run beyond its role's basics (see the profiles below): the
+   * project's own checks and the plan's and criteria's that the verifier would trust.
+   * Only the roles that run commands (code, review, verify) use them.
+   */
+  commands?: readonly string[];
   /** Model id as typed on the runner; blank means the tool's own default (no model flag). */
   model: string | null;
   /** Reasoning effort; only claude, codex and opencode receive it. */
@@ -70,11 +79,74 @@ export function childEnv(ctx: CommandContext, extra?: Record<string, string>): R
   return { ...env, ...extra };
 }
 
-/** Claude Code names MCP tools `mcp__<server>__<tool>`. */
-export const CLAUDE_AGENTQ_TOOLS = RUNNER_MCP_TOOLS.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`);
+// ─── What each role's job may do (safe mode) ──────────────────────────
 
-const CLAUDE_SAFE_TOOLS = [
-  ...CLAUDE_AGENTQ_TOOLS,
+/**
+ * What a role's job may do to the checkout. `read`: look and change nothing (refine, plan,
+ * plan critique). `run`: look and re-run the project's checks, in the task's worktree
+ * (code review, verification). `publish`: push the branch and open the pull request, no edits
+ * (pr). `edit`: change the code (code). Full mode is the user's opt-out from all of it.
+ */
+export type RoleAccess = "read" | "run" | "publish" | "edit";
+
+export const ROLE_ACCESS: Record<Role, RoleAccess> = {
+  refine: "read",
+  plan: "read",
+  plan_review: "read",
+  review: "run",
+  verify: "run",
+  pr: "publish",
+  code: "edit",
+};
+
+/** The access of a role; one this file does not know gets the least. */
+export function accessOf(role: string): RoleAccess {
+  return Object.hasOwn(ROLE_ACCESS, role) ? ROLE_ACCESS[role as Role] : "read";
+}
+
+type RunnerMcpTool = (typeof RUNNER_MCP_TOOLS)[number];
+
+/** The AgentQ tools every job may call, whatever its role. */
+const COMMON_MCP_TOOLS: readonly RunnerMcpTool[] = ["get_task", "get_task_brief", "get_skill", "post_comment", "report_blocker"];
+
+/**
+ * The AgentQ tools a job of each role may call: the common ones and its own phase's
+ * submit (the claim is already the job's: nothing claims, creates or archives tasks).
+ */
+export const ROLE_MCP_TOOLS: Record<Role, readonly RunnerMcpTool[]> = {
+  refine: [...COMMON_MCP_TOOLS, "submit_refinement"],
+  plan: [...COMMON_MCP_TOOLS, "submit_plan", "create_subtask"],
+  plan_review: [...COMMON_MCP_TOOLS, "submit_plan_review"],
+  code: [...COMMON_MCP_TOOLS, "submit_code"],
+  verify: [...COMMON_MCP_TOOLS, "submit_verification"],
+  review: [...COMMON_MCP_TOOLS, "submit_review"],
+  pr: [...COMMON_MCP_TOOLS, "submit_pr"],
+};
+
+/** Claude Code names MCP tools `mcp__<server>__<tool>`. */
+export function claudeAgentqTools(role: string): string[] {
+  const tools = Object.hasOwn(ROLE_MCP_TOOLS, role) ? ROLE_MCP_TOOLS[role as Role] : COMMON_MCP_TOOLS;
+  return tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`);
+}
+
+/** What a job that must not change anything may run: look at the repository. */
+const READ_ONLY_BASH = [
+  "Bash(git log:*)",
+  "Bash(git diff:*)",
+  "Bash(git show:*)",
+  "Bash(git status:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(git rev-list:*)",
+  "Bash(git merge-base:*)",
+  "Bash(git ls-files:*)",
+  "Bash(git blame:*)",
+  "Bash(git branch --show-current:*)",
+  "Bash(ls:*)",
+  "Bash(cd:*)",
+];
+
+/** The coder's shell: git and gh, the JavaScript runners and the read-only basics. */
+const CODE_BASH = [
   "Bash(git:*)",
   "Bash(gh:*)",
   "Bash(bun:*)",
@@ -84,12 +156,122 @@ const CLAUDE_SAFE_TOOLS = [
   "Bash(cat:*)",
   "Bash(grep:*)",
   "Bash(find:*)",
-  "Edit",
-  "Write",
-  "Read",
-  "Glob",
-  "Grep",
 ];
+
+/** The pull-request phase pushes and opens the PR; it never commits, moves the branch or merges. */
+const PUBLISH_BASH = ["Bash(git:*)", "Bash(gh:*)", "Bash(ls:*)", "Bash(cd:*)"];
+const PUBLISH_DENIED = [
+  ...["commit", "add", "rm", "mv", "reset", "checkout", "switch", "restore", "clean", "stash", "merge", "rebase", "cherry-pick", "apply", "am"].map(
+    (sub) => `Bash(git ${sub}:*)`,
+  ),
+  "Bash(gh pr merge:*)",
+];
+
+/** The tools that write files: no job but the coder's has them. */
+const EDIT_TOOLS = ["Edit", "Write"];
+const EDIT_DENIED = ["Edit", "Write", "NotebookEdit"];
+
+/**
+ * Characters a Bash rule can carry as they are. A command with anything else (quotes,
+ * globs, substitutions, parentheses, redirections) gets no rule: it could widen the rule or break it.
+ */
+const RULE_SAFE = /^[\w@%+=,.:/ -]+$/;
+
+/** The simple commands of a shell line: `a && b | c; d` is a, b, c and d. */
+function simpleCommands(line: string): string[] {
+  return line
+    .split(/&&|\|\||[;|\n]/)
+    .map((part) => part.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+}
+
+/**
+ * One rule per simple command, matching exactly that command: `Bash(pytest -q)` allows
+ * `pytest -q` and nothing else, so a job that must not run other code can still re-run
+ * the project's checks. Arguments cannot be appended.
+ */
+export function exactBashRules(commands: readonly string[]): string[] {
+  const rules = new Set<string>();
+  for (const line of commands) {
+    for (const command of simpleCommands(line)) {
+      if (RULE_SAFE.test(command)) rules.add(`Bash(${command})`);
+    }
+  }
+  return [...rules];
+}
+
+/** Programs whose wildcard rule would allow far more than running the project's checks. */
+const NEVER_WIDENED = new Set([
+  "rm", "mv", "cp", "chmod", "chown", "dd", "sudo", "su", "kill", "pkill", "curl", "wget", "ssh", "scp",
+  "sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh", "env", "eval", "exec", "xargs",
+]);
+
+/**
+ * A wildcard rule per program of `commands` (`pytest -q`, `make lint` → `Bash(pytest:*)`,
+ * `Bash(make:*)`), for the coder, who runs the project's tools with any arguments.
+ * Shells, `rm` and the like only get their exact rule.
+ */
+export function programBashRules(commands: readonly string[]): string[] {
+  const rules = new Set<string>();
+  for (const line of commands) {
+    for (const command of simpleCommands(line)) {
+      const words = command.split(" ");
+      while (/^[A-Za-z_]\w*=/.test(words[0] ?? "")) words.shift();
+      const program = words[0];
+      if (!program || !/^[\w.+-]+(?:\/[\w.+-]+)*$/.test(program) || program.includes("..")) continue;
+      if (!NEVER_WIDENED.has(program)) rules.add(`Bash(${program}:*)`);
+    }
+  }
+  return [...rules];
+}
+
+export interface ClaudeSafeProfile {
+  /**
+   * `acceptEdits` only where the job edits. Any other job gets no `--permission-mode`: a
+   * headless run denies what is not allowed, and the flag has no value for "the default"
+   * that every Claude Code release accepts.
+   */
+  permissionMode?: "acceptEdits";
+  /** `--allowedTools` */
+  allowed: string[];
+  /** `--disallowedTools`: wins over `allowed`, and over any allow rule or permission mode in the user's own settings. */
+  denied: string[];
+}
+
+/** The tools a safe-mode Claude job of `role` gets. `commands`: what the job may run (see CommandContext). */
+export function claudeSafeProfile(role: string, commands: readonly string[] = []): ClaudeSafeProfile {
+  const access = accessOf(role);
+  const mcp = claudeAgentqTools(role);
+  switch (access) {
+    case "edit":
+      return {
+        permissionMode: "acceptEdits",
+        allowed: [...mcp, ...CODE_BASH, ...exactBashRules(commands), ...programBashRules(commands), ...EDIT_TOOLS, "Read", "Glob", "Grep"],
+        denied: [],
+      };
+    case "publish":
+      return { allowed: [...mcp, ...PUBLISH_BASH, "Read", "Glob", "Grep"], denied: [...EDIT_DENIED, ...PUBLISH_DENIED] };
+    case "run":
+      return {
+        allowed: [...mcp, ...READ_ONLY_BASH, ...exactBashRules(commands), "Read", "Glob", "Grep"],
+        denied: EDIT_DENIED,
+      };
+    case "read":
+      return { allowed: [...mcp, ...READ_ONLY_BASH, "Read", "Glob", "Grep"], denied: EDIT_DENIED };
+  }
+}
+
+/**
+ * Codex's sandbox for a safe-mode job: the read-only roles get the read-only sandbox, the
+ * others a workspace-write one, with network access for the roles that install dependencies
+ * (code, verify) or push and call `gh` (pr): the workspace-write sandbox has none by default.
+ */
+export function codexSandboxArgs(role: string): string[] {
+  const access = accessOf(role);
+  if (access === "read") return ["--sandbox", "read-only"];
+  const network = role === "code" || role === "verify" || role === "pr";
+  return ["--sandbox", "workspace-write", ...(network ? ["-c", "sandbox_workspace_write.network_access=true"] : [])];
+}
 
 /** A TOML basic string or array of them (JSON's escapes are valid TOML). */
 function toml(value: string | string[]): string {
@@ -180,7 +362,10 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       if (ctx.permissionMode === "full") {
         cmd.push("--dangerously-skip-permissions");
       } else {
-        cmd.push("--permission-mode", "acceptEdits", "--allowedTools", ...CLAUDE_SAFE_TOOLS);
+        const profile = claudeSafeProfile(ctx.role, ctx.commands);
+        if (profile.permissionMode) cmd.push("--permission-mode", profile.permissionMode);
+        cmd.push("--allowedTools", ...profile.allowed);
+        if (profile.denied.length > 0) cmd.push("--disallowedTools", ...profile.denied);
       }
       if (model) cmd.push("--model", model);
       if (ctx.effort) cmd.push("--effort", ctx.effort);
@@ -189,9 +374,8 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
     }
     case "codex": {
       const cmd = ["codex", "exec"];
-      cmd.push(
-        ctx.permissionMode === "full" ? "--dangerously-bypass-approvals-and-sandbox" : "--full-auto",
-      );
+      // `--sandbox` rather than `--full-auto`, which current Codex releases no longer accept.
+      cmd.push(...(ctx.permissionMode === "full" ? ["--dangerously-bypass-approvals-and-sandbox"] : codexSandboxArgs(ctx.role)));
       cmd.push("-C", ctx.cwd, "--skip-git-repo-check", ...codexMcpOverrides(ctx.mcp));
       if (model) cmd.push("-m", model);
       // `-c` values are parsed as TOML, so the string must be quoted.
