@@ -32,6 +32,19 @@ It adds (or updates) a user-level `agentq` server entry that starts `bun run <ch
 
 A tool counts as installed when its binary is on `PATH` (`copilot` for the Copilot CLI, `code` for VS Code) or its config folder exists. The VS Code entry goes in the default profile's user configuration (the file **MCP: Open User Configuration** opens), so the server is available in every workspace; VS Code asks you to trust it the first time it starts. VS Code does not read `~/.copilot/mcp-config.json` unless `chat.mcp.discovery.enabled` is on, which is why it gets its own entry. A file that cannot be edited safely (for example a JSON file with comments) is left untouched: the command prints the block to paste by hand and exits with code 1. Files saved on Windows with a UTF-8 BOM or CRLF line endings are read normally.
 
+`bun run install:skills` (also part of `install:all`) copies the workflow skills into the skills folder of each tool that loads skills from one, in the same config folders as the entries above:
+
+| Tool        | Skills folder                                                       | MCP entry (`install:mcp`) |
+| ----------- | ------------------------------------------------------------------- | ------------------------- |
+| Claude Code | `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`)                 | yes                       |
+| Codex       | `~/.codex/skills` (or `$CODEX_HOME/skills`)                         | yes                       |
+| OpenCode    | `~/.config/opencode/skills` (or `$XDG_CONFIG_HOME/opencode/skills`) | yes                       |
+| Kimi Code   | `~/.kimi-code/skills`                                               | no: register `bun run mcp` by hand |
+| Junie       | `~/.junie/skills`                                                   | no: register `bun run mcp` by hand |
+| Gemini CLI, Copilot CLI, Copilot in VS Code | none: they read the skills with the `get_skill` tool | yes |
+
+A tool gets a skills folder only when it is on this machine (its binary is on `PATH`, its own folder holds something it wrote, or a skills folder from an earlier install exists, which keeps being refreshed), so the installer never creates folders for tools you do not have. Each `agentq-*` skill folder is replaced as a whole, so a file a skill dropped does not linger, and `agentq-*` folders the repo no longer ships are removed; other skills are left alone. `/api/meta` and the portal banner read the installed versions from these same folders.
+
 `bun test packages/installer` includes an end-to-end test that runs the real `install:all` against a throwaway home folder and starts the registered server like an MCP client would; the `Installer` GitHub Actions workflow runs it on Linux, macOS and Windows.
 
 Runners do not need this step: every runner job gets its own server config (see [runner.md](runner.md)).

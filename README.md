@@ -146,8 +146,10 @@ Both go through the same MCP server, the same SQLite database and the same workf
 | Gemini CLI | ✅ | | ✅ `gemini` |
 | GitHub Copilot CLI | ✅ | | via `custom` |
 | GitHub Copilot in VS Code | ✅ | | |
-| Kimi Code, Junie | manual | ✅ | via `custom` |
+| Kimi Code, Junie | manual (`bun run mcp`) | ✅ | via `custom` |
 | Any other MCP client | manual (`bun run mcp`) | | via `custom` |
+
+Both installers only touch tools that are on the machine, and use the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` move them). Gemini CLI and Copilot read the skills through the `get_skill` MCP tool instead of a skills folder. Details in [docs/mcp.md](docs/mcp.md#setup).
 
 ## The workflow
 

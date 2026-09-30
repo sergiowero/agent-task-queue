@@ -1,4 +1,6 @@
 import { describe, it, expect } from "bun:test";
+import { homedir } from "os";
+import { join } from "path";
 import {
   MIN_COMPATIBLE_SKILLS_VERSION,
   SKILL_PREFIX,
@@ -9,6 +11,7 @@ import {
   skillsBundleVersion,
   skillsManifest,
   stripFrontmatter,
+  toolSkillDirs,
 } from "./skills.js";
 import { createProject, patchTask } from "./database.js";
 import { TaskStatus } from "./catalog.js";
@@ -41,6 +44,26 @@ describe("skills bundle", () => {
     expect(fetch).toBeGreaterThan(-1);
     expect(create).toBeGreaterThan(fetch);
     expect(body).toContain("brief.dependencies");
+  });
+
+  it("each tool's skills folder follows the variable that moves its config folder", () => {
+    expect(toolSkillDirs({}, "/h")).toEqual({
+      claude: join("/h", ".claude", "skills"),
+      opencode: join("/h", ".config", "opencode", "skills"),
+      codex: join("/h", ".codex", "skills"),
+      kimi: join("/h", ".kimi-code", "skills"),
+      junie: join("/h", ".junie", "skills"),
+    });
+    expect(toolSkillDirs({ CODEX_HOME: "/x", CLAUDE_CONFIG_DIR: "/c", XDG_CONFIG_HOME: "/g" }, "/h")).toMatchObject({
+      claude: join("/c", "skills"),
+      codex: join("/x", "skills"),
+      opencode: join("/g", "opencode", "skills"),
+      kimi: join("/h", ".kimi-code", "skills"),
+    });
+    // An empty variable is unset.
+    expect(toolSkillDirs({ CODEX_HOME: "", XDG_CONFIG_HOME: "" }, "/h").codex).toBe(join("/h", ".codex", "skills"));
+    // Without arguments it reads the process environment and home folder.
+    expect(toolSkillDirs().claude).toBe(join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "skills"));
   });
 
   it("reads a skill body without its frontmatter", () => {
