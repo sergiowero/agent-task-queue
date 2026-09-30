@@ -126,14 +126,14 @@ Scripts for one-click setup:
 A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (objects: id `ACn`, text, how it is verified, status, evidence ids)
-- **Subtasks**: parentId, blockedBy (claimable only when those are complete), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths)
+- **Subtasks**: parentId, blockedBy (claimable only when those are complete; a canceled or deleted one sends the task to `needs_human`), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths, size warnings). Canceling a task cancels its unfinished subtasks
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
 - **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, commits (the commit of every code submission, verification and PR, with its round and branch, read from the worktree by the server), diffStats, verification (the latest result with its evidence ids, tamper strikes and the tampering a person accepted; "not verified" while a new submission waits for the verifier), riskReasons, approval (who approved the code and the commit the PR ships); evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
 - **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact, with the identities and model keys of every round), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
-- **Workflow**: requiresPlan flag (immutable), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, identities, modelKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
+- **Workflow**: requiresPlan flag (a person can change it before work starts: draft, plan_requested, ready_for_code), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, identities, modelKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
 - **Archive**: archivedAt, archivePath (the summary file; the detailed record sits next to it)
@@ -150,7 +150,7 @@ A coding agent that claims and works on tasks. Contains:
 A local repository that tasks belong to. Contains:
 - **Identity**: UUID, displayName
 - **Location**: workingDirectory (absolute path to repo)
-- **Profile**: commands (install/build/test/lint/typecheck), protected paths, shared guardrails, max diff size, verifier timeout and allowlist
+- **Profile**: commands (install/build/test/lint/typecheck), protected paths, shared guardrails, size limits (max diff lines, max files per plan, max criteria per task), verifier timeout and allowlist, Definition-of-Ready mode
 - **Autonomy**: level L0–L3 (default L2) and policy overrides (review rounds, spot checks, different reviewer model, lease, starvation); see [policy.md](policy.md)
 - **defaultMergeBranch**: branch new tasks target unless they name one; detected from `origin/HEAD` when the project is created (falls back to `main`/`master`), editable
 - **Lifecycle**: timestamps, soft delete support
@@ -166,7 +166,7 @@ A message in a task's conversation thread. Contains:
 - timestamp, message body, messageType (user/agent/refine/plan/plan_review/code/verify/review/merge/system; `plan_review` is a plan critique, `review` a code review)
 
 ### TaskBrief
-What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, open findings, the latest handoff per phase, project commands and guardrails, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).
+What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, the tasks it starts after (`dependencies`), open findings, the latest handoff per phase, project commands, guardrails and size limits, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).
 
 ### Diff guards
 `packages/shared/src/diff.ts` reads a task's diff against its merge branch: size, changed files, and test tampering (deleted or moved-out tests, skipped or focused tests, lowered or removed coverage thresholds). The workflow runs it on every `submit_code` and `submit_verification` (outside the database transaction), so protected paths and `maxDiffLines` raise the risk and weakened tests send the code back whether or not the built-in verifier runs; the verifier and the L3 auto-merge (on the PR's files) use the same rules.
@@ -181,7 +181,7 @@ A record of a task status transition. Contains:
 
 ### States (23 total)
 
-The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee. The web UI reads the same catalog (`@agentq/shared/catalog`).
+The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee, and answers `409` in a status the catalog marks not editable (while an agent holds the task, or once it has a PR open, is complete or canceled). Once a plan is approved the acceptance criteria are frozen with it: changing them needs the task back in planning. The web UI reads the same catalog (`@agentq/shared/catalog`).
 
 The task lifecycle moves through these states:
 
@@ -221,20 +221,21 @@ The task lifecycle moves through these states:
 
 **plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never an agent that wrote the plan).
 
-**split** → The plan split the task into subtasks; it completes when they all finish.
+**split** → The plan split the task into subtasks; it completes when they all finish (at least one completed). If every subtask was canceled it goes to `needs_human`.
 
 **verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier (never an agent that wrote the code).
 
 **verifying** → The verifier is running the project's commands in the task's worktree.
 
-**needs_human** → An agent called `report_blocker` (push rejected, missing credentials, contradictory task), or a runner job ended three times in a row without submitting (`AGENTQ_MAX_REVERTS`). The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next.
+**needs_human** → An agent called `report_blocker` (push rejected, missing credentials, contradictory task), or a runner job ended three times in a row without submitting (`AGENTQ_MAX_REVERTS`), or a task it starts after was canceled or deleted, or every subtask of a split task was canceled. The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next.
 
 ### User Actions
 - Approve plan, request plan changes
-- Approve code, request code changes
+- Approve code, request code changes, or send the task back to planning (`request_replan`: the plan itself is wrong)
 - Request AI review
 - Cancel task, unblock stuck task (planning, coding, reviewing or merging; the runner job still working on it is stopped)
-- Answer a blocked task (`resolve_blocker`): the answer goes to the conversation and the task moves to a status allowed for the phase it was blocked in
+- Answer a blocked task (`resolve_blocker`): the answer goes to the conversation and the task moves to a status allowed for the phase it was blocked in. A plan blocker sent to `ready_for_code` approves the plan (frozen, subtasks released: `split`); a coding, verification or review blocker can go back to `plan_changes_requested`; dependencies that were canceled or deleted are dropped
+- Change whether a task requires a plan before work starts (moves it between `plan_requested` and `ready_for_code`)
 - Mark the PR merged (when the PR sync cannot see GitHub)
 - Archive a complete task
 

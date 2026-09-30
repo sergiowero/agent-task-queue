@@ -1112,6 +1112,7 @@ const TASK_COLUMNS = {
   recommendedBranch: { column: "recommended_branch", json: false },
   realBranch: { column: "real_branch", json: false },
   mergeBranch: { column: "merge_branch", json: false },
+  requiresPlan: { column: "requires_plan", json: false },
   status: { column: "status", json: false },
   assignedAgent: { column: "assigned_agent_id", json: true },
   conversation: { column: "conversation", json: true },
@@ -1231,6 +1232,18 @@ export function getSubtasks(parentId: string): Task[] {
   return getDb()
     .prepare("SELECT * FROM tasks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY created_at ASC")
     .all(parentId)
+    .map(rowToTask);
+}
+
+/** Live, unfinished tasks that start after `id` (it is in their blockedBy), oldest first. */
+export function getDependents(id: string): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT t.* FROM tasks t, json_each(COALESCE(NULLIF(t.blocked_by, ''), '[]')) dep
+       WHERE dep.value = ? AND t.deleted_at IS NULL AND t.status NOT IN ('complete', 'canceled')
+       ORDER BY t.created_at ASC`,
+    )
+    .all(id)
     .map(rowToTask);
 }
 

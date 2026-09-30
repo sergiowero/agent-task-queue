@@ -78,6 +78,7 @@ export interface Task {
     suggestedRisk: Risk | null;
     proposedSubtasks: string[];
     touchedPaths: string[];
+    sizeWarnings?: string[];
   } | null;
   /** A subtask waiting for its parent's plan to be approved. */
   held: boolean;
@@ -407,6 +408,8 @@ export const api = {
     }),
   requestAiReview: (id: string) =>
     request<Task>(`/tasks/${id}/request-ai-review`, { method: "POST" }),
+  requestReplan: (id: string, data: { message?: string }) =>
+    request<Task>(`/tasks/${id}/request-replan`, { method: "POST", body: JSON.stringify(data) }),
   confirmCompletion: (id: string) =>
     request<Task>(`/tasks/${id}/confirm-completion`, { method: "POST" }),
   cancel: (id: string) => request<Task>(`/tasks/${id}/cancel`, { method: "POST" }),

@@ -13,7 +13,7 @@ Follow this skill when you hold a task claimed from `plan_review_requested` (its
 
 ## Independent Critique
 
-Your **brief** (`brief` in the claim result, or `get_task_brief`) is an independent one (`brief.independent: true`): the task, `criteria`, the plan under critique (`latestPlan`), its `validationPlan`, what the planner declared with it (`planSubmission`: open questions, suggested risk, proposed subtasks, touched paths), `openFindings` (earlier plan findings, ids like `P1-2`), `humanDecisions` and `humanNotes`. It leaves out, on purpose, the planner's handoff notes and the task's conversation: judge the plan by itself against the task and the code. While you hold the task, `get_task` returns the same brief.
+Your **brief** (`brief` in the claim result, or `get_task_brief`) is an independent one (`brief.independent: true`): the task, `criteria`, the plan under critique (`latestPlan`), its `validationPlan`, what the planner declared with it (`planSubmission`: open questions, suggested risk, proposed subtasks, touched paths, `sizeWarnings`), the `subtasks` the plan created (held until it is approved), the project's `sizeLimits`, `openFindings` (earlier plan findings, ids like `P1-2`), `humanDecisions` and `humanNotes`. It leaves out, on purpose, the planner's handoff notes and the task's conversation: judge the plan by itself against the task and the code. While you hold the task, `get_task` returns the same brief.
 
 ## Working Directory
 
@@ -34,7 +34,7 @@ The planner answers every open finding in its revision: `status` `fixed` (check 
 - **Validation**: every criterion has an executable check (a command or a test to add) or a reason to be manual (the server already refuses a plan with a criterion that has no item at all); the regression commands exist in this project
 - **Grounded**: the files and functions it cites exist; the approach fits the codebase's existing patterns
 - **Risk**: protected areas (migrations, auth, CI, public APIs) are identified; if the plan is riskier than the task's risk, pass `suggestedRisk` (it can only go up)
-- **Size**: a plan bigger than one reviewable PR (~400 changed lines) should be split into subtasks
+- **Size**: a plan bigger than one reviewable PR (over `brief.sizeLimits`: `maxDiffLines` changed lines, `maxPlanFiles` files, `maxCriteria` criteria) should be split into subtasks. `planSubmission.sizeWarnings` lists where the server saw it over the limits without a split. Check `brief.subtasks` against the plan: each one is a reviewable part with its own criteria, `blockedBy` gives a workable order, and none is missing or extra
 
 ## Verdict Rules
 

@@ -34,7 +34,13 @@ Always `cd` into the worktree before starting work — never assume which one to
   ```bash
   git worktree add {project}/.agentq/worktrees/{task.id} {task.recommendedBranch}
   ```
-  If `{task.recommendedBranch}` does not exist yet, create it from the merge branch: `git worktree add -b {task.recommendedBranch} {project}/.agentq/worktrees/{task.id} {task.mergeBranch}`
+  If `{task.recommendedBranch}` does not exist yet, create it from the **up-to-date** merge branch: fetch it first, so the work merged since the main checkout was last pulled (including this task's dependencies) is in your branch:
+  ```bash
+  git fetch origin {task.mergeBranch}
+  git worktree add -b {task.recommendedBranch} {project}/.agentq/worktrees/{task.id} origin/{task.mergeBranch}
+  ```
+  Only when the repository has no `origin` (or it has no such branch), branch from the local `{task.mergeBranch}` instead.
+- **Dependencies** (`brief.dependencies`): the tasks this one starts after. Each should be `complete`, i.e. its pull request (`pullRequest`) was merged into its `mergeBranch`. Check that its work is in your branch: `git merge-base --is-ancestor {headSha} HEAD` succeeds for a merge commit; after a squash or rebase merge, look for its changes in `git log origin/{task.mergeBranch}`. If a dependency is not complete, went into another branch than `task.mergeBranch`, or its work is missing, call `report_blocker`: never re-implement it here
 - **Mandatory for submit_code**: the `worktree` argument is required when submitting code
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
 - **Coding-phase commits**: commit the task's changes inside the worktree on the feature branch — after the initial implementation and after EVERY round of review fixes (see Commit Before Submit)
@@ -56,7 +62,7 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
 
 ### Initial implementation (claimed from `ready_for_code`)
 
-1. Go to the worktree (create it if needed — see Worktree Rules)
+1. Go to the worktree (create it if needed, from the fetched merge branch — see Worktree Rules) and check `brief.dependencies`
 2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` (each has an id like `AC1` and a `verify` method), `brief.approvedPlan` (the approved plan and its **validation plan**), `brief.handoffs` (the planner's notes) and `brief.humanNotes`. Call `get_task` only if you need the whole conversation
 3. **Tests first.** Write the tests the validation plan names (`approvedPlan.validation.items[].newTests`). For a bug, first write a test that fails without the fix
 4. Implement the code until those tests pass
@@ -69,7 +75,7 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
    ```
 8. Submit with `submit_code` (see Submit Code)
 
-The validation plan is frozen once approved. If it cannot be followed (a command cannot work, a criterion cannot be tested as planned), do **not** change it or work around it: call `report_blocker` and say why.
+The validation plan is frozen once approved. If it cannot be followed (a command cannot work, a criterion cannot be tested as planned), do **not** change it or work around it: call `report_blocker` and say why. A person can then send the task back to planning, and the next approved plan replaces it.
 
 ### Review fixes (claimed from `changes_requested`)
 
