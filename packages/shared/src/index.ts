@@ -12,11 +12,13 @@ export {
   type ValidationPlan,
   type ApprovedPlan,
   type DiffStats,
+  type CommitRecord,
   type Verification,
   type AcceptanceCriterion,
   type ProjectProfile,
   type ProjectCommands,
   type LastReview,
+  type Approval,
   type Producer,
   type ConversationEntry,
   type StatusHistoryEntry,
@@ -123,6 +125,7 @@ export {
   requestPlanChanges,
   approveCode,
   requestCodeChanges,
+  requestPrChanges,
   requestAiReview,
   completeTask,
   cancelTask,
@@ -254,11 +257,12 @@ export {
   type SkillDocument,
 } from "./skills.js";
 
-export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./git.js";
+export { git, isGitRepo, sameCommit, detectDefaultBranch, detectProjectCommands } from "./git.js";
 export { analyzeDiff, protectedFiles, diffRiskReasons, mergeDiffReasons, type DiffAnalysis } from "./diff.js";
 
 export {
   archiveTask,
+  archiveIfAuto,
   buildArchiveDocuments,
   resolveArchiveDirectory,
   archiveBaseName,

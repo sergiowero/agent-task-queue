@@ -10,7 +10,7 @@
  * never the notes, messages or evidence of the agent whose work they check.
  */
 import { getProjectById, getTaskById } from "./database.js";
-import { STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
+import { BLOCKING_SEVERITIES, STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
 import { getEvidence, getFindings, getHandoffs, latestHandoffs } from "./records.js";
 import { resolveProfile, type ProjectCommands } from "./profile.js";
 import { planRoundsUsed, resolvePolicy, reviewRoundsUsed } from "./policy.js";
@@ -87,8 +87,12 @@ export interface TaskBrief {
   verification: (Verification & { failing: Pick<Evidence, "command" | "exitCode" | "summary">[] }) | null;
   /** What a person answered to the last blocker, if the task was blocked. */
   lastAnswer: string | null;
-  /** For the `pr` role: the pull request body to use (criteria, evidence, review, risk). */
-  pr: { body: string; url: string | null } | null;
+  /**
+   * For the `pr` role: the pull request body to use (criteria, evidence, review,
+   * risk), the task's open PR to update (url), and the approved commit the
+   * pushed branch head must be (commit; null when none was recorded).
+   */
+  pr: { body: string; url: string | null; commit: string | null } | null;
   /** Where the full history is. */
   more: string;
 }
@@ -192,7 +196,7 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
     lastAnswer: answer ? answer.message.replace(/^\*\*Blocker resolved\*\*[^\n]*\n*/, "").trim() || null : null,
     pr:
       [TaskStatus.Approved, TaskStatus.Merging, TaskStatus.PrOpen].includes(task.status)
-        ? { body: renderPrBody(task), url: task.pullRequest?.url ?? null }
+        ? { body: renderPrBody(task), url: task.pullRequest?.url ?? null, commit: task.approval?.sha ?? null }
         : null,
     more: "The full conversation, history and every piece of evidence: call get_task.",
   };
@@ -380,9 +384,17 @@ export function renderPrBody(task: Task): string {
   }
   lines.push("");
   lines.push("## Review", "");
-  if (task.lastReview) {
-    lines.push(`AI review: **${task.lastReview.verdict}** in round ${task.lastReview.round} by \`${task.lastReview.by}\`.`);
-  } else {
+  const review = task.lastReview;
+  const approval = task.approval;
+  const short = (sha: string | null | undefined) => (sha ? ` on \`${sha.slice(0, 12)}\`` : "");
+  if (review) {
+    const verdict = `AI review: **${review.verdict}** in round ${review.round} by \`${review.by}\``;
+    lines.push(review.stale ? `${verdict}, on an earlier submission: not AI-reviewed since the last change.` : `${verdict}${short(review.sha)}.`);
+  }
+  if (approval?.human) {
+    lines.push(`Approved by a person (\`${approval.by}\`)${short(approval.sha)} on ${approval.at.slice(0, 10)}.`);
+  } else if (!review) {
+    // Tasks approved before approvals were recorded.
     lines.push("Reviewed by a person in AgentQ.");
   }
   if (resolved.length) {
@@ -390,9 +402,16 @@ export function renderPrBody(task: Task): string {
     for (const f of resolved) lines.push(`- ${f.id} (${f.severity}) ${f.status}${f.resolution ? ` — ${f.resolution}` : ""}`);
   }
   const open = findings.filter((f) => f.status === "open");
-  if (open.length) {
+  const blocking = open.filter((f) => BLOCKING_SEVERITIES.includes(f.severity));
+  if (blocking.length) {
+    // Only a person can approve code with blocker or major findings open.
+    lines.push("", approval?.human ? `Open blocker/major findings a person accepted (\`${approval.by}\`):` : "Open blocker/major findings:");
+    for (const f of blocking) lines.push(`- ${f.id} (${f.severity}) ${f.text}`);
+  }
+  const minor = open.filter((f) => !BLOCKING_SEVERITIES.includes(f.severity));
+  if (minor.length) {
     lines.push("", "Still open (non-blocking):");
-    for (const f of open) lines.push(`- ${f.id} (${f.severity}) ${f.text}`);
+    for (const f of minor) lines.push(`- ${f.id} (${f.severity}) ${f.text}`);
   }
   lines.push("", "## Risk", "", `**${task.risk}**${task.riskReasons.length ? `: ${task.riskReasons.join("; ")}` : ""}`);
   if (task.nonGoals.length) lines.push("", "Out of scope: " + task.nonGoals.join("; "));

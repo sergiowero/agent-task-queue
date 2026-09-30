@@ -3,7 +3,7 @@ name: agentq-pr
 description: Pull-request phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body AgentQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_pr, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "6.2.0"
+  version: "6.4.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -15,9 +15,9 @@ Follow this skill when you hold a task claimed from `approved` (the review passe
 
 | Claimed from | Phase | Action | Next status |
 |--------------|-------|--------|-------------|
-| `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body`, then `submit_pr` | `pr_open` |
+| `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body` (or update the task's open PR), then `submit_pr` | `pr_open` |
 
-The code was committed to the feature branch during coding, verified and reviewed. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; AgentQ sees the merge and completes the task on its own (under L3 with auto-merge, AgentQ merges green low-risk PRs itself — still not you).
+The code was committed to the feature branch during coding, verified and reviewed: the approval pinned that commit (`brief.pr.commit`), and the PR ships exactly it. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; AgentQ sees the merge and completes the task on its own (under L3 with auto-merge, AgentQ merges green low-risk PRs itself — still not you).
 
 Two branches matter:
 - **Head / feature branch** = `task.realBranch` if set, else `task.recommendedBranch` — where the worktree lives.
@@ -37,10 +37,12 @@ cd {task.worktreePath}
 git status
 git branch --show-current       # MUST be the feature branch
 git log --oneline {task.mergeBranch}..HEAD   # at least one commit
+git rev-parse HEAD              # MUST be brief.pr.commit (the approved commit) when it is set
 ```
 
 - No commits on the feature branch → `report_blocker` (there is nothing to open a PR for).
-- Uncommitted changes left by the coder → commit them in the worktree: `git add -A && git commit -m "{task.title} (#{task.id})"`. Never commit in the main repo or on `mergeBranch`.
+- Uncommitted changes left by the coder → `report_blocker` listing the files. **Never commit them yourself**: nobody verified or reviewed them, so they go back through the coder.
+- `HEAD` is not `brief.pr.commit` (commits after the approval) → `report_blocker`; do not push. A PR whose head is not the approved commit sends the task to a person anyway.
 
 ### 2. Push the feature branch
 
@@ -73,7 +75,7 @@ rm .git/agentq-pr-body.md
 
 - Keep the body file inside `.git/` so it is never committed.
 - Capture the **PR URL** printed by `gh pr create`.
-- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate.
+- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file .git/agentq-pr-body.md`) and record it with `submit_pr` as usual.
 - `gh` missing, not authenticated or failing → `report_blocker` with the output. Never call `submit_pr` for a PR that does not exist.
 
 ### 4. Record it with `submit_pr`
@@ -96,11 +98,11 @@ rm .git/agentq-pr-body.md
 | `prUrl` | The URL `gh pr create` printed | Leaving it out: AgentQ then cannot follow the PR |
 | `mergeBranch` | The PR **base** (`task.mergeBranch`) | Passing the feature branch |
 | `headBranch` | The pushed feature branch | — |
-| `commit` | The feature-branch head SHA you pushed | Passing a merge commit (there is none) |
+| `commit` | The feature-branch head SHA you pushed (the approved commit) | Passing a merge commit (there is none), or a commit made after the approval |
 | `authors` | Everyone who wrote the code (implementing agent + human co-authors) | Only the PR-phase agent |
 | `context` | Required handoff: PR URL/number, branches, what to check | Blank (the tool rejects it) |
 
-The task moves to `pr_open` and is released. `Task must be in Merging status.` means the task is no longer yours: stop. Any other error: fix the arguments and call again.
+The task moves to `pr_open` and is released (to `needs_human` instead when `commit` is not the approved commit). `Task must be in Merging status.` means the task is no longer yours: stop. Any other error: fix the arguments and call again.
 
 ## After submitting
 
@@ -110,7 +112,7 @@ Stop. You do not wait for the merge, re-run checks or poll GitHub. AgentQ syncs 
 |-----------|------|
 | Merged | `complete` (and archived if the project archives automatically) |
 | Closed without merging | `needs_human`: a person decides |
-| Changes requested by a person | Stays in `pr_open`; the person sends it back through AgentQ |
+| Changes requested by a person (on GitHub or on the task page) | `changes_requested`: the coder answers them as findings on the same branch; after verification and review the pr phase runs again and updates the same PR |
 
 ## Failure handling
 
@@ -124,6 +126,7 @@ Push or PR failure: do not call `submit_pr`. Call `report_blocker` with the erro
 
 - **NEVER** merge the PR, merge locally, or enable auto-merge — a person (or AgentQ under L3) merges
 - **NEVER** force-push, amend or rewrite commits from earlier phases
+- **NEVER** commit in the worktree: the PR ships the approved commit, nothing added after it
 - **DO NOT** open the PR before the branch is pushed, or call `submit_pr` before the PR exists
 - **DO** use `brief.pr.body` as the PR body (`--body-file`), not a body you write from scratch
 - **DO** use `gh` (never raw GitHub API calls)

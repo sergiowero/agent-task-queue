@@ -25,6 +25,19 @@ export function git(dir: string, args: string[]): string | null {
   }
 }
 
+/**
+ * Whether two commit ids name the same commit: equal, or one a prefix of the
+ * other when the shorter has at least 7 characters (an abbreviated sha).
+ */
+export function sameCommit(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = a?.trim().toLowerCase() ?? "";
+  const y = b?.trim().toLowerCase() ?? "";
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length < y.length ? [x, y] : [y, x];
+  return short.length >= 7 && long.startsWith(short);
+}
+
 export function isGitRepo(dir: string): boolean {
   return git(dir, ["rev-parse", "--is-inside-work-tree"]) === "true";
 }
