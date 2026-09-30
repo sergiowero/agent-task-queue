@@ -10,12 +10,14 @@ import {
   createTask,
   beginTransaction,
   getTaskById,
+  markServerOffline,
   rollbackTransaction,
+  serverOnline,
   skillsBundleVersion,
   updateFinding,
 } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
-import { startServer } from "./index.js";
+import { startServer, sweep } from "./index.js";
 
 // Set test DB before the first DB call. The shared package resolves
 // AGENTQ_DB_PATH lazily in getDb(), and nothing touches the DB at import time.
@@ -1179,6 +1181,7 @@ describe("autonomy, risk and findings", () => {
         reviewStarvationMin: 45,
         leaseMin: 30,
         autoMerge: true,
+        verifier: "agent" as const,
       },
       profile: {
         commands: { test: "make ci" },
@@ -1207,7 +1210,13 @@ describe("autonomy, risk and findings", () => {
     expect(listed.policy).toEqual(partial.policy);
 
     // The portal clamps to these ranges: outside them the server refuses.
-    for (const bad of [{ policy: { maxPlanRounds: 11 } }, { policy: { leaseMin: 4 } }, { profile: { verifyTimeoutSec: 5 } }, { profile: { dorMode: "strict" } }]) {
+    for (const bad of [
+      { policy: { maxPlanRounds: 11 } },
+      { policy: { leaseMin: 4 } },
+      { policy: { verifier: "robot" } },
+      { profile: { verifyTimeoutSec: 5 } },
+      { profile: { dorMode: "strict" } },
+    ]) {
       expect((await json(`/api/projects/${projectId}`, "PUT", bad)).status).toBe(400);
     }
     expect(((await (await api("/api/projects")).json()) as Project[]).find((p) => p.id === projectId)!.policy).toEqual(partial.policy);
@@ -1488,5 +1497,16 @@ describe("claim tokens stay private", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("Missing claimToken");
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.Reviewing);
+  });
+});
+
+describe("the server's sweep", () => {
+  it("says the server is up, so runners can be counted on to verify code, and the clean shutdown says it is not", () => {
+    markServerOffline();
+    expect(serverOnline()).toBe(false);
+    sweep();
+    expect(serverOnline()).toBe(true);
+    markServerOffline();
+    expect(serverOnline()).toBe(false);
   });
 });

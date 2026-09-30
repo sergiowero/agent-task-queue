@@ -13,6 +13,7 @@ import {
   TaskStatus,
   skillForPhase,
   claimNextTask,
+  getEvidence,
   getFindings,
   submitCode,
   submitReview,
@@ -635,6 +636,46 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
     expect(engine.recoverOrphans()).toContain(task.id);
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
   });
+});
+
+describe("RunnerEngine: agent verification (autonomy L2)", () => {
+  it("a verify runner verifies the code of a project set to agent verification, and never the code it wrote", async () => {
+    const agentProject = randomUUID();
+    createProject({ id: agentProject, displayName: "Agent verified", workingDirectory: PROJECT_DIR, autonomy: 2, policy: { verifier: "agent" } });
+    const task = createTask({ title: "verify me", description: "", projectId: agentProject });
+    // No commands, and no built-in verifier in this process: the code waits for an agent with the verify role.
+    const author = makeRunner(
+      agentArgv("submit_code", { message: "## Changes", worktree: PROJECT_DIR, context: "look at x" }),
+      { roles: ["code", "verify"], projectId: agentProject },
+    );
+    const engine = makeEngine();
+    engine.start(author.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.VerifyRequested, 20_000, "code submitted");
+
+    // Several polls later the author still has not picked up the verification of its own code.
+    await Bun.sleep(2500);
+    expect(engine.getJobs(author.id)).toHaveLength(1);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.VerifyRequested);
+    await engine.stop(author.id);
+
+    const verifier = makeRunner(
+      agentArgv("submit_verification", {
+        passed: true,
+        evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "3 pass" }],
+        context: "green",
+      }),
+      { roles: ["verify"], projectId: agentProject },
+    );
+    engine.start(verifier.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.CodeReviewRequested, 20_000, "code verified");
+    const verified = getTaskById(task.id)!;
+    expect(lastJob(engine, verifier.id)!.phase).toBe("verify");
+    expect(verified.verification).toMatchObject({ passed: true, skipped: false });
+    expect(verified.producers.code?.sessionKey).toBe(`runner:${author.id}`);
+    expect(verified.producers.verify?.sessionKey).toBe(`runner:${verifier.id}`);
+    // The evidence is the verifier agent's own, not the built-in verifier's.
+    expect(getEvidence(task.id).map((e) => e.producedBy)).toEqual([verified.producers.verify!.agentId!]);
+  }, 60_000);
 });
 
 describe("RunnerEngine: plan critique (autonomy L2)", () => {

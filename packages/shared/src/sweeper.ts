@@ -1,22 +1,21 @@
 /**
  * Housekeeping that keeps the queue moving without a person: expired claims of
- * silent hand-opened sessions go back to the queue, and reviews nobody eligible
- * picked up in time go to a person. Safe to call often and from any process.
+ * silent hand-opened sessions go back to the queue, reviews nobody eligible
+ * picked up in time go to a person, and code nobody verified goes on to review,
+ * marked as not verified. Safe to call often and from any process.
  */
 import { getDbHandle, getTaskById } from "./database.js";
 import { TaskStatus, claimRuleFor } from "./catalog.js";
 import { reviewGate } from "./policy.js";
-import { policyFor, revertClaim, transitionTask, unverifiedRecord, verifierOnline } from "./workflow.js";
-
-/** Minutes a verification may wait for a verifier that stopped sending heartbeats. */
-const VERIFY_WAIT_MIN = 5;
+import { verifyWait } from "./verifier.js";
+import { policyFor, revertClaim, transitionTask, unverifiedRecord } from "./workflow.js";
 
 export interface SweepResult {
   /** Tasks whose claim lease expired (released back to the queue). */
   expired: string[];
   /** Reviews handed to a person because no eligible reviewer claimed them. */
   starved: string[];
-  /** Verifications skipped because the verifier is gone. */
+  /** Code nobody verified in time (the verifier is gone, or no agent took it): it went on to review, unverified. */
   unverified: string[];
 }
 
@@ -70,32 +69,38 @@ export function sweepQueue(now: Date = new Date()): SweepResult {
     }
   }
 
-  // Verifications waiting for a verifier that is not running go on to review, unverified.
-  if (!verifierOnline(now.getTime())) {
-    const pending = d
-      .prepare(
-        "SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL",
-      )
-      .all(TaskStatus.VerifyRequested) as { id: string }[];
-    for (const { id } of pending) {
-      const task = getTaskById(id);
-      const since = task?.history.at(-1);
-      if (
-        !task ||
-        !since ||
-        now.getTime() - new Date(since.timestamp).getTime() < VERIFY_WAIT_MIN * 60_000
-      )
-        continue;
-      transitionTask(task, reviewGate(policyFor(task)), {
-        actor: "system:sweeper",
-        author: "system",
-        message: `The verifier is not running, so the code goes to review unverified (waited ${VERIFY_WAIT_MIN} min).`,
-        messageType: "system",
-        event: "verification_skipped",
-        patch: { verification: unverifiedRecord(task, `Not verified: the verifier is not running (waited ${VERIFY_WAIT_MIN} min).`) },
-      });
-      result.unverified.push(id);
-    }
+  // Code nobody verified goes on to review, unverified: the built-in verifier's after a few minutes
+  // without its heartbeat, an agent verifier's (the project's choice, or a runner that took over)
+  // only after the same wait a review has for its reviewer.
+  const pending = d
+    .prepare("SELECT id FROM tasks WHERE status = ? AND assigned_agent_id IS NULL AND deleted_at IS NULL")
+    .all(TaskStatus.VerifyRequested) as { id: string }[];
+  for (const { id } of pending) {
+    const task = getTaskById(id);
+    const since = task?.history.at(-1);
+    if (!task || !since) continue;
+    const policy = policyFor(task);
+    const wait = verifyWait(task, policy, now.getTime());
+    if (!wait || now.getTime() - new Date(since.timestamp).getTime() < wait.minutes * 60_000) continue;
+    const [message, note] =
+      wait.by === "agent"
+        ? [
+            `No agent with the \`verify\` role took the verification in ${wait.minutes} min (an agent never verifies its own code), so the code goes to review unverified. Start a runner with that role, or open a session with it, to avoid this.`,
+            `Not verified: no verifier agent took it in ${wait.minutes} min.`,
+          ]
+        : [
+            `The verifier is not running, so the code goes to review unverified (waited ${wait.minutes} min).`,
+            `Not verified: the verifier is not running (waited ${wait.minutes} min).`,
+          ];
+    transitionTask(task, reviewGate(policy), {
+      actor: "system:sweeper",
+      author: "system",
+      message,
+      messageType: "system",
+      event: "verification_skipped",
+      patch: { verification: unverifiedRecord(task, note) },
+    });
+    result.unverified.push(id);
   }
   return result;
 }

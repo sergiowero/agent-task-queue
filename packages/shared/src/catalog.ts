@@ -208,7 +208,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "pending",
     cancelable: true,
     editable: true,
-    hint: "Waiting for the verifier to run the project's commands on the submitted code.",
+    hint: "Waiting for a verifier to check the submitted code: the built-in one, or an agent with the verify role when the project is set to agent verification.",
   },
   [TaskStatus.Verifying]: {
     label: "Verifying",
@@ -217,7 +217,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "in-progress",
     cancelable: true,
     editable: false,
-    hint: "The verifier is running the project's commands in the task's worktree.",
+    hint: "A verifier is running the project's commands in the task's worktree.",
   },
   [TaskStatus.PlanReviewRequested]: {
     label: "Plan critique requested",
@@ -566,6 +566,12 @@ export const SEPARATION: Partial<Record<TaskStatus, Phase>> = {
   [TaskStatus.PlanReviewRequested]: "plan",
   [TaskStatus.VerifyRequested]: "code",
 };
+
+/** The built-in verifier's claim identity: a claim made with this runner id is the server's own verifier. */
+export const VERIFIER_RUNNER_ID = "builtin:verifier";
+
+/** What the built-in verifier's evidence is attributed to; an agent verifier's evidence carries its own agent id. */
+export const BUILTIN_VERIFIER_AUTHOR = "runner:verify";
 
 // ─── Identities (separation of duties) ────────────────────────────────
 

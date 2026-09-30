@@ -630,4 +630,27 @@ describe.skipIf(!hasGit)("verification", () => {
     worker.stop();
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.CodeReviewRequested);
   });
+
+  it("the worker leaves the code of a project set to agent verification to agents, and verifies the others'", async () => {
+    const { repo, worktree } = makeRepo();
+    const commands = { test: `${BUN} -e "0"` };
+    const agentProject = randomUUID();
+    createProject({ id: agentProject, displayName: "Agent verified", workingDirectory: repo, policy: { verifier: "agent" }, profile: { commands } });
+    const forAgent = coded(agentProject, worktree);
+    const forWorker = coded(project(repo, commands), worktree);
+    expect([forAgent.status, forWorker.status]).toEqual([TaskStatus.VerifyRequested, TaskStatus.VerifyRequested]);
+    expect(forAgent.verification?.note).toContain("verifier agent");
+
+    const worker = new VerifyWorker();
+    // Earlier tests may have left other tasks waiting; the worker takes them one per tick.
+    for (let i = 0; i < 10 && getTaskById(forWorker.id)!.status === TaskStatus.VerifyRequested; i++) await worker.tick();
+    // Nothing is left for it to take, and it is still not the agent project's task.
+    expect(await worker.tick()).toBeNull();
+    worker.stop();
+    expect(getTaskById(forWorker.id)!.status).toBe(TaskStatus.CodeReviewRequested);
+    const waiting = getTaskById(forAgent.id)!;
+    expect(waiting.status).toBe(TaskStatus.VerifyRequested);
+    expect(waiting.assignedAgent).toBeNull();
+    cancelTask(forAgent.id);
+  });
 });

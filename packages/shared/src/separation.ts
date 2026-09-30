@@ -4,7 +4,7 @@
  * Pure functions over plain data, so the portal can warn before a check starves.
  */
 import { modelKey, type Role } from "./catalog.js";
-import { resolvePolicy, type PolicyProject } from "./policy.js";
+import { resolvePolicy, type GatePolicy, type PolicyProject } from "./policy.js";
 
 /** A runner as the check sees it. */
 export interface SeparationRunner {
@@ -24,8 +24,11 @@ export interface SeparationProject extends PolicyProject {
 /** A check no runner may take for some runners' work in a project. */
 export interface SeparationGap {
   projectId: string;
-  /** The checking role: plan_review (plan critique) or review (code review). */
-  check: "plan_review" | "review";
+  /**
+   * The checking role: plan_review (plan critique), verify (code verification, in projects that
+   * hand it to an agent) or review (code review).
+   */
+  check: "plan_review" | "verify" | "review";
   /**
    * separation: no other runner has the role;
    * model: every other runner with the role is on the author's model, and the project requires a different one.
@@ -36,14 +39,30 @@ export interface SeparationGap {
 }
 
 /**
- * The checks the project's gates hand to agents, with the role whose work they
- * check. Verification is left out: the built-in verifier, which is what makes
- * code wait for verification, always may take it.
+ * The checks the project hands to agents, with the role whose work they check. Verification
+ * counts only in projects set to agent verification: otherwise the built-in verifier, which is what
+ * makes code wait for verification, always may take it.
  */
 const CHECKS = [
-  { check: "plan_review", author: "plan", gate: "plan" },
-  { check: "review", author: "code", gate: "code" },
-] as const;
+  { check: "plan_review", author: "plan", handedToAgent: (p) => p.plan === "agent" },
+  { check: "verify", author: "code", handedToAgent: (p) => p.verifier === "agent" },
+  { check: "review", author: "code", handedToAgent: (p) => p.code === "agent" },
+] as const satisfies readonly {
+  check: SeparationGap["check"];
+  author: Role;
+  handedToAgent: (policy: GatePolicy) => boolean;
+}[];
+
+/**
+ * The runners that can verify a project's code once it is set to agent verification: the enabled ones
+ * with the `verify` role that work the project. Which of them may take a given task also depends on
+ * who wrote its code (see `separationGaps`).
+ */
+export function verifyRunners<R extends SeparationRunner>(runners: readonly R[], projectId: string): R[] {
+  return runners.filter(
+    (r) => r.enabled && r.roles.includes("verify") && (r.projectId === null || r.projectId === projectId),
+  );
+}
 
 /**
  * Checks no enabled runner may take, per project. Such a check waits for a
@@ -59,8 +78,8 @@ export function separationGaps(
     const here = runners.filter(
       (r) => r.enabled && (r.projectId === null || r.projectId === project.id),
     );
-    for (const { check, author, gate } of CHECKS) {
-      if (policy[gate] !== "agent") continue;
+    for (const { check, author, handedToAgent } of CHECKS) {
+      if (!handedToAgent(policy)) continue;
       const checkers = here.filter((r) => r.roles.includes(check));
       const bySeparation: string[] = [];
       const byModel: string[] = [];

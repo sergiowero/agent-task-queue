@@ -66,7 +66,7 @@ export const SERVER_VERSION = "0.1.0";
 const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
 export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your agentq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your agentq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier; a project can hand verification to an agent with the verify role instead). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
 2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the AgentQ repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
 4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the agentq-* skill to follow:
@@ -396,7 +396,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
+        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: a verifier checks it next (the built-in one, which runs the project's commands when configured, or an agent with the `verify` role when the project is set to agent verification), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         ...submitCodeFields,

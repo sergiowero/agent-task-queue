@@ -1020,6 +1020,8 @@ export interface ClaimFilter {
   modelKey?: string;
   /** The claimer's model as given, compared with producers recorded before model keys existed. */
   model?: string;
+  /** The claimer is the server's built-in verifier: it leaves the verification of projects set to agent verification (`policy.verifier`) to agents. */
+  builtinVerifier?: boolean;
 }
 
 export function getClaimableTasks(
@@ -1067,6 +1069,10 @@ export function getClaimableTasks(
           json_array(json_extract(t.producers, '$.${phase}.model')))) WHERE value IN (${models.map(() => "?").join(", ")})))`;
       params.push(status, ...models);
     }
+  }
+  if (filter.builtinVerifier && statuses.includes(TaskStatus.VerifyRequested)) {
+    sql += ` AND NOT (t.status = ? AND COALESCE(json_extract(p.policy, '$.verifier'), 'builtin') = 'agent')`;
+    params.push(TaskStatus.VerifyRequested);
   }
   sql += " ORDER BY t.priority DESC, t.created_at ASC LIMIT ?";
   params.push(limit);

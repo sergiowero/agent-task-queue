@@ -27,6 +27,12 @@ describe("the ranges of the project settings", () => {
     });
   }
 
+  it("the verifier is the built-in one by default, and only builtin or agent are accepted", () => {
+    expect(DEFAULT_POLICY.verifier).toBe("builtin");
+    expect(["builtin", "agent"].map((verifier) => policySettingsSchema.safeParse({ verifier }).success)).toEqual([true, true]);
+    expect(["llm", "", null, true].map((verifier) => policySettingsSchema.safeParse({ verifier }).success)).toEqual([false, false, false, false]);
+  });
+
   it("every numeric setting has a range", () => {
     const numeric = (defaults: object) => Object.entries(defaults).filter(([, v]) => typeof v === "number").map(([k]) => k).sort();
     expect(Object.keys(POLICY_RANGES).sort()).toEqual(numeric(DEFAULT_POLICY));
