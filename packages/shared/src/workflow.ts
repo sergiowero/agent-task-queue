@@ -360,6 +360,30 @@ export function policyFor(task: Task): GatePolicy {
   return resolvePolicy(task.projectId ? getProjectById(task.projectId) : null, task);
 }
 
+/**
+ * The round a handoff written in `phase` belongs to, read from the task before
+ * the change: a plan and its critique share round k (the critique's findings
+ * are P<k>), and so do a code submission, its verification and its review
+ * (evidence of round k, findings R<k>). A merge follows the last review round;
+ * a refinement comes before any round. People's notes and claims take the
+ * round of the phase they feed.
+ */
+function handoffRound(task: Pick<Task, "planRound" | "codeRound">, phase: Phase): number {
+  switch (phase) {
+    case "plan":
+    case "plan_review":
+      return task.planRound + 1;
+    case "code":
+    case "verify":
+    case "review":
+      return task.codeRound + 1;
+    case "merge":
+      return task.codeRound;
+    case "refine":
+      return 0;
+  }
+}
+
 /** The Definition of Ready of a task in its project, whose commands can verify it too. */
 function readinessIssues(input: ReadinessInput, projectId: string | null | undefined): string[] {
   const profile = resolveProfile(projectId ? getProjectById(projectId)?.profile : null);
@@ -479,7 +503,12 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       const context = input.context?.trim();
       if (context) {
         appendJson(candidate.id, "contexts", context);
-        addHandoff(candidate.id, { phase: "claim", round: candidate.codeRound, agentId: agent.id, summary: context });
+        addHandoff(candidate.id, {
+          phase: "claim",
+          round: handoffRound(candidate, STATUS_INFO[newStatus].phase ?? "code"),
+          agentId: agent.id,
+          summary: context,
+        });
       }
       // A runner watches its process; a hand-opened session keeps its claim by staying active.
       if (!input.runnerId) {
@@ -666,7 +695,7 @@ export function reportBlocker(taskId: string, input: ReportBlockerInput): Submit
     if (input.context?.trim()) {
       addHandoff(taskId, {
         phase: blocker.phase ?? "code",
-        round: task.codeRound,
+        round: handoffRound(task, blocker.phase ?? "code"),
         agentId: raisedBy,
         summary: input.context,
       });
@@ -722,7 +751,7 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     if (answer) {
       addHandoff(taskId, {
         phase: "human",
-        round: task.codeRound,
+        round: handoffRound(task, task.blocker?.phase ?? "code"),
         agentId: actor,
         summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
       });
@@ -802,8 +831,9 @@ function humanTransition(
 /** The latest submitted plan and its validation plan, frozen as the approved plan. */
 function freezePlan(task: Task, approvedBy: string): ApprovedPlan {
   const plan = [...task.conversation].reverse().find((e) => e.messageType === "plan");
+  if (!plan) throw new WorkflowError("There is no plan to approve: the task has no submitted plan yet.");
   return {
-    markdown: plan?.message ?? "",
+    markdown: plan.message,
     validation: task.validationPlan,
     approvedBy,
     at: new Date().toISOString(),
@@ -858,14 +888,15 @@ function approvalOf(task: Task, sha: string | null, by: string, human: boolean):
   return { sha, by, human, round: task.codeRound, at: new Date().toISOString() };
 }
 
-function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
+/** A person's change request, for the agent of `phase` (the round it will work). */
+function humanHandoff(taskId: string, phase: Phase, summary: string | undefined, actor = "user"): void {
   const task = getTaskById(taskId);
-  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
+  if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: handoffRound(task, phase), agentId: actor, summary });
 }
 
 export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
-  humanHandoff(taskId, message, input.actor);
+  humanHandoff(taskId, "plan", message, input.actor);
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
@@ -938,7 +969,7 @@ function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: stri
   if (message && input.asFinding !== false) {
     addFindings(task.id, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
   }
-  humanHandoff(task.id, message, actor);
+  humanHandoff(task.id, "code", message, actor);
   const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
   return transitionTask(task, TaskStatus.ChangesRequested, {
     actor,
@@ -958,7 +989,7 @@ function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: stri
 export function requestReplan(taskId: string, input: HumanActionInput = {}): Task {
   const message = input.message?.trim();
   const task = requireTask(taskId);
-  humanHandoff(taskId, message, input.actor);
+  humanHandoff(taskId, "plan", message, input.actor);
   return humanTransition(
     taskId,
     TaskStatus.WaitingCodeReview,
@@ -1275,7 +1306,7 @@ function submit(
     if (input.context?.trim()) {
       addHandoff(taskId, {
         phase: spec.phase,
-        round: spec.phase === "plan" ? updated.planRound : updated.codeRound,
+        round: handoffRound(task, spec.phase),
         agentId: task.assignedAgent?.agentId ?? author,
         summary: input.context,
         decisions: input.decisions,
@@ -1309,6 +1340,36 @@ export interface SubmitPlanInput extends SubmitInput {
   proposedSubtasks?: string[];
   /** Paths the plan expects to touch; protected ones raise the risk to high. */
   touchedPaths?: string[];
+  /** An answer for every open plan finding (P…): fixed, or wontfix with the reason. */
+  findingResolutions?: { id: string; status: "fixed" | "wontfix"; resolution: string }[];
+}
+
+/**
+ * The planner answers the critic's open findings by id, as the coder answers a
+ * review: every open plan finding needs one, and only plan findings the critic
+ * has not verified yet can be answered. The critic then checks each answer.
+ */
+function answerPlanFindings(taskId: string, answers: SubmitPlanInput["findingResolutions"] = []): void {
+  const resolutions = new Map(answers.map((r) => [r.id, r]));
+  const missing = getOpenFindings(taskId, "plan").filter((f) => !resolutions.has(f.id)).map((f) => f.id);
+  if (missing.length) {
+    throw new WorkflowError(
+      `Answer every open plan finding in findingResolutions (fixed, or wontfix with a reason): ${missing.join(", ")}.`,
+    );
+  }
+  for (const r of resolutions.values()) {
+    const finding = getFinding(taskId, r.id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${r.id}.`);
+    if (finding.phase !== "plan" || finding.status === "verified") {
+      throw new WorkflowError(
+        `Finding ${r.id} is not an open plan finding (${finding.phase === "plan" ? finding.status : "code finding"}); answer only the open plan findings.`,
+      );
+    }
+    if (r.status !== "fixed" && r.status !== "wontfix") {
+      throw new WorkflowError(`Finding ${r.id}: the answer must be fixed or wontfix.`);
+    }
+    updateFinding(taskId, r.id, { status: r.status, resolution: r.resolution.trim() });
+  }
 }
 
 /**
@@ -1372,6 +1433,7 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
     { from: TaskStatus.Planning, phase: "plan", messageType: "plan", event: "plan_submitted", done: "Plan submitted" },
     input,
     (task, policy) => {
+      answerPlanFindings(taskId, input.findingResolutions);
       const validationPlan = checkValidationPlan(task, input.validationPlan);
       const project = task.projectId ? getProjectById(task.projectId) : null;
       const protectedPaths = resolveProfile(project?.profile).protectedPaths;
@@ -1444,7 +1506,7 @@ export function submitPlanReview(taskId: string, input: SubmitPlanReviewInput): 
     {
       from: TaskStatus.PlanReviewing,
       phase: "plan_review",
-      messageType: "review",
+      messageType: "plan_review",
       event: "plan_review_submitted",
       done: `Plan critique submitted (${input.verdict})`,
     },
@@ -1599,7 +1661,7 @@ export interface SubmitRefinementInput extends SubmitInput {
 export function submitRefinement(taskId: string, input: SubmitRefinementInput): SubmitResult {
   return submit(
     taskId,
-    { from: TaskStatus.Refining, phase: "refine", messageType: "plan", event: "draft_refined", done: "Draft refined" },
+    { from: TaskStatus.Refining, phase: "refine", messageType: "refine", event: "draft_refined", done: "Draft refined" },
     input,
     (task) => {
       const criteria = input.acceptanceCriteria ? normalizeCriteria(input.acceptanceCriteria, task.acceptanceCriteria) : task.acceptanceCriteria;
@@ -1974,7 +2036,7 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
   );
 }
 
-export interface SubmitVerificationInput extends ClaimAuth {
+export interface SubmitVerificationInput extends ClaimAuth, Pick<SubmitInput, "context" | "decisions" | "risks" | "next"> {
   passed: boolean;
   evidence: NewEvidence[];
   /** Test tampering the verifier found (deleted tests, .skip/.only, lowered thresholds). */
@@ -2106,6 +2168,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       event: passed ? "verification_passed" : notVerified ? "verification_skipped" : "verification_failed",
       details: passed ? undefined : notVerified ?? (lines.filter((l) => l.includes("❌")).join("\n") || tampering.join("; ")),
       release: true,
+      context: input.context,
       patch: {
         acceptanceCriteria: criteria,
         verifyFailures: failures,
@@ -2119,6 +2182,18 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       },
     });
     if (newReasons.length) addActivity(taskId, "risk_raised", actor, newReasons.join("; "));
+    // An agent verifier's handoff reaches the coder's brief (the reviewer never reads handoffs).
+    if (input.context?.trim()) {
+      addHandoff(taskId, {
+        phase: "verify",
+        round,
+        agentId: actor,
+        summary: input.context,
+        decisions: input.decisions,
+        risks: input.risks,
+        next: input.next,
+      });
+    }
     return {
       task: updated,
       previousStatus: task.status,

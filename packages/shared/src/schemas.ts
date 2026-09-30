@@ -130,14 +130,9 @@ export const updateTaskSchema = z
   })
   .strict();
 
+/** A person's action on a task (agent submissions have their own schemas, see agentSubmitSchemas). */
 export const transitionTaskSchema = z.object({
   action: z.enum([
-    "submit_plan",
-    "submit_code",
-    "submit_review",
-    "submit_merge",
-    "submit_pr",
-    "report_blocker",
     "approve_plan",
     "request_plan_changes",
     "approve_code",
@@ -158,17 +153,232 @@ export const transitionTaskSchema = z.object({
   // resolve_blocker
   answer: z.string().max(10000).optional(),
   targetStatus: z.nativeEnum(TaskStatus).optional(),
-  // submit_* over HTTP: the claim holder's proof
-  claimToken: z.string().optional(),
-  // submit_review
-  verdict: verdictSchema.optional(),
-  question: z.string().max(5000).optional(),
-  context: z.string().max(10000).optional(),
   // archive
   force: z.boolean().optional(),
   pullRequests: z.array(z.string().min(1).max(500)).max(20).optional(),
   overview: z.string().max(20000).optional(),
 });
+
+// ─── Agent submissions ─────────────────────────────────────────────────
+// The arguments of the agent tools, shared by the MCP server (the tool input
+// schemas) and the HTTP API (the request bodies), so both accept and refuse
+// the same things.
+
+export const authorSchema = z
+  .string()
+  .optional()
+  .describe('Author name recorded on the conversation entry (default: "agent")');
+
+/** Optional context notes (claim_task, create_task, report_blocker). */
+export const contextSchema = z
+  .string()
+  .optional()
+  .describe("Context entry appended to the task for future agents (decisions, gotchas, pointers)");
+
+/** The handoff summary every submit_* that hands work on must carry. */
+export const submitContextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4000)
+  .describe(
+    "Required handoff notes appended to task.contexts for the next agent: decisions taken, gotchas, what the next phase should check",
+  );
+
+export const handoffListSchema = z.array(z.string().min(1)).max(20).optional();
+
+/** `context` plus the structured lists of a handoff. */
+const handoffFields = {
+  context: submitContextSchema,
+  decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
+  risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
+  next: handoffListSchema.describe("What the next phase should do or check first"),
+};
+
+export const evidenceInputSchema = z.object({
+  kind: z.enum(["command", "manual"]),
+  criterionId: z.string().optional().describe("Acceptance criterion this checks (e.g. AC1)"),
+  command: z.string().optional().describe("The command you ran"),
+  exitCode: z.number().int().optional(),
+  summary: z.string().min(1).describe("The relevant output lines, not the whole log"),
+});
+
+export const findingInputSchema = z.object({
+  severity: severitySchema.describe("blocker and major block approval; minor and nit do not"),
+  file: z.string().optional(),
+  line: z.number().int().optional(),
+  text: z.string().min(1).describe("What is wrong and what to do instead"),
+});
+
+export const verifiedFindingSchema = z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) });
+
+/** The author's answer to an open finding (a coder to R…/H…, a planner to P…). */
+function findingResolutionSchema(example: string) {
+  return z.object({
+    id: z.string().min(1).describe(`Finding id, e.g. ${example}`),
+    status: z.enum(["fixed", "wontfix"]),
+    resolution: z.string().min(1).describe("How you fixed it, or why not"),
+  });
+}
+
+export const openQuestionSchema = z.object({ text: z.string().min(1), blocking: z.boolean().default(false) });
+
+export const validationPlanSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
+        how: z.string().min(1).describe("How it is verified (alone, without command: a manual check)"),
+        command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
+        newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
+      }),
+    )
+    .describe("At least one item per acceptance criterion (waived ones excepted)"),
+  regressionCommands: z
+    .array(z.string())
+    .describe("Commands that must keep passing, run in addition to the project's own commands (e.g. bun test src/foo.test.ts)"),
+});
+
+export const submitPlanFields = {
+  message: z.string().min(1).describe("The plan (markdown)"),
+  validationPlan: validationPlanSchema.optional().describe("Required when the task has acceptance criteria"),
+  openQuestions: z
+    .array(openQuestionSchema)
+    .max(20)
+    .optional()
+    .describe("Questions for a person; a blocking one sends the task to needs_human before anything else"),
+  suggestedRisk: riskSchema.optional().describe("Your risk estimate (can only raise the task's risk)"),
+  proposedSubtasks: z.array(z.string()).max(20).optional().describe("Subtask titles (create them with create_subtask)"),
+  touchedPaths: z.array(z.string()).max(200).optional().describe("Paths the plan will touch; protected ones raise the risk"),
+  findingResolutions: z
+    .array(findingResolutionSchema("P1-2"))
+    .default([])
+    .describe("Required when revising: an answer for every open plan finding (P…)"),
+  author: authorSchema,
+  ...handoffFields,
+};
+
+export const submitCodeFields = {
+  message: z.string().min(1).describe("Summary of the changes (markdown)"),
+  worktree: z.string().min(1).describe("Absolute path of the git worktree containing the changes"),
+  branch: z.string().optional().describe("Feature branch the commits are on"),
+  headSha: z.string().optional().describe("Head commit (git rev-parse HEAD)"),
+  evidence: z.array(evidenceInputSchema).max(50).default([]).describe("Commands you ran and manual checks"),
+  criteria: z
+    .array(z.object({ id: z.string().min(1), status: z.enum(["met", "failed", "pending"]) }))
+    .default([])
+    .describe("Your view of each acceptance criterion"),
+  findingResolutions: z
+    .array(findingResolutionSchema("R1-2"))
+    .default([])
+    .describe("Required: an answer for every open review finding"),
+  author: authorSchema,
+  ...handoffFields,
+};
+
+export const submitReviewFields = {
+  verdict: verdictSchema.describe("approve, request_changes or needs_human"),
+  findings: z
+    .array(findingInputSchema)
+    .max(20)
+    .default([])
+    .describe("New findings of this round (ids are assigned: R<round>-<n>)"),
+  verifiedFindings: z
+    .array(verifiedFindingSchema)
+    .default([])
+    .describe("Earlier findings you checked: verified (fixed) or still open"),
+  question: z.string().optional().describe("Required with needs_human: what a person must decide"),
+  message: z.string().min(1).describe("Review summary (markdown)"),
+  author: authorSchema,
+  ...handoffFields,
+};
+
+export const submitPlanReviewFields = {
+  verdict: verdictSchema,
+  findings: z.array(findingInputSchema).max(20).default([]),
+  verifiedFindings: z.array(verifiedFindingSchema).default([]),
+  suggestedRisk: riskSchema.optional().describe("Raise the task's risk if the plan is riskier than rated"),
+  question: z.string().optional().describe("Required with needs_human"),
+  message: z.string().min(1).describe("Critique summary (markdown)"),
+  author: authorSchema,
+  ...handoffFields,
+};
+
+export const submitVerificationFields = {
+  passed: z.boolean().describe("Every command passed and no tests were weakened"),
+  evidence: z.array(evidenceInputSchema).max(100).describe("One entry per command run"),
+  tampering: z.array(z.string()).default([]).describe("Tests deleted, skipped or weakened"),
+  verifiedSha: z.string().optional().describe("Commit that was verified"),
+  author: authorSchema,
+  // Optional here only: the built-in verifier reports without a handoff. Agents pass one.
+  context: submitContextSchema
+    .optional()
+    .describe(
+      "Handoff notes for the coder (expected from agents): which commands failed and why, and whether the failure is in the code or the environment",
+    ),
+  decisions: handoffFields.decisions,
+  risks: handoffFields.risks,
+  next: handoffFields.next,
+};
+
+export const submitRefinementFields = {
+  description: z.string().optional(),
+  acceptanceCriteria: criteriaInputSchema.optional(),
+  type: taskTypeSchema.optional(),
+  risk: riskSchema.optional(),
+  nonGoals: z.array(z.string()).optional(),
+  requiresPlan: z.boolean().optional(),
+  openQuestions: z.array(openQuestionSchema).optional(),
+  message: z.string().min(1).describe("What you changed and why (markdown)"),
+  author: authorSchema,
+  ...handoffFields,
+};
+
+export const submitPrFields = {
+  prUrl: z.string().url().optional().describe("URL of the pull request you opened"),
+  prNumber: z.number().int().positive().optional().describe("Number of the pull request"),
+  mergeBranch: z.string().min(1).describe("Base branch of the pull request (task.mergeBranch)"),
+  headBranch: z.string().optional().describe("Feature branch you pushed (defaults to the task's branch)"),
+  commit: z.string().min(1).describe("Head commit SHA you pushed"),
+  authors: z.string().min(1).describe("Comma-separated list of authors"),
+  message: z.string().optional().describe("Notes for the person who merges (markdown)"),
+  worktree: z.string().optional().describe("Worktree path the branch was pushed from"),
+  author: authorSchema,
+  ...handoffFields,
+  next: handoffListSchema.describe("What the person merging should check first"),
+};
+
+export const reportBlockerFields = {
+  reason: z.string().trim().min(1).describe("What blocks you, with the relevant error output (markdown)"),
+  question: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The one concrete question or action a person must answer or take to unblock the task"),
+  author: authorSchema,
+  context: contextSchema,
+};
+
+/** Proof of claim over HTTP: the claim_task token, and optionally the claim's agent id. */
+const claimProofFields = { claimToken: z.string().optional(), agentId: z.string().optional() };
+
+/**
+ * Request bodies of the agent submissions over HTTP: the MCP tool's arguments
+ * without taskId (it is in the URL), parsed by the same fields.
+ */
+export const agentSubmitSchemas = {
+  submit_plan: z.object({ ...submitPlanFields, ...claimProofFields }),
+  submit_code: z.object({ ...submitCodeFields, ...claimProofFields }),
+  submit_review: z.object({ ...submitReviewFields, ...claimProofFields }),
+  submit_plan_review: z.object({ ...submitPlanReviewFields, ...claimProofFields }),
+  submit_verification: z.object({ ...submitVerificationFields, ...claimProofFields }),
+  submit_refinement: z.object({ ...submitRefinementFields, ...claimProofFields }),
+  submit_pr: z.object({ ...submitPrFields, ...claimProofFields }),
+  submit_merge: z.object({ ...submitPrFields, ...claimProofFields }),
+  report_blocker: z.object({ ...reportBlockerFields, ...claimProofFields }),
+};
+
+export type AgentSubmitAction = keyof typeof agentSubmitSchemas;
 
 const branchNameSchema = z.string().trim().max(200);
 

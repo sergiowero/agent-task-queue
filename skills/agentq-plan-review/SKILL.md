@@ -3,7 +3,7 @@ name: agentq-plan-review
 description: Plan-critique phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the agentq-claim router sends you here). Works from an independent brief without the planner's handoff notes or the conversation: reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan_review, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.3.0"
+  version: "6.4.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -26,6 +26,8 @@ Read-only, in `task.project.workingDirectory`: read files, `git log`, `git show`
 3. Check the plan against the checklist below, reading the code it refers to
 4. Pick the verdict (see Verdict Rules) and submit with `submit_plan_review`
 
+The planner answers every open finding in its revision: `status` `fixed` (check it against the revised `latestPlan`) or `wontfix` with a `wontfixReason` (a claim to judge, not a fact). Pass a `fixed` one as `verified` only if the plan really changed, and a `wontfix` one only if you accept the reason.
+
 ## Checklist
 
 - **Coverage**: every acceptance criterion is addressed by a step, and the plan does nothing outside the task's scope or non-goals
@@ -37,7 +39,7 @@ Read-only, in `task.project.workingDirectory`: read files, `git log`, `git show`
 ## Verdict Rules
 
 - `approve` — no `blocker` or `major` finding left open or unverified (the server refuses otherwise). A **low-risk** plan then goes straight to coding; otherwise a person approves it after you.
-- `request_changes` — at least one open finding the planner must address. After the project's limit (2 rounds) a person decides.
+- `request_changes` — at least one open finding the planner must address. When `brief.round.remainingPlanRounds` is 1, this request goes to a person instead (the project's limit).
 - `needs_human` — a product or risk decision only a person can make. Pass `question`.
 
 Severities: `blocker` (the plan cannot work or misses a criterion), `major` (missing validation, unhandled risk), `minor`, `nit`.

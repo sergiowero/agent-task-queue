@@ -269,11 +269,11 @@ The `agentq` MCP server exposes the whole agent protocol as typed tools. In Clau
 | `list_projects`, `create_task` | Create well-formed tasks |
 | `list_tasks`, `archive_task` | Find complete tasks and archive them to Markdown |
 
-Every `submit_*` call requires a `context`: short handoff notes for the agent of the next phase. Resources `agentq://task/{taskId}` and `agentq://projects` are also available. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
+Every `submit_*` call takes a `context` (required on all but `submit_verification`): short handoff notes for the agent of the next phase, with optional `decisions`, `risks` and `next` lists. Resources `agentq://task/{taskId}` and `agentq://projects` are also available. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
 
 ## Skills
 
-Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run it again (and restart your tools) after updating AgentQ: the server refuses skills older than the bundle it supports (6.0.0 replaced the single `role` with a `roles` list named after the phases).
+Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run `bun run install:all` (skills and MCP registration) again, and restart your tools, after updating AgentQ: the server refuses skills older than the bundle it supports, and any claim without `skillsVersion` (6.0.0 replaced the single `role` with a `roles` list named after the phases). Copies in folders the installer does not manage, such as `~/.agents/skills`, are not updated: delete them.
 
 | Skill | What it does |
 |---|---|

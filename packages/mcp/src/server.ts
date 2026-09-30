@@ -35,12 +35,19 @@ import {
   riskSchema,
   taskTypeSchema,
   policyFor,
-  reviewRoundsUsed,
-  severitySchema,
   skillsBundleVersion,
   sweepQueue,
   touchLease,
-  verdictSchema,
+  authorSchema,
+  contextSchema,
+  submitPlanFields,
+  submitCodeFields,
+  submitReviewFields,
+  submitPlanReviewFields,
+  submitVerificationFields,
+  submitRefinementFields,
+  submitPrFields,
+  reportBlockerFields,
   skillsManifest,
   submitPlan,
   submitCode,
@@ -59,8 +66,8 @@ export const SERVER_VERSION = "0.1.0";
 const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
 export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (metadata.version of your agentq-claim skill). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
-2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills are older than ${SKILLS_VERSION} or still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your agentq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier). If an AgentQ runner started you, the task was already claimed for you: do not call claim_task.
+2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your agentq-* skills still mention an \`agentq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the AgentQ repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
 4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the agentq-* skill to follow:
    - refining (role refine): make the draft ready (testable criteria, type, risk, non-goals), then call submit_refinement.
@@ -73,7 +80,7 @@ export const INSTRUCTIONS = `AgentQ is a local task queue for coding agents (ski
    - merging (role pr): push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
 6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or agentq://task/{taskId}) to re-read a task.
-7. Every submit_* call requires context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored in task.contexts separately from message; the brief shows the notes earlier agents left (except in the independent checks). context is optional on claim_task. Write every message in Markdown.
+7. Every submit_* call takes context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored separately from message, plus optional decisions, risks and next lists; the brief shows the latest handoff of each phase (except in the independent checks). context is required on every submit_* but submit_verification, where it is optional (the built-in verifier sends none) and expected from agents; it is optional on claim_task. Write every message in Markdown.
 8. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
 
@@ -144,21 +151,39 @@ function phaseSkillOf(status: Task["status"]) {
   return skill ? { name: skill.name, version: skill.version } : null;
 }
 
-/** The task without its (growing) conversation and history: claim_task pairs it with the brief. */
+/**
+ * The task without what grows with every round (conversation, history, contexts
+ * and each criterion's evidence ids): claim_task pairs it with the brief, whose
+ * size stays flat. get_task still returns all of it.
+ */
 function taskHeader(task: Task) {
-  const { conversation: _c, history: _h, ...rest } = withProject(task);
-  return rest;
+  const header = Object.entries(withProject(task)).filter(([key]) => !GROWING_FIELDS.has(key));
+  return {
+    ...Object.fromEntries(header),
+    acceptanceCriteria: task.acceptanceCriteria.map(({ id, text, verify, status }) => ({ id, text, verify, status })),
+  };
 }
 
-const handoffListSchema = z.array(z.string().min(1)).max(20).optional();
+const GROWING_FIELDS = new Set(["conversation", "history", "contexts"]);
 
-const evidenceSchema = z.object({
-  kind: z.enum(["command", "manual"]),
-  criterionId: z.string().optional().describe("Acceptance criterion this checks (e.g. AC1)"),
-  command: z.string().optional().describe("The command you ran"),
-  exitCode: z.number().int().optional(),
-  summary: z.string().min(1).describe("The relevant output lines, not the whole log"),
-});
+/** A task in a listing: enough to pick it (get_task has the rest). */
+function taskSummary(task: Task) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    priority: task.priority,
+    type: task.type,
+    risk: task.risk,
+    projectId: task.projectId,
+    project: projectOf(task),
+    recommendedBranch: task.recommendedBranch,
+    mergeBranch: task.mergeBranch,
+    pullRequest: task.pullRequest,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
 
 /** Trims each entry and drops the empty ones; undefined stays undefined. */
 function cleanList(items: string[] | undefined): string[] | undefined {
@@ -181,14 +206,6 @@ const taskIdSchema = z
   .string()
   .min(1)
   .describe("Task ID (UUID) returned by claim_task or create_task");
-const authorSchema = z
-  .string()
-  .optional()
-  .describe('Author name recorded on the conversation entry (default: "agent")');
-const contextSchema = z
-  .string()
-  .optional()
-  .describe("Context entry appended to the task for future agents (decisions, gotchas, pointers)");
 const claimTokenSchema = z
   .string()
   .optional()
@@ -199,13 +216,6 @@ const agentIdSchema = z
   .string()
   .optional()
   .describe("Your agent id from claim_task (agent.id); rejected when it is not the task's assignee");
-const submitContextSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .describe(
-    "Required handoff notes appended to task.contexts for the next agent: decisions taken, gotchas, what the next phase should check",
-  );
 
 // ─── Server ────────────────────────────────────────────────────────────
 
@@ -283,21 +293,25 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         skillsVersion: z
           .string()
           .optional()
-          .describe("metadata.version of your agentq-claim skill; outdated skills are refused"),
+          .describe(
+            "Required: metadata.version of your agentq-claim skill. A claim without it, or with skills older than the server supports, is refused with reason skills_outdated",
+          ),
         context: contextSchema,
       },
     },
     (input) =>
       run(() => {
-        if (
-          input.skillsVersion &&
-          compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0
-        ) {
+        // Skills that send no version predate it (or are missing): the server cannot trust them either.
+        if (!input.skillsVersion || compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0) {
           return {
             success: false,
             reason: "skills_outdated",
             skillsVersion: SKILLS_VERSION,
-            message: `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}. Stop and tell the user to run \`bun run install:skills\` in the AgentQ repo.`,
+            message: `${
+              input.skillsVersion
+                ? `Your AgentQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}.`
+                : "claim_task needs skillsVersion, the metadata.version of your agentq-claim skill: your AgentQ skills are missing or predate it."
+            } Stop and tell the user to run \`bun run install:all\` in the AgentQ repo (it installs the current skills, ${SKILLS_VERSION}, and the MCP registration for every tool it finds), then restart the tool.`,
           };
         }
         sweepQueue();
@@ -330,11 +344,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           brief,
           phaseSkill: phaseSkillOf(result.task.status),
           autonomy: policy.level,
-          round: {
-            codeRound: result.task.codeRound,
-            used: reviewRoundsUsed(result.task),
-            maxReviewRounds: policy.maxReviewRounds,
-          },
+          round: brief.round,
           agent: { id: result.agent.id, role: result.role },
           claimToken: result.claimToken,
           skillsVersion: SKILLS_VERSION,
@@ -354,38 +364,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified: required, with at least one item per criterion, when the task has criteria), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
-        message: z.string().min(1).describe("The plan (markdown)"),
-        validationPlan: z
-          .object({
-            items: z
-              .array(
-                z.object({
-                  criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
-                  how: z.string().min(1).describe("How it is verified (alone, without command: a manual check)"),
-                  command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
-                  newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
-                }),
-              )
-              .describe("At least one item per acceptance criterion (waived ones excepted)"),
-            regressionCommands: z
-              .array(z.string())
-              .describe("Commands that must keep passing, run in addition to the project's own commands (e.g. bun test src/foo.test.ts)"),
-          })
-          .optional()
-          .describe("Required when the task has acceptance criteria"),
-        openQuestions: z
-          .array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) }))
-          .max(20)
-          .optional()
-          .describe("Questions for a person; a blocking one sends the task to needs_human before anything else"),
-        suggestedRisk: riskSchema.optional().describe("Your risk estimate (can only raise the task's risk)"),
-        proposedSubtasks: z.array(z.string()).max(20).optional().describe("Subtask titles (create them with create_subtask)"),
-        touchedPaths: z.array(z.string()).max(200).optional().describe("Paths the plan will touch; protected ones raise the risk"),
-        author: authorSchema,
-        context: submitContextSchema,
-        decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
-        risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
-        next: handoffListSchema.describe("What the next phase should do or check first"),
+        ...submitPlanFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -400,6 +379,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             suggestedRisk: input.suggestedRisk,
             proposedSubtasks: input.proposedSubtasks,
             touchedPaths: input.touchedPaths,
+            findingResolutions: input.findingResolutions,
             author: input.author,
             context: input.context,
             decisions: input.decisions,
@@ -419,33 +399,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
-        message: z.string().min(1).describe("Summary of the changes (markdown)"),
-        worktree: z
-          .string()
-          .min(1)
-          .describe("Absolute path of the git worktree containing the changes"),
-        branch: z.string().optional().describe("Feature branch the commits are on"),
-        headSha: z.string().optional().describe("Head commit (git rev-parse HEAD)"),
-        evidence: z.array(evidenceSchema).max(50).default([]).describe("Commands you ran and manual checks"),
-        criteria: z
-          .array(z.object({ id: z.string().min(1), status: z.enum(["met", "failed", "pending"]) }))
-          .default([])
-          .describe("Your view of each acceptance criterion"),
-        findingResolutions: z
-          .array(
-            z.object({
-              id: z.string().min(1).describe("Finding id, e.g. R1-2"),
-              status: z.enum(["fixed", "wontfix"]),
-              resolution: z.string().min(1).describe("How you fixed it, or why not"),
-            }),
-          )
-          .default([])
-          .describe("Required: an answer for every open review finding"),
-        author: authorSchema,
-        context: submitContextSchema,
-        decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
-        risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
-        next: handoffListSchema.describe("What the next phase should do or check first"),
+        ...submitCodeFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -480,33 +434,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "Submit a verdict and structured findings for a task you claimed in `reviewing`. The verdict routes the task: approve moves it on (to `approved`, or to a person when the task is high risk or sampled), request_changes sends it back to `changes_requested` with your findings (after the project's round limit a person decides), needs_human asks a person. Approve is refused while blocker or major findings are open. Under autonomy L0 the verdict is advice and a person decides.",
       inputSchema: {
         taskId: taskIdSchema,
-        verdict: verdictSchema.describe("approve, request_changes or needs_human"),
-        findings: z
-          .array(
-            z.object({
-              severity: severitySchema.describe("blocker and major block approval; minor and nit do not"),
-              file: z.string().optional(),
-              line: z.number().int().optional(),
-              text: z.string().min(1).describe("What is wrong and what to do instead"),
-            }),
-          )
-          .max(20)
-          .default([])
-          .describe("New findings of this round (ids are assigned: R<round>-<n>)"),
-        verifiedFindings: z
-          .array(z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) }))
-          .default([])
-          .describe("Earlier findings you checked: verified (fixed) or still open"),
-        question: z
-          .string()
-          .optional()
-          .describe("Required with needs_human: what a person must decide"),
-        message: z.string().min(1).describe("Review summary (markdown)"),
-        author: authorSchema,
-        context: submitContextSchema,
-        decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
-        risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
-        next: handoffListSchema.describe("What the next phase should do or check first"),
+        ...submitReviewFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -539,11 +467,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person). The server also reads the worktree's diff itself: tampering it finds counts as red even if you report none, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
-        passed: z.boolean().describe("Every command passed and no tests were weakened"),
-        evidence: z.array(evidenceSchema).max(100).describe("One entry per command run"),
-        tampering: z.array(z.string()).default([]).describe("Tests deleted, skipped or weakened"),
-        verifiedSha: z.string().optional().describe("Commit that was verified"),
-        author: authorSchema,
+        ...submitVerificationFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -557,6 +481,10 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             tampering: input.tampering,
             verifiedSha: input.verifiedSha,
             author: input.author,
+            context: input.context,
+            decisions: input.decisions,
+            risks: input.risks,
+            next: input.next,
             ...auth(input),
           }),
         ),
@@ -571,27 +499,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "Critique a plan for a task you claimed in `plan_reviewing`: a verdict and findings (ids P<round>-<n>). approve sends a low-risk plan straight to coding (otherwise to a person for approval); request_changes back to the planner (after the project's limit, to a person); needs_human asks a person. Approve is refused while blocker or major findings are open.",
       inputSchema: {
         taskId: taskIdSchema,
-        verdict: verdictSchema,
-        findings: z
-          .array(
-            z.object({
-              severity: severitySchema,
-              file: z.string().optional(),
-              line: z.number().int().optional(),
-              text: z.string().min(1),
-            }),
-          )
-          .max(20)
-          .default([]),
-        verifiedFindings: z.array(z.object({ id: z.string().min(1), status: z.enum(["verified", "open"]) })).default([]),
-        suggestedRisk: riskSchema.optional().describe("Raise the task's risk if the plan is riskier than rated"),
-        question: z.string().optional().describe("Required with needs_human"),
-        message: z.string().min(1).describe("Critique summary (markdown)"),
-        author: authorSchema,
-        context: submitContextSchema,
-        decisions: handoffListSchema,
-        risks: handoffListSchema,
-        next: handoffListSchema,
+        ...submitPlanReviewFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -665,16 +573,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "With the `refine` role, on a task you claimed in `refining`: make the draft ready (testable criteria, type, risk, non-goals, whether it needs a plan). It moves on to planning or coding; a blocking question sends it to a person.",
       inputSchema: {
         taskId: taskIdSchema,
-        description: z.string().optional(),
-        acceptanceCriteria: criteriaInputSchema.optional(),
-        type: taskTypeSchema.optional(),
-        risk: riskSchema.optional(),
-        nonGoals: z.array(z.string()).optional(),
-        requiresPlan: z.boolean().optional(),
-        openQuestions: z.array(z.object({ text: z.string().min(1), blocking: z.boolean().default(false) })).optional(),
-        message: z.string().min(1).describe("What you changed and why (markdown)"),
-        author: authorSchema,
-        context: submitContextSchema,
+        ...submitRefinementFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -693,6 +592,9 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
             message: input.message,
             author: input.author,
             context: input.context,
+            decisions: input.decisions,
+            risks: input.risks,
+            next: input.next,
             ...auth(input),
           }),
         ),
@@ -719,19 +621,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
 
   const prInputSchema = {
     taskId: taskIdSchema,
-    prUrl: z.string().url().optional().describe("URL of the pull request you opened"),
-    prNumber: z.number().int().positive().optional().describe("Number of the pull request"),
-    mergeBranch: z.string().min(1).describe("Base branch of the pull request (task.mergeBranch)"),
-    headBranch: z.string().optional().describe("Feature branch you pushed (defaults to the task's branch)"),
-    commit: z.string().min(1).describe("Head commit SHA you pushed"),
-    authors: z.string().min(1).describe("Comma-separated list of authors"),
-    message: z.string().optional().describe("Notes for the person who merges (markdown)"),
-    worktree: z.string().optional().describe("Worktree path the branch was pushed from"),
-    author: authorSchema,
-    context: submitContextSchema,
-    decisions: handoffListSchema.describe("Decisions taken, and why (for the next phase)"),
-    risks: handoffListSchema.describe("What could go wrong or is still uncertain"),
-    next: handoffListSchema.describe("What the person merging should check first"),
+    ...submitPrFields,
     claimToken: claimTokenSchema,
     agentId: agentIdSchema,
   };
@@ -787,14 +677,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         "Stop working on a task you claimed because something outside your control blocks it (push rejected, missing credentials, contradictory or ambiguous requirements). Moves the task to `needs_human` with your question and releases it: no agent retries it until a person answers.",
       inputSchema: {
         taskId: taskIdSchema,
-        reason: z.string().trim().min(1).describe("What blocks you, with the relevant error output (markdown)"),
-        question: z
-          .string()
-          .trim()
-          .min(1)
-          .describe("The one concrete question or action a person must answer or take to unblock the task"),
-        author: authorSchema,
-        context: contextSchema,
+        ...reportBlockerFields,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,
       },
@@ -876,7 +759,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "List tasks",
       description:
-        "List tasks with their project, highest priority first. Archived and deleted tasks are left out. Use it to find work outside the claim loop, e.g. the `complete` tasks to archive.",
+        "List tasks, highest priority first, as summaries (id, title, status, priority, type, risk, project, branches, pull request, dates; get_task has the rest). Archived and deleted tasks are left out. Use it to find work outside the claim loop, e.g. the `complete` tasks to archive.",
       inputSchema: {
         status: z
           .nativeEnum(TaskStatus)
@@ -891,7 +774,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         const tasks = getTasks(input.projectId).filter(
           (task) => !input.status || task.status === input.status,
         );
-        return { success: true, tasks: tasks.map(visibleTask) };
+        return { success: true, tasks: tasks.map(taskSummary) };
       }),
   );
 
@@ -984,7 +867,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Post comment",
       description:
-        "Append a comment to a task's conversation thread without changing its status (progress notes, questions for the reviewer, blockers).",
+        "Append a comment to a task's conversation thread without changing its status (progress notes, questions for the reviewer, blockers). Returns the entry it added.",
       inputSchema: {
         taskId: taskIdSchema,
         message: z.string().min(1).describe("Comment body (markdown)"),
@@ -994,7 +877,8 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     (input) =>
       run(() => {
         const task = postComment(input.taskId, { message: input.message, author: input.author });
-        return { success: true, task: visibleTask(task) };
+        const entry = task.conversation[task.conversation.length - 1];
+        return { success: true, taskId: task.id, entry: { author: entry.authorName, timestamp: entry.timestamp, message: entry.message } };
       }),
   );
 

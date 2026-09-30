@@ -76,7 +76,7 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - REST API for all CRUD and workflow operations on tasks, projects, agents, and activity
 - Server-Sent Events endpoint for real-time streaming to connected clients
 - Static file serving for the pre-built web UI
-- Request validation via Zod schemas
+- Request validation via Zod schemas. The agent submissions (`POST /api/tasks/:id/submit-plan`, `submit-code`, `submit-review`, `submit-plan-review`, `submit-verification`, `submit-refinement`, `submit-pr`, `report-blocker`) take the MCP tools' arguments without `taskId` and parse them with the same schemas (`agentSubmitSchemas` in `@agentq/shared`); agents normally use MCP
 - Automatic Vite dev server management in development mode
 - CORS support for development
 - Local user only: it listens on loopback (`AGENTQ_HOST`), and before any route runs it refuses requests a web page could forge: a `Host` that is not localhost, an IP address or listed in `AGENTQ_ALLOWED_HOSTS` (403), a state-changing request from another `Origin` (403), a POST/PUT/PATCH that is not `application/json` (415)
@@ -91,7 +91,7 @@ Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-t
 - **submit_review** — transitions from Reviewing back to Waiting Code Review
 - **submit_pr** — records the pull request (URL, branches, commit, authors) and moves the task from Merging to PR open (`submit_merge` is its deprecated alias)
 - **get_task** / **post_comment** — read a task, or add a note without changing its status
-- **list_tasks** — tasks with project info, filtered by status and project (archived tasks left out)
+- **list_tasks** — task summaries (status, project, branches, PR), filtered by status and project (archived tasks left out)
 - **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement)
 - **archive_task** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`pullRequests`, `overview`, `force`, `directory`)
 - **JSON results** — every tool returns `{ success, ... }` as text and structured content
@@ -163,7 +163,7 @@ An audit log entry recording system events. Contains:
 ### ConversationEntry
 A message in a task's conversation thread. Contains:
 - authorName (format: `"agentName|tool|model"` for agents, `"user"` for humans)
-- timestamp, message body, messageType (user/agent/plan/code/review/merge/system)
+- timestamp, message body, messageType (user/agent/refine/plan/plan_review/code/verify/review/merge/system; `plan_review` is a plan critique, `review` a code review)
 
 ### TaskBrief
 What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, the tasks it starts after (`dependencies`), open findings, the latest handoff per phase, project commands, guardrails and size limits, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).

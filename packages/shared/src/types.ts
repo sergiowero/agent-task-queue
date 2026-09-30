@@ -22,7 +22,8 @@ export interface ConversationEntry {
   authorName: string;
   timestamp: string;
   message: string;
-  messageType?: "user" | "agent" | "plan" | "code" | "verify" | "review" | "merge" | "system";
+  /** refine: a refinement; plan_review: a plan critique; review: a code review. */
+  messageType?: "user" | "agent" | "refine" | "plan" | "plan_review" | "code" | "verify" | "review" | "merge" | "system";
 }
 
 export interface StatusHistoryEntry {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -17,6 +17,8 @@ import {
   updateTask,
   ROLES,
   TaskStatus,
+  listSkills,
+  readSkill,
   skillsBundleVersion,
 } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
@@ -61,6 +63,7 @@ const defaultAgent = {
   version: "1.0",
   model: "test-model",
   sessionId: "session-mcp",
+  skillsVersion: skillsBundleVersion()!,
 };
 
 function parse(result: CallToolResult): any {
@@ -213,7 +216,15 @@ describe("AgentQ MCP server", () => {
     expect(claimed.task.claimToken).toBeUndefined();
     expect(claimed.skillsVersion).toBe(skillsBundleVersion()!);
     expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
-    expect(claimed.task.contexts).toEqual(["initial context", "claim context"]);
+    // The claim's task leaves out the notes that grow with every round: the brief carries the latest handoffs.
+    expect(claimed.task.contexts).toBeUndefined();
+    expect(claimed.task.acceptanceCriteria).toEqual([
+      { id: "AC1", text: "tests pass", verify: { kind: "review" }, status: "pending" },
+    ]);
+    expect(claimed.brief.handoffs.map((h: { phase: string; summary: string }) => [h.phase, h.summary])).toEqual([
+      ["human", "initial context"],
+      ["claim", "claim context"],
+    ]);
 
     // Every criterion needs a line in the validation plan.
     const uncovered = parse(
@@ -445,9 +456,14 @@ describe("AgentQ MCP server", () => {
         arguments: { taskId: task.id, message: "halfway there", author: "worker" },
       })) as CallToolResult,
     );
-    expect(result.success).toBe(true);
-    expect(result.task.status).toBe(TaskStatus.ReadyForCode);
-    expect(result.task.conversation).toEqual([
+    // Only the entry it added comes back, never the whole task.
+    expect(result).toEqual({
+      success: true,
+      taskId: task.id,
+      entry: { author: "worker", timestamp: expect.any(String), message: "halfway there" },
+    });
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.ReadyForCode);
+    expect(getTaskById(task.id)!.conversation).toEqual([
       expect.objectContaining({
         authorName: "worker",
         message: "halfway there",
@@ -521,7 +537,7 @@ describe("AgentQ MCP server", () => {
 describe("AgentQ MCP agent workflow", () => {
   // Same scenarios agents go through: every role, every claim and submit transition.
   const projectId = "mcp-workflow-" + Date.now();
-  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model" };
+  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model", skillsVersion: skillsBundleVersion()! };
   let client: Client;
   let primaryClient: Client | null = null;
   let planTaskId: string;
@@ -874,6 +890,10 @@ describe("AgentQ MCP create, list and archive", () => {
     expect(all.success).toBe(true);
     const planned = all.tasks.find((t: any) => t.title === "Plan me");
     expect(planned.project.id).toBe(projectId);
+    // Summaries: nothing that grows with the task's rounds.
+    expect(Object.keys(planned).sort()).toEqual(
+      ["createdAt", "id", "mergeBranch", "priority", "project", "projectId", "pullRequest", "recommendedBranch", "risk", "status", "title", "type", "updatedAt"],
+    );
 
     const ready = await ok("list_tasks", { projectId, status: TaskStatus.ReadyForCode });
     expect(ready.tasks.map((t: any) => t.title)).toEqual(["Just code"]);
@@ -942,7 +962,7 @@ describe("AgentQ MCP create, list and archive", () => {
 
 describe("AgentQ MCP claims and blockers", () => {
   const projectId = "mcp-claims-" + Date.now();
-  const agent = { toolName: "Claimer", version: "1.0", model: "m" };
+  const agent = { toolName: "Claimer", version: "1.0", model: "m", skillsVersion: skillsBundleVersion()! };
   const clients: Client[] = [];
 
   async function connect(opts?: Parameters<typeof createAgentQMcpServer>[0]): Promise<Client> {
@@ -1067,6 +1087,9 @@ describe("AgentQ MCP claims and blockers", () => {
     const claimed = parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "r1", projectId }));
     expect(claimed.task.id).toBe(task.id);
     expect(claimed).toMatchObject({ autonomy: 2, round: { codeRound: 0, maxReviewRounds: 3 } });
+    // The claim's round is the brief's: every budget, with what is left of it.
+    expect(claimed.round).toEqual(claimed.brief.round);
+    expect(claimed.round).toMatchObject({ remainingReviewRounds: 3, remainingPlanRounds: 2, remainingVerifyFailures: 2 });
 
     expect(validationError(await call(reviewer, "submit_review", { taskId: task.id, message: "m", context: "c" }))).toContain("verdict");
     const out = parse(
@@ -1211,6 +1234,107 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(getTaskById(created.task.id)!.validationPlan?.regressionCommands).toEqual(["bun test"]);
   });
 
+  it("submit_verification and submit_refinement record a handoff with its lists; the coder's brief shows the verifier's", async () => {
+    const draft = parse(
+      await call(await connect(), "create_task", { title: "refine me", projectId, description: "rough", draft: true, priority: 97 }),
+    ).task;
+    const refiner = await connect();
+    expect(parse(await call(refiner, "claim_task", { ...agent, roles: ["refine"], sessionId: "rf1", projectId })).task.id).toBe(draft.id);
+    parse(
+      await call(refiner, "submit_refinement", {
+        taskId: draft.id,
+        message: "refined",
+        acceptanceCriteria: ["exports a header row $ bun test export"],
+        context: "assumed CSV",
+        decisions: ["CSV, not XLSX"],
+        risks: ["large accounts"],
+        next: ["check the export module"],
+      }),
+    );
+    const refined = parse(await call(refiner, "get_task", { taskId: draft.id }));
+    expect(refined.task.handoffs.at(-1)).toMatchObject({
+      phase: "refine",
+      summary: "assumed CSV",
+      decisions: ["CSV, not XLSX"],
+      risks: ["large accounts"],
+      next: ["check the export module"],
+    });
+    updateTask(draft.id, { status: TaskStatus.Canceled }); // out of the coders' way below
+
+    const task = createTask({ title: "verify me", description: "d", projectId, priority: 96 });
+    updateTask(task.id, { status: TaskStatus.VerifyRequested, worktreePath: "/w" });
+    const verifier = await connect();
+    const claimed = parse(await call(verifier, "claim_task", { ...agent, roles: ["verify"], sessionId: "v1", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const out = parse(
+      await call(verifier, "submit_verification", {
+        taskId: task.id,
+        passed: false,
+        evidence: [{ kind: "command", command: "bun test", exitCode: 1, summary: "1 fail" }],
+        context: "bun test fails in src/a.test.ts: the code, not the environment",
+        next: ["run bun test src/a.test.ts"],
+      }),
+    );
+    expect(out.newStatus).toBe(TaskStatus.ChangesRequested);
+    const coder = await connect();
+    const coding = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "vc1", projectId }));
+    expect(coding.task.id).toBe(task.id);
+    expect(coding.brief.handoffs).toContainEqual(
+      expect.objectContaining({
+        phase: "verify",
+        round: 1,
+        summary: "bun test fails in src/a.test.ts: the code, not the environment",
+        next: ["run bun test src/a.test.ts"],
+      }),
+    );
+    expect(coding.brief.verification.failing).toEqual([{ command: "bun test", exitCode: 1, summary: "1 fail" }]);
+  });
+
+  it("the claim_task result stays flat as code/review rounds pile up", async () => {
+    const pid = "mcp-flat-" + Date.now();
+    createProject({ id: pid, displayName: "Flat", workingDirectory: "/tmp/flat", policy: { maxReviewRounds: 10 } });
+    const task = createTask({ title: "flat", description: "d", projectId: pid, acceptanceCriteria: ["works $ bun test x"] });
+    const coder = await connect();
+    const reviewer = await connect();
+    const note = (who: string, round: number) => `${who} round ${round}: ${"x".repeat(500)}`;
+    const sizes: number[] = [];
+    for (let round = 1; round <= 5; round++) {
+      const claimed = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "flat-c", projectId: pid }));
+      expect(claimed.task.id).toBe(task.id);
+      sizes.push(JSON.stringify(claimed).length);
+      const open = claimed.brief.openFindings.filter((f: { status: string }) => f.status === "open");
+      parse(
+        await call(coder, "submit_code", {
+          taskId: task.id,
+          message: `code ${round}`,
+          worktree: "/w",
+          context: note("coder", round),
+          evidence: [{ kind: "command", criterionId: "AC1", command: "bun test x", exitCode: 0, summary: "ok" }],
+          findingResolutions: open.map((f: { id: string }) => ({ id: f.id, status: "fixed", resolution: "done" })),
+        }),
+      );
+      parse(await call(reviewer, "claim_task", { ...agent, roles: ["review"], sessionId: "flat-r", projectId: pid }));
+      parse(
+        await call(reviewer, "submit_review", {
+          taskId: task.id,
+          verdict: "request_changes",
+          message: `review ${round}`,
+          context: note("reviewer", round),
+          verifiedFindings: open.map((f: { id: string }) => ({ id: f.id, status: "verified" })),
+          findings: [{ severity: "minor", text: `finding ${round}` }],
+        }),
+      );
+    }
+    expect(getTaskById(task.id)!.contexts.length).toBe(10);
+    expect(sizes[4] - sizes[1]).toBeLessThan(2048);
+    // A handoff summary is bounded too.
+    const last = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "flat-c", projectId: pid }));
+    expect(last.task.id).toBe(task.id);
+    expect(validationError(await call(coder, "submit_code", { taskId: task.id, message: "m", worktree: "/w", context: "x".repeat(4001) }))).toContain(
+      "context",
+    );
+  });
+
   it("submit_verification is exposed for verifier agents", async () => {
     const { tools } = await (await connect()).listTools();
     const tool = tools.find((t) => t.name === "submit_verification")!;
@@ -1311,8 +1435,120 @@ describe("AgentQ MCP claims and blockers", () => {
     const out = parse(
       await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "s4", projectId, skillsVersion: "5.0.0" }),
     );
-    expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
-    expect(out.message).toContain("bun run install:skills");
+    expect(out).toMatchObject({ success: false, reason: "skills_outdated", skillsVersion: skillsBundleVersion() });
+    expect(out.message).toContain("bun run install:all");
+  });
+
+  it("refuses a claim without skillsVersion, e.g. from skills that still send the old single role", async () => {
+    createTask({ title: "no version", description: "d", projectId, requiresPlan: true, priority: 99 });
+    const client = await connect();
+    const unversioned = { toolName: agent.toolName, version: agent.version, model: agent.model };
+    for (const args of [
+      { ...unversioned, roles: ["plan"], sessionId: "nv1", projectId },
+      { ...unversioned, role: "code", sessionId: "nv2", projectId },
+    ]) {
+      const out = parse(await call(client, "claim_task", args));
+      expect(out).toMatchObject({ success: false, reason: "skills_outdated" });
+      expect(out.message).toContain("needs skillsVersion");
+    }
+    const ok = parse(await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "nv3", projectId }));
+    expect(ok).toMatchObject({ success: true, task: { title: "no version" } });
+  });
+});
+
+/** Top-level keys of a JSON-ish example (placeholders such as `null | "..."` or `[...]` are fine). */
+function topLevelKeys(example: string): string[] {
+  const keys: string[] = [];
+  let depth = 0;
+  for (let i = 0; i < example.length; i++) {
+    const ch = example[i];
+    if (ch === '"') {
+      let end = i + 1;
+      while (end < example.length && example[end] !== '"') end += example[end] === "\\" ? 2 : 1;
+      if (depth === 1 && example.slice(end + 1).trimStart().startsWith(":")) keys.push(example.slice(i + 1, end));
+      i = end;
+    } else if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+  }
+  return keys;
+}
+
+describe("AgentQ MCP contracts", () => {
+  let client: Client;
+  let tools: Awaited<ReturnType<Client["listTools"]>>["tools"];
+
+  beforeAll(async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    client = new Client({ name: "contracts-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+    tools = (await client.listTools()).tools;
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  const argsOf = (tool: string) => Object.keys(tools.find((t) => t.name === tool)?.inputSchema.properties ?? {});
+
+  it("every tool call a skill shows uses only that tool's arguments, and all its required ones", () => {
+    const names = tools.map((t) => t.name);
+    const toolMention = new RegExp(`\`(${names.join("|")})\``, "g");
+    let checked = 0;
+    for (const skill of listSkills()) {
+      const body = readSkill(skill)!.body;
+      for (const block of body.matchAll(/```json\n([\s\S]*?)```/g)) {
+        const keys = topLevelKeys(block[1]);
+        // Tool calls, not results.
+        if (keys.length === 0 || keys.includes("success")) continue;
+        const tool = [...body.slice(0, block.index).matchAll(toolMention)].at(-1)?.[1];
+        expect({ skill, tool: tool ?? null }).toEqual({ skill, tool: expect.any(String) });
+        const unknown = keys.filter((k) => !argsOf(tool!).includes(k));
+        expect({ skill, tool, unknown }).toEqual({ skill, tool, unknown: [] });
+        const required = (tools.find((t) => t.name === tool)!.inputSchema.required ?? []) as string[];
+        expect({ skill, tool, missing: required.filter((k) => !keys.includes(k)) }).toEqual({ skill, tool, missing: [] });
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(12);
+  });
+
+  it("every submit_* tool takes the handoff: context, decisions, risks and next", () => {
+    for (const tool of tools.filter((t) => t.name.startsWith("submit_"))) {
+      expect({ tool: tool.name, args: argsOf(tool.name) }).toEqual({
+        tool: tool.name,
+        args: expect.arrayContaining(["context", "decisions", "risks", "next"]),
+      });
+      // context is required everywhere but on submit_verification (the built-in verifier sends none).
+      expect({ tool: tool.name, required: (tool.inputSchema.required ?? []).includes("context") }).toEqual({
+        tool: tool.name,
+        required: tool.name !== "submit_verification",
+      });
+    }
+    expect(argsOf("submit_plan")).toContain("findingResolutions");
+  });
+
+  it("docs/mcp.md lists every tool with exactly its arguments", () => {
+    const doc = readFileSync(resolve(import.meta.dir, "../../../docs/mcp.md"), "utf8");
+    const table = doc.slice(doc.indexOf("Tool inputs"), doc.indexOf("### Claim tokens"));
+    const namesIn = (cell: string) => {
+      let text = cell;
+      // Nested field lists and notes are in parentheses: only the top-level arguments count.
+      while (/\([^()]*\)/.test(text)) text = text.replace(/\([^()]*\)/g, "");
+      return [...text.matchAll(/`([A-Za-z]+)(?:\[\])?`/g)].map((m) => m[1]);
+    };
+    const rows = new Map<string, { required: string[]; optional: string[] }>();
+    for (const [, tool, required, optional] of table.matchAll(/^\| `(\w+)`\s*\|([^|]*)\|([^|]*)\|$/gm)) {
+      const alias = required.match(/^\s*as `(\w+)`\s*$/)?.[1];
+      rows.set(tool, alias ? rows.get(alias)! : { required: namesIn(required), optional: namesIn(optional) });
+    }
+    expect([...rows.keys()].sort()).toEqual(tools.map((t) => t.name).sort());
+    for (const tool of tools) {
+      const row = rows.get(tool.name)!;
+      expect({ tool: tool.name, args: [...row.required, ...row.optional].sort() }).toEqual({ tool: tool.name, args: argsOf(tool.name).sort() });
+      const required = (tool.inputSchema.required ?? []) as string[];
+      expect({ tool: tool.name, missing: required.filter((k) => !row.required.includes(k)) }).toEqual({ tool: tool.name, missing: [] });
+    }
   });
 });
 

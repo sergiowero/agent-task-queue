@@ -253,7 +253,10 @@ function SkillsBanner() {
       <Alert tone="warning" title="AgentQ skills are out of date">
         {meta.outdatedSkills.join(", ")} still {meta.outdatedSkills.length === 1 ? "has" : "have"} an
         older skills bundle than this server ({meta.skillsVersion}). Run{" "}
-        <code className="font-mono">bun run install:skills</code> in the AgentQ checkout.
+        <code className="font-mono">bun run install:all</code> in the AgentQ checkout (it updates the
+        skills and the MCP registration of every tool it finds), then restart those tools. Copies in
+        folders the installer does not manage, such as <code className="font-mono">~/.agents/skills</code>,
+        are yours to delete.
       </Alert>
     </div>
   );

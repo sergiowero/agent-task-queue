@@ -488,6 +488,7 @@ describe("Migration Status", () => {
       "022_runner_roles_builder",
       "023_pull_requests",
       "024_phase_roles",
+      "028_message_types",
       "029_task_approval",
       "029_task_commits",
     ]) {
@@ -672,6 +673,48 @@ describe("024_phase_roles", () => {
         reviewer: ["review"],
       });
       expect(getAgents().find((a) => a.id === "legacy")?.role).toBe("code");
+    } finally {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = previous;
+      // Windows may keep the file locked a moment after close.
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
+
+// File-backed too (see above): re-runs the migration on data written in the old form.
+describe("028_message_types", () => {
+  it("gives refinements and plan critiques stored as plan/review messages their own types", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentq-types-"));
+    const previous = process.env.AGENTQ_DB_PATH;
+    try {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      rollbackMigration("028_message_types");
+      const projectId = "types-" + Date.now();
+      createProject({ id: projectId, displayName: "Types", workingDirectory: "/tmp/types" });
+      const task = createTask({ title: "legacy", description: "d", projectId });
+      const at = (n: number) => `2026-01-01T00:00:0${n}.000Z`;
+      const entry = (n: number, messageType: string) => ({ authorName: "a", timestamp: at(n), message: `m${n}`, messageType });
+      const step = (n: number, from: string, to: string) => ({ pre_status: from, new_status: to, timestamp: at(n) });
+      getDbHandle()
+        .prepare("UPDATE tasks SET conversation = ?, history = ? WHERE id = ?")
+        .run(
+          JSON.stringify([entry(1, "plan"), entry(2, "plan"), entry(3, "review"), entry(4, "review"), entry(5, "user")]),
+          JSON.stringify([
+            step(1, "refining", "plan_requested"),
+            step(2, "planning", "plan_review_requested"),
+            step(3, "plan_reviewing", "plan_changes_requested"),
+            step(4, "reviewing", "changes_requested"),
+          ]),
+          task.id,
+        );
+
+      resetDb(); // reopening runs the pending migration
+      expect(getTaskById(task.id)!.conversation.map((e) => e.messageType)).toEqual(["refine", "plan", "plan_review", "review", "user"]);
+
+      rollbackMigration("028_message_types");
+      expect(getTaskById(task.id)!.conversation.map((e) => e.messageType)).toEqual(["plan", "plan", "review", "review", "user"]);
     } finally {
       resetDb();
       process.env.AGENTQ_DB_PATH = previous;

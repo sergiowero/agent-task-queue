@@ -3,7 +3,7 @@ name: agentq-code
 description: Coding phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the agentq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_code, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.3.0"
+  version: "6.4.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -63,7 +63,7 @@ Every time you change code, commit it. Do NOT call `submit_code` with uncommitte
 ### Initial implementation (claimed from `ready_for_code`)
 
 1. Go to the worktree (create it if needed, from the fetched merge branch — see Worktree Rules) and check `brief.dependencies`
-2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria` (each has an id like `AC1` and a `verify` method), `task.approvedPlan` (the approved plan and its **validation plan**), `task.conversation[]` and `task.contexts[]`
+2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` (each has an id like `AC1` and a `verify` method), `brief.approvedPlan` (the approved plan and its **validation plan**), `brief.handoffs` (the planner's notes) and `brief.humanNotes`. Call `get_task` only if you need the whole conversation
 3. **Tests first.** Write the tests the validation plan names (`approvedPlan.validation.items[].newTests`). For a bug, first write a test that fails without the fix
 4. Implement the code until those tests pass
 5. Run the validation plan's commands and its `regressionCommands` (or the project's test/typecheck/lint commands when there is no plan) and keep the output: it is your evidence
@@ -79,11 +79,11 @@ The validation plan is frozen once approved. If it cannot be followed (a command
 
 ### Review fixes (claimed from `changes_requested`)
 
-When a review requests changes, the feedback is in `task.findings[]` (each finding has an id like `R1-2`, a severity, and usually a file and line) and in the review message of the conversation (`messageType: "review"`). A person's change request is a `user` message. Fix it and commit AGAIN in the same worktree:
+When a review requests changes, the feedback is in `brief.openFindings` (each finding has an id like `R1-2`, a severity, and usually a file and line; a person's change request is a finding too, `H1-1`) and in the reviewer's handoff (the `review` entry of `brief.handoffs`). What people wrote since is in `brief.humanNotes`. Fix it and commit AGAIN in the same worktree:
 
 1. Go to the existing worktree (never create a new one)
-2. Read the open findings (`task.findings[]` with `status: "open"`) and the latest review message
-3. Fix every `blocker` and `major` finding; fix `minor`/`nit` ones when cheap. Answer **every** open finding in `findingResolutions`: `fixed` (and how) or `wontfix` (and why). The tool refuses a submit that leaves an open finding unanswered. When the verifier sent the task back, its failing commands are in `task.evidence` and the latest `verify` message
+2. Read the open findings (`brief.openFindings` with `status: "open"`) and the latest `review` handoff
+3. Fix every `blocker` and `major` finding; fix `minor`/`nit` ones when cheap. Answer **every** open finding in `findingResolutions`: `fixed` (and how) or `wontfix` (and why). The tool refuses a submit that leaves an open finding unanswered. When the verifier sent the task back, its failing commands are in `brief.verification.failing` (and an agent verifier's notes in the `verify` entry of `brief.handoffs`)
 4. Commit again:
    ```bash
    git add -A

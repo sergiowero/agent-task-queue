@@ -611,6 +611,23 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    // Refinements were stored as "plan" messages and plan critiques as "review" ones. They get
+    // their own types, told apart by the status change written with them (same timestamp).
+    name: "028_message_types",
+    up: (d) =>
+      retypeMessages(d, (entry, from) =>
+        entry.messageType === "plan" && from === "refining"
+          ? "refine"
+          : entry.messageType === "review" && from === "plan_reviewing"
+            ? "plan_review"
+            : null,
+      ),
+    down: (d) =>
+      retypeMessages(d, (entry) =>
+        entry.messageType === "refine" ? "plan" : entry.messageType === "plan_review" ? "review" : null,
+      ),
+  },
+  {
     // Who approved the code and which commit: the PR and the auto-merge ship only that commit.
     name: "029_task_approval",
     up: (d) => addColumn(d, "tasks", "approval TEXT"),
@@ -627,6 +644,31 @@ const MIGRATIONS: Migration[] = [
     },
   },
 ];
+
+type MessageType = NonNullable<ConversationEntry["messageType"]>;
+
+/**
+ * Rewrites the type of conversation entries (028_message_types). `retype` gets
+ * each entry and the status the task left when it was written, and returns the
+ * new type or null to keep it.
+ */
+function retypeMessages(d: Database, retype: (entry: ConversationEntry, from: string | undefined) => MessageType | null): void {
+  const rows = d.prepare("SELECT id, conversation, history FROM tasks").all() as { id: string; conversation: string | null; history: string | null }[];
+  const update = d.prepare("UPDATE tasks SET conversation = ? WHERE id = ?");
+  for (const row of rows) {
+    const conversation = parseJson<ConversationEntry[]>(row.conversation, []);
+    const history = parseJson<StatusHistoryEntry[]>(row.history, []);
+    let changed = false;
+    for (const entry of conversation) {
+      const type = retype(entry, history.find((h) => h.timestamp === entry.timestamp)?.pre_status);
+      if (type && type !== entry.messageType) {
+        entry.messageType = type;
+        changed = true;
+      }
+    }
+    if (changed) update.run(JSON.stringify(conversation), row.id);
+  }
+}
 
 function runMigrations(): void {
   const d = getDb();

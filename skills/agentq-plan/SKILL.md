@@ -3,7 +3,7 @@ name: agentq-plan
 description: Planning phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the agentq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_plan, mcp__agentq__create_subtask, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*)
 metadata:
-  version: "6.3.0"
+  version: "6.4.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -36,7 +36,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 ## Steps
 
 1. `cd {task.project.workingDirectory}`
-2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` and `task.contexts[]` (see Context Reading in `agentq-claim`)
+2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` and `brief.handoffs` (the refiner's notes, if any), see Context Reading in `agentq-claim`. Call `get_task` only if you need the whole conversation
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
 5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). The project's own commands (install, build, typecheck, lint, test) always run; add as regression commands only the extra ones that must keep passing (e.g. a focused test file)
@@ -44,13 +44,15 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 7. **Size**: when the work is bigger than one reviewable PR (over `brief.sizeLimits`: more than `maxDiffLines` changed lines, `maxPlanFiles` files or `maxCriteria` criteria), split it: call `create_subtask` for each part (with `blockedBy` naming earlier subtasks, never this task) while you still hold the task, and list them in the plan. Each subtask needs a real description and criteria: the project's Definition of Ready applies to it. Subtasks wait until this plan is approved; then they run and this task completes when they all do. A plan over the limits that creates no subtasks is submitted with size warnings for the critic and the person who approves it
 8. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
 
-Under autonomy L2 and higher an AI critic reviews the plan first (a different agent): a low-risk plan it approves goes straight to coding; otherwise a person approves it too. Critique findings have ids like `P1-2`; when revising, address each one.
+Under autonomy L2 and higher an AI critic reviews the plan first (a different agent): a low-risk plan it approves goes straight to coding; otherwise a person approves it too. Critique findings have ids like `P1-2`; when revising, address each one and answer it in `findingResolutions` (see Revising a plan).
 
 Once a person approves the plan, the validation plan is **frozen**: the coder cannot change it, and the AgentQ verifier runs its commands on every code submission. Commands from a plan a person approved always run; otherwise only those on the project's allowlist do. Prefer the project's own test runner.
 
 ### Revising a plan (`plan_changes_requested`)
 
-The feedback is in the task conversation (`task.conversation[]`). Read it, revise the previous plan so every point is addressed, and submit the revised plan as a whole (not just the delta), with its full `validationPlan` (a revision without one clears the previous one). Note in the plan what changed and why. A task can also come back here from coding, verification or review when the approved plan was wrong (`brief.approvedPlan` is that plan; `brief.lastAnswer` or `brief.humanNotes` say why): the next approval replaces it.
+The feedback is in the brief: the critic's open findings in `brief.openFindings` (ids `P1-2`) with its handoff (the `plan_review` entry of `brief.handoffs`), and a person's in `brief.humanNotes` (and a `human` handoff). Your previous plan is `brief.latestPlan`, with its `brief.validationPlan` and `brief.planSubmission`. Revise it so every point is addressed, and submit the revised plan as a whole (not just the delta), with its full `validationPlan` (a revision without one clears the previous one). Note in the plan what changed and why. A task can also come back here from coding, verification or review when the approved plan was wrong (`brief.approvedPlan` is that plan; `brief.lastAnswer` or `brief.humanNotes` say why): the next approval replaces it.
+
+Answer **every** open `P…` finding in `findingResolutions`: `fixed` (and how the plan changed) or `wontfix` (and why). The tool refuses a revision that leaves an open plan finding unanswered, and the critic checks each answer. Call `get_task` only if you need the whole conversation.
 
 ## Submit Plan
 
@@ -68,6 +70,7 @@ Call the `submit_plan` MCP tool:
   "openQuestions": [{ "text": "Should archived rows be exported?", "blocking": false }],
   "suggestedRisk": "medium",
   "touchedPaths": ["src/export.ts", "src/export.test.ts"],
+  "findingResolutions": [{ "id": "P1-1", "status": "fixed", "resolution": "AC2 now has a test (revisions only)" }],
   "context": "<handoff notes>" }
 ```
 

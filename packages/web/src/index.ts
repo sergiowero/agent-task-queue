@@ -2,6 +2,8 @@ import type {
   Task,
   PaginatedResponse,
   ArchiveRunnerJob,
+  AgentSubmitAction,
+  SubmitResult,
 } from "@agentq/shared";
 import {
   archiveTask,
@@ -51,7 +53,10 @@ import {
   skillsBundleVersion,
   submitCode,
   submitPlan,
+  submitPlanReview,
+  submitRefinement,
   submitReview,
+  submitVerification,
   unblockTask,
   promoteDraft,
   getSubtasks,
@@ -60,6 +65,7 @@ import {
   createProjectSchema,
   updateProjectSchema,
   transitionTaskSchema,
+  agentSubmitSchemas,
   paginationSchema,
   createRunnerSchema,
   updateRunnerSchema,
@@ -793,85 +799,19 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     "add-comment": "comment",
   };
   const action = actionMap[subAction] ?? subAction.replace(/-/g, "_");
+  if (Object.hasOwn(agentSubmits, action)) {
+    return finishTaskAction(taskId, action, () => agentSubmits[action as AgentSubmitAction](taskId, body).task);
+  }
   const parsed = transitionTaskSchema.safeParse({ ...body, action });
   if (!parsed.success) {
     return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
   }
 
   const data = parsed.data;
-  const auth = {
-    claimToken: data.claimToken,
-    decisions: Array.isArray(body?.decisions) ? body.decisions : undefined,
-    risks: Array.isArray(body?.risks) ? body.risks : undefined,
-    next: Array.isArray(body?.next) ? body.next : undefined,
-  };
   const author = data.authorName;
 
   // Each action is one shared workflow call; the workflow checks the status.
   const actions: Record<string, () => Task | Response> = {
-    submit_plan: () =>
-      submitPlan(taskId, {
-        message: data.message,
-        author,
-        context: data.context,
-        validationPlan: body?.validationPlan,
-        ...auth,
-      }).task,
-    submit_code: () =>
-      submitCode(taskId, {
-        message: data.message,
-        author,
-        context: data.context,
-        worktree: typeof body?.worktree === "string" ? body.worktree : undefined,
-        branch: body?.branch,
-        headSha: body?.headSha,
-        evidence: Array.isArray(body?.evidence) ? body.evidence : [],
-        criteria: Array.isArray(body?.criteria) ? body.criteria : [],
-        findingResolutions: Array.isArray(body?.findingResolutions) ? body.findingResolutions : [],
-        ...auth,
-      }).task,
-    submit_review: () => {
-      if (!data.verdict) return errorResponse("verdict is required (approve, request_changes or needs_human)");
-      return submitReview(taskId, {
-        verdict: data.verdict,
-        findings: Array.isArray(body?.findings) ? body.findings : [],
-        verifiedFindings: Array.isArray(body?.verifiedFindings) ? body.verifiedFindings : [],
-        question: data.question,
-        message: data.message,
-        author,
-        context: data.context,
-        ...auth,
-      }).task;
-    },
-    submit_pr: () => {
-      if (!body?.branch || !body?.commit || !body?.authors) {
-        return errorResponse("branch, commit, and authors are required");
-      }
-      return submitPr(taskId, {
-        prUrl: body.prUrl,
-        prNumber: body.prNumber,
-        branch: String(body.branch),
-        commit: String(body.commit),
-        authors: String(body.authors),
-        worktree: typeof body.worktree === "string" ? body.worktree : undefined,
-        message: data.message,
-        author,
-        context: data.context,
-        ...auth,
-      }).task;
-    },
-    // Older clients: the same call under its former name.
-    submit_merge: () => actions.submit_pr(),
-    report_blocker: () => {
-      if (!body?.reason || !body?.question) return errorResponse("reason and question are required");
-      return reportBlocker(taskId, {
-        reason: String(body.reason),
-        question: String(body.question),
-        author,
-        context: data.context,
-        ...auth,
-      }).task;
-    },
     approve_plan: () => approvePlan(taskId, { message: data.message }),
     request_plan_changes: () => requestPlanChanges(taskId, { message: data.message }),
     approve_code: () => approveCode(taskId, { message: data.message }),
@@ -918,6 +858,11 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
 
   const run = actions[action];
   if (!run) return errorResponse("unknown action", 404);
+  return finishTaskAction(taskId, action, run);
+});
+
+/** Runs a task action: workflow errors become 400s, the changed task is broadcast and returned. */
+function finishTaskAction(taskId: string, action: string, run: () => Task | Response): Response {
   let result: Task | Response;
   try {
     result = run();
@@ -936,7 +881,41 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   }
   broadcastSSE("task_updated", result);
   return jsonResponse(result);
-});
+}
+
+/** The parsed body of an agent submission, or a WorkflowError naming the fields that are wrong. */
+function submitBody<T>(
+  result: { success: true; data: T } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } },
+): T {
+  if (result.success) return result.data;
+  throw new WorkflowError(
+    result.error.issues.map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message)).join("; "),
+  );
+}
+
+/**
+ * Agent submissions over HTTP (an agent normally submits through MCP). The body
+ * is the MCP tool's arguments without taskId, parsed by the same schemas, so
+ * HTTP accepts and refuses exactly what the MCP tool does.
+ */
+const agentSubmits: Record<AgentSubmitAction, (taskId: string, body: unknown) => SubmitResult> = {
+  submit_plan: (id, body) => submitPlan(id, submitBody(agentSubmitSchemas.submit_plan.safeParse(body ?? {}))),
+  submit_code: (id, body) => submitCode(id, submitBody(agentSubmitSchemas.submit_code.safeParse(body ?? {}))),
+  submit_review: (id, body) => submitReview(id, submitBody(agentSubmitSchemas.submit_review.safeParse(body ?? {}))),
+  submit_plan_review: (id, body) =>
+    submitPlanReview(id, submitBody(agentSubmitSchemas.submit_plan_review.safeParse(body ?? {}))),
+  submit_verification: (id, body) =>
+    submitVerification(id, submitBody(agentSubmitSchemas.submit_verification.safeParse(body ?? {}))),
+  submit_refinement: (id, body) =>
+    submitRefinement(id, submitBody(agentSubmitSchemas.submit_refinement.safeParse(body ?? {}))),
+  submit_pr: (id, body) => {
+    const { mergeBranch, ...input } = submitBody(agentSubmitSchemas.submit_pr.safeParse(body ?? {}));
+    return submitPr(id, { ...input, branch: mergeBranch });
+  },
+  // Older clients: the same call under its former name.
+  submit_merge: (id, body) => agentSubmits.submit_pr(id, body),
+  report_blocker: (id, body) => reportBlocker(id, submitBody(agentSubmitSchemas.report_blocker.safeParse(body ?? {}))),
+};
 
 /** Records kept beside a task (review findings); fetched separately from the task itself. */
 const handleTaskDetails = wrapHandler(async (req, url) => {

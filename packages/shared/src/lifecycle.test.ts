@@ -234,8 +234,8 @@ describe("back to planning from coding, verification or review", () => {
 describe("canceling", () => {
   it("a split task's subtasks are canceled with it, claimed ones included", () => {
     const pid = project();
-    const { parent, first, second } = splitting(pid);
-    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    const { parent, first, second, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
     approvePlan(parent.id);
     const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
     expect(c.task.id).toBe(first.id);
@@ -256,8 +256,8 @@ describe("canceling", () => {
 
   it("a canceled dependency sends its dependents to a person, who can drop it", () => {
     const pid = project();
-    const { parent, first, second } = splitting(pid);
-    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    const { parent, first, second, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
     approvePlan(parent.id);
 
     cancelTask(first.id);
@@ -281,8 +281,8 @@ describe("canceling", () => {
 
   it("a deleted dependency sends its dependents to a person too", () => {
     const pid = project();
-    const { parent, first, second } = splitting(pid);
-    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    const { parent, first, second, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
     approvePlan(parent.id);
     softDeleteTask(first.id);
     dependencyDeleted(getTaskById(first.id)!);
@@ -292,8 +292,8 @@ describe("canceling", () => {
 
   it("a split task whose subtasks were all canceled goes to a person", () => {
     const pid = project();
-    const { parent, first, second } = splitting(pid);
-    forceStatus(parent.id, TaskStatus.WaitingPlanReview);
+    const { parent, first, second, claimToken } = splitting(pid);
+    submitPlan(parent.id, { message: "## Split", claimToken });
     approvePlan(parent.id);
     cancelTask(second.id);
     cancelTask(first.id);
