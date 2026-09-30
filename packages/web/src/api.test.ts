@@ -1190,7 +1190,7 @@ describe("autonomy, risk and findings", () => {
         maxCriteria: 9,
         verifyTimeoutSec: 1800,
         autoArchive: true,
-        dorMode: "enforce",
+        dorMode: "enforce" as const,
       },
     };
     const saved = (await (await json(`/api/projects/${projectId}`, "PUT", all)).json()) as Project;
