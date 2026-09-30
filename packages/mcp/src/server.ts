@@ -222,7 +222,8 @@ const agentIdSchema = z
 export interface AgentQMcpServerOptions {
   /**
    * Claims this server starts out holding (taskId → claimToken). A runner job's
-   * server gets its task's claim through AGENTQ_TASK_ID / AGENTQ_CLAIM_TOKEN.
+   * server gets its task's claim through AGENTQ_TASK_ID / AGENTQ_CLAIM_TOKEN;
+   * a server that starts with a claim is a runner job's and has no claim_task.
    */
   claims?: Record<string, string>;
 }
@@ -232,9 +233,11 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
   );
-  // Each MCP session runs its own server process, so this map is the session's claims
-  // and this id is the session's identity for separation of duties.
+  // Each MCP session runs its own server process, so this map is the session's claims.
+  // For separation of duties a claim is its conversation (the agent's sessionId) and
+  // this process (the instance id), so a restart or a changed sessionId is not a new agent.
   const claims = new Map<string, string>(Object.entries(opts.claims ?? {}));
+  const runnerJob = claims.size > 0;
   const instanceId = randomUUID();
   const auth = (input: { taskId: string; claimToken?: string; agentId?: string }) => ({
     claimToken: input.claimToken || claims.get(input.taskId),
@@ -262,7 +265,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     return phase ? independentTask(task, buildIndependentBrief(task, phase)!) : withProject(task);
   };
 
-  server.registerTool(
+  const claimTask = server.registerTool(
     "claim_task",
     {
       title: "Claim next task",
@@ -279,7 +282,12 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           .describe(
             `The phases you work, one or more; each claims tasks in these statuses: ${CLAIM_RULES.map((r) => `${r.role} (${r.from.join(", ")})`).join("; ")}. Omit for all but verify.`,
           ),
-        sessionId: z.string().min(1).describe("Session ID (UUID) for audit traceability"),
+        sessionId: z
+          .string()
+          .min(1)
+          .describe(
+            "Your tool's session (conversation) ID. Pass the same one on every claim: it keeps you off checking your own work, also after this server restarts",
+          ),
         host: z.string().optional().describe("Host path or machine name"),
         projectId: z.string().optional().describe("Only claim tasks from this project"),
         skillsVersion: z
@@ -318,7 +326,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
           },
           context: input.context,
           projectId: input.projectId,
-          sessionKey: `mcp:${instanceId}`,
+          instanceKey: `mcp:${instanceId}`,
         });
         if (!result) {
           return {
@@ -344,13 +352,16 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         };
       }),
   );
+  // The runner already claimed a job's task. A claim from the job's server would not
+  // carry the runner's identity, so the job could take the review of its own code.
+  if (runnerJob) claimTask.remove();
 
   server.registerTool(
     "submit_plan",
     {
       title: "Submit plan",
       description:
-        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
+        "Submit an implementation plan for a task you claimed in `planning` status, with its validation plan (how each acceptance criterion will be verified: required, with at least one item per criterion, when the task has criteria), open questions, your risk estimate and the paths it touches. Under autonomy L2+ an AI critic reviews it next (low-risk plans then go straight to coding); otherwise a person approves it. Once approved, the validation plan is frozen and the verifier runs its commands.",
       inputSchema: {
         taskId: taskIdSchema,
         ...submitPlanFields,
@@ -385,7 +396,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit code",
       description:
-        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review.",
+        "Submit implemented code for a task you claimed in `coding` status, with the evidence you gathered per acceptance criterion and an answer for every open review finding. Stores the worktree path and releases the task: the verifier runs the project's commands next (when configured), then the review. The server checks the committed diff on every submit: weakened tests send the code straight back, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         ...submitCodeFields,
@@ -453,7 +464,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Submit verification",
       description:
-        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person).",
+        "With the `verify` role: report the result of running the task's verification commands for a task you claimed in `verifying`. Green goes on to review; red goes back to the coder with the evidence (after the project's limit, to a person). The server also reads the worktree's diff itself: tampering it finds counts as red even if you report none, and protected paths or a large diff raise the risk.",
       inputSchema: {
         taskId: taskIdSchema,
         ...submitVerificationFields,

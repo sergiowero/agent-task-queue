@@ -23,7 +23,7 @@ REST:
 | Method | Route | Purpose |
 |--------|-------|---------|
 | `GET` | `/api/runners` | Config + live state (`state.running`, `activeJobs`, `lastError`, `lastJob`) |
-| `POST` | `/api/runners` | Create (`enabled: true` starts it immediately) |
+| `POST` | `/api/runners` | Create (`enabled: true` starts it immediately; a custom argv runner needs the opt-in below) |
 | `GET` / `PUT` / `DELETE` | `/api/runners/:id` | Read / update / delete (delete stops it first and releases its tasks) |
 | `POST` | `/api/runners/:id/start` | Start and persist `enabled = true` |
 | `POST` | `/api/runners/:id/stop` | Stop (SIGTERM, SIGKILL after 10 s), release its tasks, persist `enabled = false` |
@@ -40,6 +40,13 @@ Runner fields: `name`, `tool`, `roles` (one or more of `refine`, `plan`, `plan_r
 `pollIntervalSec` (default 5), `permissionMode` (`safe` / `full`), `extraArgs` (string
 array), `enabled`. A runner claims the tasks of any of its roles; roles are stored
 without duplicates, in that order.
+
+**Custom argv runners need an opt-in.** Tool `custom`, or a non-empty `extraArgs` on any
+tool (an inline `--mcp-config` or a Codex `-c` override can start any command), runs
+whatever command the runner was given. The server creates, starts or enables such a
+runner only when it was started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`; otherwise the API
+answers 400, and a custom runner persisted as enabled does not start (its `lastError`
+says why). Renaming, stopping or deleting one, or clearing its `extraArgs`, stays possible.
 
 ## Tools and the commands they run
 
@@ -183,11 +190,17 @@ anything the dying agent still submits is refused.
 ### Separation of duties and restarts
 
 A runner claims with its id, so every claim of the same runner has the same
-`sessionKey` (`runner:<id>`) across jobs. Submits record it as the producer of
-the artifact, and a claim never returns the review of code the same runner
-wrote. On an L1+ project a runner with both `code` and `review` therefore needs a
-second runner with `review`; the Runners page says so. Reviews nobody eligible picks
-up go to a person after the project's `reviewStarvationMin`.
+`sessionKey` (`runner:<id>`) across jobs. Submits record it as a producer of
+the artifact, and a claim never returns the plan critique, verification or review
+of a plan or code the same runner wrote in any round. On an L1+ project a runner
+with both `code` and `review` therefore needs a second runner with `review` (on
+another model when the project sets `requireDifferentModel`; a runner with no
+model runs its tool's default, which differs from another tool's). The Runners page
+warns, per project, when no enabled runner may take such a check. Reviews nobody
+eligible picks up go to a person after the project's `reviewStarvationMin`.
+
+The job's own MCP server has no `claim_task`: the runner already claimed the task,
+and a claim from the job would not carry the runner's identity.
 
 When the server starts, tasks that a runner job held when the server went down
 go back to the queue (`recoverOrphans`), before any runner claims again. The
@@ -203,6 +216,10 @@ also writes it into the prompt's submit arguments for tools that end up using an
 `agentq` server. The runner claims with `runnerId`, which becomes the claim's stable
 `sessionKey` (`runner:<id>`).
 
+The token never leaves the server over HTTP: no API response or SSE event includes a
+task's `claimToken`, and a job's output (log file, live output, the revert note) shows
+`[claimToken]` wherever the tool printed its token, since tools echo their MCP calls.
+
 ## Verification
 
 The web server also runs a **built-in verifier** (no LLM; `packages/web/src/runner/verify.ts`).
@@ -210,30 +227,55 @@ When a coder submits and the project has commands (**Projects → Edit → Comma
 **Detect from the repository**), the task goes to `verify_requested`; the verifier claims
 it, runs the commands in the task's worktree and routes it:
 
-- **Commands**, each once and in order: `install`, then the approved plan's
-  `regressionCommands` (or the project's build, typecheck, lint and test commands when
-  there is no approved plan), then the command of each acceptance criterion (from the
-  validation plan or the criterion's `verify.command`). Each runs with `CI=1` and the
-  project's `verifyTimeoutSec` (600 s); a failing command is retried once and marked
-  **flaky** when the retry passes. Logs go to `<AGENTQ_HOME>/runs/<taskId>/verify-R<n>-<i>.log`;
-  the evidence keeps the last 40 lines.
+- **Clean worktree first**: the verifier refuses a worktree with uncommitted or untracked
+  changes (`git status --porcelain`; gitignored files do not count) or checked out at
+  another commit than the submitted `headSha`. Nothing runs; the code goes back to the
+  coder with the files listed, as a failed verification. Files the commands generate must
+  be gitignored.
+- **Commands**, each once and in order: the project's commands (`install`, build,
+  typecheck, lint, test), then the approved plan's `regressionCommands` (they add to the
+  project's commands, never replace them), then the command of each acceptance criterion
+  (from the validation plan or the criterion's `verify.command`). Each runs with `CI=1`
+  and the project's `verifyTimeoutSec` (600 s) in its own process group: a timeout kills
+  the whole tree (`a && b`, npm scripts, forked test workers), not just the shell. A
+  failing command is retried once and marked **flaky** when the retry passes. Logs go to
+  `<AGENTQ_HOME>/runs/<taskId>/verify-R<round>-<attempt>-<i>.log`; the evidence keeps the
+  last 40 lines.
 - **Trust**: the project's own commands always run. Commands an agent wrote (plan items,
   criteria) run only when a person approved the plan, or when they start with an
   allowlisted prefix (common test runners plus the project's `verifyAllowlist`);
-  otherwise the evidence says "skipped".
-- **Tampering**: the diff against the merge branch is checked for deleted test files,
-  added `.skip`/`.only`/`xit`/`@pytest.mark.skip`/`t.Skip`/`@Disabled`, and lowered
-  coverage thresholds. Tampering counts as a failure; a second time goes to a person.
+  otherwise the evidence says "skipped", and the PR body lists them under the result.
+- **Nothing ran is not green**: when no command that checks the code ran (every one
+  skipped, or only `install`), the result is "not verified" with the skipped commands
+  listed, never a pass; the code goes on to review. The same holds for an agent
+  verifier's report with no command that ran.
+- **Planned tests**: a test file the approved plan's `newTests` names that does not exist
+  fails its criterion.
+- **Tampering**: the diff against the merge branch is checked for deleted test files, test
+  files moved out of the test paths, added `.skip`/`.only`/`.skipIf`/`.todo`/`xit`/
+  `@pytest.mark.skip`/`xfail`/`@unittest.skip`/`t.Skip`/`@Disabled`/`#[ignore]`, and
+  coverage thresholds lowered or removed (JS configs, `package.json`, `bunfig.toml`,
+  `pyproject.toml`, `.coveragerc`, `setup.cfg`, `tox.ini`, `pytest.ini`). The server runs
+  this check itself on every `submit_code` and `submit_verification`, so it holds without
+  commands, with the verifier down, and for agent verifiers: tampering on submit sends the
+  code straight back. Tampering counts as a failure; a second time goes to a person. When
+  the person sends it on (to verification or review, not back to the coder), those lines
+  are accepted and not flagged again.
 - **Risk**: touching `protectedPaths` or a diff larger than `maxDiffLines` raises the
-  task's risk to high (an AI approval then still goes to a person).
+  task's risk to high (an AI approval then still goes to a person). This too is checked on
+  every `submit_code` and `submit_verification`, and again on the PR's files before an L3
+  auto-merge.
 - **Routing**: green → review (AI reviewer under L1+, a person under L0); red →
   `changes_requested` with the evidence; red `maxVerifyFailures` (2) times in a row →
-  `needs_human`. A missing worktree goes to `needs_human` without counting a failure.
+  `needs_human`, with the failing commands in the blocker. A person's answer resets the
+  failure count and the tamper strikes. A missing worktree goes to `needs_human` without
+  counting a failure.
 
-Without commands, or when the verifier is not running (it writes a heartbeat; MCP-only
-setups have no web server), the code goes straight to review and the task notes that it
-was not verified. `AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows
-its status.
+Until the verifier reports, the task shows "Waiting for the verifier", never the previous
+submission's result. Without commands, or when the verifier is not running (it writes a
+heartbeat every 30 s, also while a long verification runs; MCP-only setups have no web
+server), the code goes straight to review and the task notes that it was not verified.
+`AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
 
 ## Environment variables
 
@@ -244,6 +286,7 @@ its status.
 | `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
 | `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
+| `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
 
 ## Live updates
 
@@ -283,7 +326,7 @@ curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
 #    → complete once the PR is merged on GitHub (or "Mark merged" on the task page)
 ```
 
-For tests, use `tool: "custom"` with `extraArgs` such as
+For tests, start the server with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1` and use `tool: "custom"` with `extraArgs` such as
 `["bun", "packages/web/src/runner/testing/fake-agent.ts", "submit_plan", "{\"message\":\"## Plan\"}"]`:
 the fake agent starts the server from `$AGENTQ_MCP_CONFIG` and calls the tool for
 `$AGENTQ_TASK_ID`, as a real coding tool would.

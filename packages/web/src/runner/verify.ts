@@ -4,18 +4,20 @@
  * diff for weakened tests and risky paths, and reports through the shared
  * workflow. No LLM involved; it runs inside the web server.
  */
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { spawn } from "child_process";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { hostname } from "os";
 import { join } from "path";
 import type { NewEvidence, Project, SubmitVerificationInput, Task } from "@agentq/shared";
 import {
   DEFAULT_VERIFY_ALLOWLIST,
+  analyzeDiff,
   claimNextTask,
   getProjectById,
   getTaskById,
   git,
-  matchesAny,
   profileCommands,
+  protectedFiles,
   resolveProfile,
   revertClaim,
   setAppState,
@@ -36,7 +38,11 @@ export interface VerifyCommand {
   source: "project" | "plan";
 }
 
-/** Every command to run, once each, in order: install, regression, then per-criterion checks. */
+/**
+ * Every command to run, once each, in order: the project's commands (install
+ * first), the plan's regression commands, then per-criterion checks. A plan
+ * adds commands to the project's, never replaces them.
+ */
 export function verificationCommands(task: Task, project: Project | null): VerifyCommand[] {
   const profile = resolveProfile(project?.profile);
   const out = new Map<string, VerifyCommand>();
@@ -50,14 +56,9 @@ export function verificationCommands(task: Task, project: Project | null): Verif
     out.set(cmd, entry);
   };
 
-  if (profile.commands.install) add(profile.commands.install, "project");
+  for (const cmd of profileCommands(profile)) add(cmd, "project");
   const plan = task.approvedPlan?.validation;
-  if (plan?.regressionCommands.length) {
-    const projectOwn = new Set(profileCommands(profile));
-    for (const cmd of plan.regressionCommands) add(cmd, projectOwn.has(cmd.trim()) ? "project" : "plan");
-  } else {
-    for (const cmd of profileCommands(profile)) if (cmd !== profile.commands.install) add(cmd, "project");
-  }
+  for (const cmd of plan?.regressionCommands ?? []) add(cmd, "plan");
   for (const item of plan?.items ?? []) add(item.command, "plan", item.criterionId);
   for (const c of task.acceptanceCriteria) {
     if (c.verify.command && (c.verify.kind === "command" || c.verify.kind === "test")) add(c.verify.command, "plan", c.id);
@@ -83,35 +84,62 @@ export interface ExecResult {
   timedOut: boolean;
 }
 
-/** Runs one shell command with CI=1, killing it (and its children on Windows) after `timeoutMs`. */
-export async function execCommand(command: string, cwd: string, timeoutMs: number): Promise<ExecResult> {
-  const argv = IS_WINDOWS ? ["cmd", "/d", "/s", "/c", command] : ["sh", "-c", command];
-  const proc = Bun.spawn(argv, {
-    cwd,
-    env: { ...process.env, CI: "1", FORCE_COLOR: "0" } as Record<string, string>,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+/** How long a killed command may keep its output pipes open before we stop waiting for it. */
+const KILL_GRACE_MS = 2000;
+
+/**
+ * Runs one shell command with CI=1. After `timeoutMs` the whole process tree is
+ * killed (its own process group on POSIX, `taskkill /T` on Windows): killing
+ * only the shell would leave `a && b` or an npm script running and holding the
+ * output pipes, so the verifier would wait for it forever.
+ */
+export function execCommand(command: string, cwd: string, timeoutMs: number): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const env = { ...process.env, CI: "1", FORCE_COLOR: "0" };
+    const child = IS_WINDOWS
+      ? spawn("cmd", ["/d", "/s", "/c", `"${command}"`], { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsVerbatimArguments: true, windowsHide: true })
+      : spawn("sh", ["-c", command], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (d) => (stdout += d));
+    child.stderr?.on("data", (d) => (stderr += d));
+    let timedOut = false;
+    let settled = false;
+    let grace: ReturnType<typeof setTimeout> | null = null;
+    const finish = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolve({ exitCode: timedOut ? 124 : code, output: stdout + (stderr ? `\n${stderr}` : ""), timedOut });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+      // A grandchild that left the group could still hold the pipes: do not wait for it.
+      grace = setTimeout(() => finish(124), KILL_GRACE_MS);
+    }, timeoutMs);
+    child.on("error", (e) => {
+      stderr += `${e.message}\n`;
+      finish(127);
+    });
+    child.on("close", (code, signal) => finish(code ?? (signal ? 137 : 1)));
   });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (IS_WINDOWS) {
-      try {
-        Bun.spawnSync(["taskkill", "/pid", String(proc.pid), "/T", "/F"]);
-      } catch {}
-    }
-    try {
-      proc.kill("SIGKILL");
-    } catch {}
-  }, timeoutMs);
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout as ReadableStream).text().catch(() => ""),
-    new Response(proc.stderr as ReadableStream).text().catch(() => ""),
-  ]);
-  const code = await proc.exited;
-  clearTimeout(timer);
-  return { exitCode: timedOut ? 124 : code, output: stdout + (stderr ? `\n${stderr}` : ""), timedOut };
+}
+
+/** Kills a command and everything it started. */
+function killTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (IS_WINDOWS) Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"]);
+    // The command leads its own process group (detached), so -pid reaches all of it.
+    else process.kill(-pid, "SIGKILL");
+  } catch {}
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
 }
 
 // eslint-disable-next-line no-control-regex
@@ -120,82 +148,6 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 export function summarize(output: string, lines = SUMMARY_LINES): string {
   const clean = output.replace(ANSI, "").split("\n").filter((l) => l.trim() !== "");
   return clean.slice(-lines).join("\n");
-}
-
-// ─── Diff analysis ────────────────────────────────────────────────────
-
-const TEST_FILE = /(^|\/)(__tests__|tests?|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$/;
-const SKIP_PATTERNS: [RegExp, string][] = [
-  [/\b(it|test|describe)\.(skip|only|todo)\s*\(/, "skipped or focused test"],
-  [/\b(xit|xtest|xdescribe|fit|fdescribe)\s*\(/, "skipped or focused test"],
-  [/@pytest\.mark\.skip|pytest\.skip\(/, "skipped pytest"],
-  [/\bt\.Skip(Now|f)?\(/, "skipped Go test"],
-  [/@Disabled\b|@Ignore\b/, "disabled JUnit test"],
-];
-const COVERAGE_FILE = /(jest|vitest|vite)\.config\.[cm]?[jt]s$|\.nycrc|bunfig\.toml$|\.c8rc|codecov\.ya?ml$|package\.json$/;
-const THRESHOLD = /(threshold|lines|branches|functions|statements|coverage)["']?\s*[:=]\s*(\d+(?:\.\d+)?)/i;
-
-export interface DiffAnalysis {
-  diffStats: { files: number; insertions: number; deletions: number };
-  changedFiles: string[];
-  tampering: string[];
-  headSha: string | null;
-}
-
-/** Diff of HEAD against where it branched off the merge branch; null when git cannot tell. */
-export function analyzeDiff(cwd: string, mergeBranch: string): DiffAnalysis | null {
-  const headSha = git(cwd, ["rev-parse", "HEAD"]);
-  const base =
-    git(cwd, ["merge-base", "HEAD", `origin/${mergeBranch}`]) ?? git(cwd, ["merge-base", "HEAD", mergeBranch]);
-  if (!base) return headSha ? { diffStats: { files: 0, insertions: 0, deletions: 0 }, changedFiles: [], tampering: [], headSha } : null;
-
-  const numstat = git(cwd, ["diff", "--numstat", base, "HEAD"]) ?? "";
-  let insertions = 0;
-  let deletions = 0;
-  const changedFiles: string[] = [];
-  for (const line of numstat.split("\n").filter(Boolean)) {
-    const [add, del, ...path] = line.split("\t");
-    insertions += Number(add) || 0;
-    deletions += Number(del) || 0;
-    changedFiles.push(path.join("\t"));
-  }
-
-  const tampering: string[] = [];
-  const status = git(cwd, ["diff", "--name-status", base, "HEAD"]) ?? "";
-  for (const line of status.split("\n").filter(Boolean)) {
-    const [kind, path] = line.split("\t");
-    if (kind === "D" && TEST_FILE.test(path)) tampering.push(`deleted test file ${path}`);
-  }
-
-  const patch = git(cwd, ["diff", "-U0", base, "HEAD"]) ?? "";
-  let file = "";
-  const removedThresholds = new Map<string, number>();
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++ ")) {
-      file = line.replace(/^\+\+\+ (b\/)?/, "");
-      continue;
-    }
-    if (line.startsWith("--- ")) continue;
-    const added = line.startsWith("+");
-    const removed = line.startsWith("-");
-    if (!added && !removed) continue;
-    const text = line.slice(1);
-    if (added && TEST_FILE.test(file)) {
-      for (const [pattern, label] of SKIP_PATTERNS) {
-        if (pattern.test(text)) tampering.push(`${label} added in ${file}: ${text.trim().slice(0, 120)}`);
-      }
-    }
-    if (COVERAGE_FILE.test(file)) {
-      const m = text.match(THRESHOLD);
-      if (!m) continue;
-      const key = `${file}:${m[1].toLowerCase()}`;
-      if (removed) removedThresholds.set(key, Number(m[2]));
-      else if (removedThresholds.has(key) && Number(m[2]) < removedThresholds.get(key)!) {
-        tampering.push(`coverage ${m[1]} lowered from ${removedThresholds.get(key)} to ${m[2]} in ${file}`);
-      }
-    }
-  }
-  return { diffStats: { files: changedFiles.length, insertions, deletions }, changedFiles, tampering, headSha };
 }
 
 // ─── Verification run ─────────────────────────────────────────────────
@@ -223,9 +175,25 @@ export async function runVerification(
   const round = task.codeRound + 1;
   const logDir = runsDir(task.id);
   mkdirSync(logDir, { recursive: true });
+  // A round can be verified more than once (red, fix, verify again): keep each attempt's logs.
+  const logName = new RegExp(`^verify-R${round}-(\\d+)-\\d+\\.log$`);
+  const attempt = 1 + Math.max(0, ...readdirSync(logDir).map((f) => Number(f.match(logName)?.[1] ?? 0)));
+
+  // Verify exactly what was submitted: every change committed, HEAD at the submitted commit.
+  const unclean = uncommittedWork(task, cwd);
+  if (unclean) {
+    return {
+      passed: false,
+      evidence: [{ kind: "command", command: unclean.command, exitCode: 1, summary: unclean.summary }],
+      verifiedSha: git(cwd, ["rev-parse", "HEAD"]),
+    };
+  }
 
   const evidence: NewEvidence[] = [];
   let passed = true;
+  /** Commands that ran and check the code (install does not). */
+  let checks = 0;
+  const install = profile.commands.install?.trim();
   const commands = verificationCommands(task, project);
   for (const [i, cmd] of commands.entries()) {
     const rows = (summary: string, extra: Partial<NewEvidence>): NewEvidence[] =>
@@ -252,7 +220,7 @@ export async function runVerification(
       if (retry.exitCode === 0) flaky = true;
       result = retry.exitCode === 0 ? retry : result;
     }
-    const logPath = join(logDir, `verify-R${round}-${i + 1}.log`);
+    const logPath = join(logDir, `verify-R${round}-${attempt}-${i + 1}.log`);
     try {
       writeFileSync(logPath, `$ ${cmd.command}\n${result.output}\n[exit ${result.exitCode}${result.timedOut ? ", timed out" : ""}]\n`);
     } catch {}
@@ -261,17 +229,62 @@ export async function runVerification(
       : summarize(result.output) || "(no output)";
     evidence.push(...rows(summary, { exitCode: result.exitCode, logPath, flaky }));
     if (result.exitCode !== 0) passed = false;
+    if (cmd.command !== install) checks += 1;
   }
 
   const diff = analyzeDiff(cwd, task.mergeBranch);
+  // The approved plan's new tests must exist: a criterion whose planned test is missing fails.
+  for (const item of task.approvedPlan?.validation?.items ?? []) {
+    for (const path of item.newTests ?? []) {
+      const file = path.trim().replace(/^\.\//, "");
+      if (!file || existsSync(join(cwd, file))) continue;
+      evidence.push({ kind: "manual", criterionId: item.criterionId, exitCode: 1, summary: `Planned test ${file} was not added.` });
+      passed = false;
+    }
+  }
+  // Nothing that checks the code ran (every command skipped, or only install): not a pass.
+  const skipped = [...new Set(evidence.filter((e) => e.skipped).map((e) => `\`${e.command}\``))];
+  const unverifiedNote =
+    passed && checks === 0
+      ? `Not verified: no verification command ran${skipped.length ? `; skipped (not in the project's commands or verify allowlist, and no person approved the plan): ${skipped.join(", ")}` : ""}.`
+      : undefined;
   return {
     passed,
     evidence,
+    ...(unverifiedNote ? { unverifiedNote } : {}),
     tampering: diff?.tampering ?? [],
     diffStats: diff?.diffStats ?? null,
-    touchedProtected: diff ? diff.changedFiles.filter((f) => matchesAny(f, profile.protectedPaths)) : [],
+    touchedProtected: diff ? protectedFiles(diff.changedFiles, profile) : [],
     verifiedSha: diff?.headSha ?? null,
   };
+}
+
+/**
+ * Why the worktree is not the submitted code: uncommitted or untracked changes
+ * (they would change what the commands test without being in the branch or in
+ * the diff checks), or HEAD at another commit than the one submitted.
+ */
+function uncommittedWork(task: Task, cwd: string): { command: string; summary: string } | null {
+  const status = git(cwd, ["status", "--porcelain"]);
+  if (status) {
+    const lines = status.split("\n");
+    return {
+      command: "git status --porcelain",
+      summary: [
+        "Uncommitted changes in the worktree (commit them before submit_code):",
+        ...lines.slice(0, 20),
+        ...(lines.length > 20 ? [`… and ${lines.length - 20} more`] : []),
+      ].join("\n"),
+    };
+  }
+  const head = git(cwd, ["rev-parse", "HEAD"]);
+  if (head && task.headSha && !head.startsWith(task.headSha) && !task.headSha.startsWith(head)) {
+    return {
+      command: "git rev-parse HEAD",
+      summary: `HEAD ${head.slice(0, 12)} is not the submitted commit ${task.headSha.slice(0, 12)}: submit the commit that is checked out.`,
+    };
+  }
+  return null;
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────
@@ -279,6 +292,8 @@ export async function runVerification(
 export interface VerifyWorkerOptions {
   broadcast?: (event: string, data: unknown) => void;
   intervalMs?: number;
+  /** How often the worker says it is alive, also while a long verification runs. */
+  heartbeatMs?: number;
   run?: typeof runVerification;
 }
 
@@ -286,8 +301,10 @@ export interface VerifyWorkerOptions {
 export class VerifyWorker {
   private readonly broadcast: (event: string, data: unknown) => void;
   private readonly intervalMs: number;
+  private readonly heartbeatMs: number;
   private readonly run: typeof runVerification;
   private timer: Timer | null = null;
+  private heartbeat: Timer | null = null;
   private busy = false;
   running = false;
   lastRunAt: string | null = null;
@@ -296,12 +313,17 @@ export class VerifyWorker {
   constructor(opts: VerifyWorkerOptions = {}) {
     this.broadcast = opts.broadcast ?? (() => {});
     this.intervalMs = opts.intervalMs ?? 3000;
+    this.heartbeatMs = opts.heartbeatMs ?? 30_000;
     this.run = opts.run ?? runVerification;
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    // The beat runs on its own timer: a verification can take longer than the
+    // 2 minutes after which submit_code and the sweeper count the verifier as gone.
+    this.beat();
+    this.heartbeat = setInterval(() => this.beat(), this.heartbeatMs);
     this.schedule(0);
   }
 
@@ -309,10 +331,20 @@ export class VerifyWorker {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
   }
 
   state() {
     return { running: this.running, busy: this.busy, currentTaskId: this.currentTaskId, lastRunAt: this.lastRunAt };
+  }
+
+  private beat(): void {
+    try {
+      setAppState("verifier_heartbeat", new Date().toISOString());
+    } catch (e) {
+      console.error("[verifier]", e);
+    }
   }
 
   private schedule(ms: number): void {

@@ -33,7 +33,10 @@ revision that leaves one unanswered is refused), and the critic verifies each
 answer. The brief's `round.remainingPlanRounds` says how many critiques may still
 ask for changes. A **blocking open question** in the plan
 sends the task to a person before any critique. The planner's `suggestedRisk` and
-`touchedPaths` can only raise the risk (protected paths make it high).
+`touchedPaths` can only raise the risk (protected paths make it high). A task with
+acceptance criteria needs a `validationPlan` with at least one item per criterion
+(waived ones excepted; an item with only `how` is a manual check); the portal shows it
+while the plan waits for a person, and flags criteria without a check.
 
 ## Subtasks and drafts
 
@@ -60,16 +63,26 @@ reviewer's `submit_review` verdict routes it:
 | `request_changes` | `changes_requested`, with the findings by id — or `needs_human` once the reviewer has asked for changes `maxReviewRounds` times |
 | `needs_human` | `needs_human`, with the reviewer's question |
 
-The server refuses `approve` while a `blocker` or `major` finding is open, and
-`request_changes` without at least one open finding.
+The server refuses `approve` while a `blocker` or `major` finding is open, or answered
+by the coder (`fixed`, `wontfix`) but not yet verified: the reviewer closes those with
+`verifiedFindings` (`verified`) or requests changes. It also refuses `request_changes`
+without at least one open finding. The same holds for a plan critique's `approve`.
 
 ## Verification
 
 Before any review, the built-in verifier runs the project's commands and the approved
 plan's checks in the task's worktree (see [runner.md](runner.md#verification)). Red goes
 back to the coder with the evidence; red `maxVerifyFailures` times in a row, or tests
-weakened twice, goes to a person. Touching protected paths or a large diff raises the
-risk to high. Green continues to the review gate of the level.
+weakened twice, goes to a person. A run where no command that checks the code ran is
+"not verified", never green. Touching protected paths or a large diff raises the risk
+to high. Green continues to the review gate of the level.
+
+The diff guards do not depend on the verifier: on every `submit_code` and
+`submit_verification` the server reads the worktree's diff itself. Protected paths or a
+diff over `maxDiffLines` raise the risk to high, and weakened tests send the code back
+(to a person on the second strike), with or without project commands, with the
+verifier down, and for agent verifiers. Under L3, auto-merge also checks the PR's own
+files on GitHub.
 
 ## Findings
 
@@ -77,7 +90,9 @@ Reviewers submit structured findings: `severity` (`blocker`, `major`, `minor`,
 `nit`), optional `file` and `line`, and text. Each gets an id, `R<round>-<n>`
 (for example `R2-3`), stored in the `task_findings` table and shown on the task
 page. The next review verifies earlier findings by id (`verifiedFindings`:
-`verified` or `open`); the coder answers them by id in the code message.
+`verified` or `open`); the coder answers the open code findings by id
+(`findingResolutions`: `fixed` or `wontfix` with the reason). Plan findings and
+findings already verified cannot be answered again.
 
 ## Escalations
 
@@ -95,8 +110,10 @@ page. The next review verifies earlier findings by id (`verifiedFindings`:
 | The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
-answer in the conversation and resets the round limits, so the agents get a
-fresh set of rounds.
+answer in the conversation and resets the round limits, the consecutive verification
+failures and the tamper strikes, so the agents get a fresh set of rounds. Sending a
+tampering blocker on (to verification or review) accepts those test changes: they are
+not flagged again on later rounds.
 
 ## Pull requests
 
@@ -149,17 +166,45 @@ must answer by id.
 
 ## Separation of duties
 
-Nobody reviews code they wrote. Each claim carries a `sessionKey`:
-`runner:<runnerId>` for runner claims (stable across jobs), `mcp:<instance>` for
-agents that claim through their own MCP session. Every submit records who
-produced the artifact (`task.producers`), and a claim of `code_review_requested`
-skips tasks whose code was produced under the same `sessionKey`; a claim of
-`plan_review_requested` skips plans the same session wrote. With
-`requireDifferentModel`, the reviewer's model must also differ from the coder's.
+Nobody critiques their own plan, or verifies or reviews their own code. Each
+claim carries its identities (`assignedAgent.identities`, the primary one also as
+`sessionKey`):
+
+- a runner claim is its runner, `runner:<runnerId>`, the same for all its jobs;
+- a claim through MCP is its conversation, `session:<tool>:<sessionId>` (the tool
+  name in one spelling, so `Claude Code` and `claude` are one tool), plus the MCP
+  server process it came through, `mcp:<instance>`. A restarted or resumed MCP
+  server is therefore still the same agent, and so is a server whose agent passed
+  another sessionId. A placeholder sessionId (`unknown`, `<sessionId>`, `n/a`, all
+  zeros…) names no conversation and is left out, so it does not lump every such
+  session together; the claim is then only its server process.
+
+Every submit records who produced the artifact (`task.producers`), adding to the
+producers of the earlier rounds. A claim of `plan_review_requested` skips plans,
+and a claim of `verify_requested` or `code_review_requested` skips code, that any
+of the claim's identities produced in any round: the round-1 coder does not
+review round 2 after someone else fixed it, since its commits are still on the
+branch. The built-in verifier (`runner:builtin:verifier`) never produces code, so
+it always may verify.
+
+With `requireDifferentModel`, the checker's model must also differ from the model
+of every producer. Models are compared as model keys: case, provider prefixes
+(`anthropic/`, `us.anthropic.`), date and version suffixes and context tags
+(`[1m]`) are dropped, and a Claude model counts as its family (`opus`,
+`claude-opus-4-5` and `anthropic/Opus` are one model). A blank or `default` model
+is the tool's own default, so it is tool-scoped: a Claude runner and a Codex
+runner with no model may check each other.
 
 With a single runner that has both `code` and `review` on an L1+ project, reviews
-therefore wait for a second runner with the `review` role, and go to
-a person after `reviewStarvationMin`.
+therefore wait for a second runner with the `review` role (on another model under
+`requireDifferentModel`), and go to
+a person after `reviewStarvationMin`. The Runners page warns, per project, when no
+enabled runner may take the review of some runner's code or the critique of its
+plans.
+
+A runner job's MCP server starts out holding the job's claim and does not offer
+`claim_task`: a claim from it would not carry the runner's identity, so the job
+could otherwise take the review of the code it just submitted.
 
 ### Independent checks
 
@@ -194,7 +239,7 @@ verdict (the planner or the coder).
 | `maxPlanRounds` | 2 | Plan critiques that may ask for changes before a person decides |
 | `maxReviewRounds` | 3 | AI reviews that may ask for changes before a person decides |
 | `maxVerifyFailures` | 2 | Consecutive red verifications before a person decides |
-| `requireDifferentModel` | false | The reviewer must use a different model than the coder |
+| `requireDifferentModel` | false | The plan critic, verifier and reviewer must use a different model than whoever wrote the plan or code (see Separation of duties) |
 | `humanSampleEvery` | 0 | Every Nth AI approval in the project also goes to a person (0 = never) |
 | `reviewStarvationMin` | 20 | Minutes a review may wait for an eligible reviewer (0 = never hand it over) |
 | `leaseMin` | 90 | Minutes a hand-opened agent session may stay silent before its claim expires |

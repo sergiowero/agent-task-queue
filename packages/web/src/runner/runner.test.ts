@@ -29,9 +29,16 @@ import {
   unblockTask,
   updateTask,
 } from "@agentq/shared";
-import { RunnerEngine, type RunnerJob } from "./runner.js";
+import { REDACTED_CLAIM_TOKEN, RunnerEngine, secretRedactor, type RunnerJob } from "./runner.js";
 import type { BuiltCommand, CommandContext } from "./commands.js";
-import { CLAUDE_AGENTQ_TOOLS, agentqHome, buildCommand, geminiSettings, opencodeConfigContent } from "./commands.js";
+import {
+  CLAUDE_AGENTQ_TOOLS,
+  CUSTOM_RUNNERS_DISABLED,
+  agentqHome,
+  buildCommand,
+  geminiSettings,
+  opencodeConfigContent,
+} from "./commands.js";
 import { buildPrompt, stripFrontmatter } from "./prompt.js";
 
 // The engine claims in-process while the agent's MCP server opens the database
@@ -45,8 +52,11 @@ const BUN = process.execPath;
 
 const previousDbPath = process.env.AGENTQ_DB_PATH;
 const previousHome = process.env.AGENTQ_HOME;
+const previousAllowCustom = process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
 process.env.AGENTQ_DB_PATH = DB_PATH;
 process.env.AGENTQ_HOME = HOME;
+// The runners below are custom argv runners (see makeRunner).
+process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = "1";
 resetDb();
 
 const projectId = randomUUID();
@@ -131,6 +141,8 @@ afterAll(() => {
   process.env.AGENTQ_DB_PATH = previousDbPath ?? ":memory:";
   if (previousHome === undefined) delete process.env.AGENTQ_HOME;
   else process.env.AGENTQ_HOME = previousHome;
+  if (previousAllowCustom === undefined) delete process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+  else process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = previousAllowCustom;
   resetDb();
   for (const p of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
     try { rmSync(p); } catch {}
@@ -396,6 +408,89 @@ describe("RunnerEngine", () => {
     } finally {
       if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
       else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = previous;
+    }
+  });
+});
+
+describe("RunnerEngine: custom argv opt-in", () => {
+  afterEach(() => {
+    process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS = "1";
+  });
+
+  it("does not start a custom argv runner without AGENTQ_ALLOW_CUSTOM_RUNNERS=1", async () => {
+    const task = planTask("never claimed");
+    const runner = makeRunner(bunEval("process.exit(0)"));
+    delete process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+    const engine = makeEngine();
+
+    const state = engine.start(runner.id);
+    expect(state.running).toBe(false);
+    expect(state.lastError).toBe(CUSTOM_RUNNERS_DISABLED);
+    await Bun.sleep(300);
+    expect(engine.getJobs(runner.id)).toHaveLength(0);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
+  });
+
+  it("a running runner claims nothing more once the opt-in is gone", async () => {
+    const runner = makeRunner(bunEval("process.exit(0)"));
+    const engine = makeEngine();
+    expect(engine.start(runner.id).running).toBe(true);
+
+    delete process.env.AGENTQ_ALLOW_CUSTOM_RUNNERS;
+    const task = planTask("claimed by nobody");
+    await waitFor(() => !engine.getState(runner.id).running, 5000, "runner to stop claiming");
+    expect(engine.getState(runner.id).lastError).toBe(CUSTOM_RUNNERS_DISABLED);
+    expect(engine.getJobs(runner.id)).toHaveLength(0);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
+  });
+});
+
+describe("RunnerEngine: the claim token stays out of job output", () => {
+  it("secretRedactor replaces a secret even when it is split across chunks", () => {
+    const secret = "0a1b2c3d-4e5f";
+    const redact = secretRedactor(secret);
+    const out = [redact("token=0a1b"), redact("2c3d-4e5f done 0a"), redact("1x"), redact(" end 0a1b2c", true)];
+    expect(out.join("")).toBe(`token=${REDACTED_CLAIM_TOKEN} done 0a1x end 0a1b2c`);
+    // Held-back text is released as soon as it cannot be the secret any more.
+    expect(out[0]).toBe("token=");
+    expect(secretRedactor("")("unchanged")).toBe("unchanged");
+  });
+
+  it("a tool that prints its claim token has it redacted in the log, the tail, the live output and the revert note", async () => {
+    const task = planTask("echoes its token");
+    // Prints the token from its prompt in two writes, the way a tool echoing its MCP calls would.
+    const runner = makeRunner(
+      bunEval(
+        `const t = process.env.AGENTQ_PROMPT.match(/"claimToken": "([0-9a-f-]{36})"/)[1];` +
+          `process.stdout.write("submit_plan claimToken=" + t.slice(0, 12));` +
+          `setTimeout(() => { process.stdout.write(t.slice(12) + "\\n"); process.exit(1); }, 200);`,
+      ),
+    );
+    const engine = makeEngine();
+    engine.start(runner.id);
+
+    const job = await waitFor(() => {
+      const j = lastJob(engine, runner.id);
+      return j && j.status !== "running" ? j : null;
+    }, 20_000, "job to finish");
+    expect(job.status).toBe("reverted");
+
+    const mcpConfig = JSON.parse(readFileSync(join(HOME, "runs", task.id, `${job.id}.mcp.json`), "utf8"));
+    const token: string = mcpConfig.mcpServers.agentq.env.AGENTQ_CLAIM_TOKEN;
+    expect(token).toMatch(/^[0-9a-f-]{36}$/);
+
+    const log = readFileSync(job.logPath, "utf8");
+    expect(log).toContain(`submit_plan claimToken=${REDACTED_CLAIM_TOKEN}`);
+    const live = events
+      .filter((e) => e.event === "runner_job" && e.data.type === "output" && e.data.jobId === job.id)
+      .map((e) => e.data.chunk)
+      .join("");
+    expect(live).toContain(REDACTED_CLAIM_TOKEN);
+    const note = getTaskById(task.id)!.conversation.at(-1)!.message;
+    expect(note).toContain(REDACTED_CLAIM_TOKEN);
+    for (const text of [log, live, engine.readLog(engine.getJob(runner.id, job.id)!, 50), note]) {
+      expect(text).not.toContain(token);
+      expect(text).not.toContain(token.slice(12));
     }
   });
 });

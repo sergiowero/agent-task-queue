@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { createProject, getSubtasks, getTaskById } from "./database.js";
+import { createProject, getActivityEvents, getSubtasks, getTaskById } from "./database.js";
 import { DEFAULT_ROLES, TaskStatus, getClaimableStatuses } from "./index.js";
 import { getFindings } from "./records.js";
 import { buildIndependentBrief } from "./brief.js";
@@ -194,6 +194,7 @@ describe("plan critique (L2)", () => {
     expect(raised.risk).toBe("high");
     expect(raised.riskReasons.join(" ")).toContain("migrations/002.sql");
     expect(raised.planSubmission).toMatchObject({ suggestedRisk: "medium", touchedPaths: ["migrations/002.sql"] });
+    expect(getActivityEvents({ taskId: r.task.id }).find((e) => e.eventType === "risk_raised")?.details).toContain("migrations/002.sql");
 
     const s = planned(pid, { risk: "medium" });
     submitPlan(s.task.id, { message: "p", claimToken: s.claimToken, suggestedRisk: "low" });

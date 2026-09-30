@@ -17,10 +17,10 @@ Your **brief** (`brief` in the claim result, or `get_task_brief`) is an independ
 
 ## Steps
 
-1. `cd brief.task.worktreePath`. If it does not exist, call `report_blocker`
-2. Run, in order: the project's install command (`brief.commands`), the approved plan's `regressionCommands` (or the project's build/typecheck/lint/test commands), then each criterion's command from the validation plan (or `brief.criteria[].verify.command`). Retry a failing command once; note it as flaky if the retry passes
-3. Check the diff against `brief.task.mergeBranch` for weakened tests: deleted test files, added `.skip`/`.only`/`xit`, lowered coverage thresholds
-4. Submit with `submit_verification`: `passed` only if every command passed and no test was weakened
+1. `cd brief.task.worktreePath`. If it does not exist, call `report_blocker`. If `git status --porcelain` is not empty, or `git rev-parse HEAD` is not `brief.task.headSha` (when set), run nothing: submit `passed: false` with that output as the evidence, so the coder commits the right code
+2. Run, in order: the project's commands (`brief.commands`: install, build, typecheck, lint, test), then the approved plan's `regressionCommands` (they add to the project's commands, never replace them), then each criterion's command from the validation plan (or `brief.criteria[].verify.command`). Retry a failing command once; note it as flaky if the retry passes
+3. Check the diff against `brief.task.mergeBranch` for weakened tests: deleted test files or tests moved out of the test folders, added `.skip`/`.only`/`.skipIf`/`xit`/`@pytest.mark.skip`/`xfail`/`#[ignore]`, lowered or removed coverage thresholds. The server reads the same diff too; report what you find anyway
+4. Submit with `submit_verification`: `passed` only if every command passed and no test was weakened. A pass where no command ran is recorded as not verified
 
 ```json
 { "taskId": "<task.id>", "claimToken": "<claimToken>", "passed": true,

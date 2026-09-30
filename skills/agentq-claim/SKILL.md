@@ -20,7 +20,7 @@ If the `agentq` tools are missing, the server is not registered: tell the user t
 - **toolName**: name of the invoking tool (e.g. `opencode`, `claude`, `codex`, `kimi`, `junie`)
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
-- **sessionId**: Current session ID from the invoking tool (do not generate)
+- **sessionId**: Current session (conversation) ID from the invoking tool (do not generate, and pass the same one on every claim: it is how AgentQ knows your earlier work, also after its MCP server restarts)
 - **roles**: the phases you work, one or more, as the user asks at skill invocation (e.g. "work as plan and review" → `["plan", "review"]`). When the user names none, **omit `roles`**: the server gives you every role but `verify` (it has a built-in verifier).
 
 | Role | Claims | Phase skill |
@@ -78,7 +78,7 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
-**Separation of duties**: you never get the review of code your own session wrote (and, when the project requires it, not with the coder's model either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected.
+**Separation of duties**: you never get the plan critique, verification or review of a plan or code your own conversation (`toolName` + `sessionId`) or this MCP server wrote, in any round (and, when the project requires it, not with the model of anyone who wrote it either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected. This relies on your real `sessionId`: a placeholder such as `unknown` only keeps you off work done through this same server.
 
 **Lease**: a claim from a hand-opened session expires after the project's lease (90 min by default) without any AgentQ call, and the task goes back to the queue. Every AgentQ tool call keeps it alive; during a long silent stretch (a long build or test run), call `heartbeat` with the `taskId`.
 

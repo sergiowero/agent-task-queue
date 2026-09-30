@@ -222,20 +222,20 @@ export const validationPlanSchema = z.object({
     .array(
       z.object({
         criterionId: z.string().min(1).describe("Acceptance criterion id (AC1, AC2, ...)"),
-        how: z.string().min(1).describe("How it is verified"),
+        how: z.string().min(1).describe("How it is verified (alone, without command: a manual check)"),
         command: z.string().optional().describe("A command that proves it (the verifier runs it)"),
         newTests: z.array(z.string()).optional().describe("Test files the coder must add"),
       }),
     )
-    .describe("One item per acceptance criterion"),
+    .describe("At least one item per acceptance criterion (waived ones excepted)"),
   regressionCommands: z
     .array(z.string())
-    .describe("Commands that must keep passing (e.g. bun test, bun run typecheck)"),
+    .describe("Commands that must keep passing, run in addition to the project's own commands (e.g. bun test src/foo.test.ts)"),
 });
 
 export const submitPlanFields = {
   message: z.string().min(1).describe("The plan (markdown)"),
-  validationPlan: validationPlanSchema.optional(),
+  validationPlan: validationPlanSchema.optional().describe("Required when the task has acceptance criteria"),
   openQuestions: z
     .array(openQuestionSchema)
     .max(20)
