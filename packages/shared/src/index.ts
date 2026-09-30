@@ -177,10 +177,13 @@ export {
   afterReview,
   afterPlanReview,
   planRoundsUsed,
+  reviewRoundChip,
+  planRoundChip,
   type Gate,
   type GatePolicy,
   type PolicySettings,
   type ReviewRouting,
+  type RoundChip,
   type RoutingTask,
 } from "./policy.js";
 

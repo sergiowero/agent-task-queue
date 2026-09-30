@@ -86,8 +86,40 @@ export interface RoutingTask {
 }
 
 /** Reviews counted against the limit: those since the last time a person reset it. */
-export function reviewRoundsUsed(task: RoutingTask): number {
+export function reviewRoundsUsed(task: Pick<RoutingTask, "codeRound" | "roundBaseline">): number {
   return task.codeRound - (task.roundBaseline.code ?? 0);
+}
+
+/** A round counter for a board chip: AI reviews (R) or plan critiques (P) used against the project's limit. */
+export interface RoundChip {
+  /** "R2/3" or "P1/2". */
+  label: string;
+  used: number;
+  limit: number;
+  /** One change request from the limit: the next one sends the task to a person. */
+  nearLimit: boolean;
+  /** The limit is reached: a person decides. */
+  atLimit: boolean;
+}
+
+function chip(prefix: "R" | "P", used: number, limit: number): RoundChip {
+  return { label: `${prefix}${used}/${limit}`, used, limit, nearLimit: used >= limit - 1, atLimit: used >= limit };
+}
+
+/**
+ * The AI review counter ("R2/3"), or null before the first review. It counts
+ * from the last human reset, like the routing: after a person answers an
+ * escalation the count starts over.
+ */
+export function reviewRoundChip(task: Pick<RoutingTask, "codeRound" | "roundBaseline">, p: Pick<PolicySettings, "maxReviewRounds">): RoundChip | null {
+  if (task.codeRound <= 0) return null;
+  return chip("R", reviewRoundsUsed(task), p.maxReviewRounds);
+}
+
+/** The plan critique counter ("P1/2"), or null before the first critique. */
+export function planRoundChip(task: Pick<RoutingTask, "planRound" | "roundBaseline">, p: Pick<PolicySettings, "maxPlanRounds">): RoundChip | null {
+  if (task.planRound <= 0) return null;
+  return chip("P", planRoundsUsed(task), p.maxPlanRounds);
 }
 
 /** After submit_plan. A blocking open question goes to a person before anything else. */
@@ -99,7 +131,7 @@ export function afterPlan(_task: RoutingTask, p: GatePolicy, opts: { blockingQue
 }
 
 /** Plan critiques counted against the limit: those since the last human reset. */
-export function planRoundsUsed(task: RoutingTask): number {
+export function planRoundsUsed(task: Pick<RoutingTask, "planRound" | "roundBaseline">): number {
   return task.planRound - (task.roundBaseline.plan ?? 0);
 }
 
