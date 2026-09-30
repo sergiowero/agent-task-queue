@@ -13,9 +13,11 @@ import {
   getAgentById,
   getActivityEvents,
   getProjectById,
+  setAppState,
+  patchTask,
   updateProject,
 } from "./database.js";
-import { getEvidence, getFindings } from "./records.js";
+import { addFindings, getEvidence, getFindings } from "./records.js";
 import { buildTaskBrief } from "./brief.js";
 import { sweepQueue } from "./sweeper.js";
 import { TaskStatus } from "./types.js";
@@ -129,7 +131,9 @@ describe("claimNextTask", () => {
     expect(a!.task.assignedAgent).toMatchObject({
       ...buildAgentRef(agentA.toolName, agentA.model),
       agentId: a!.agent.id,
-      sessionKey: "session:session-a",
+      sessionKey: "session:agenta:session-a",
+      identities: ["session:agenta:session-a"],
+      modelKey: "model-a",
     });
     expect(b!.task.assignedAgent).toMatchObject(buildAgentRef(agentB.toolName, agentB.model));
     expect(a!.claimToken).toBeTruthy();
@@ -675,7 +679,12 @@ describe("autonomy L2: reviews that decide", () => {
   it("submit_code asks for an AI review without a click, and the coder cannot take it", () => {
     const id = coded();
     expect(claimNextTask({ roles: ["code", "review"], agent: coder, projectId })).toBeNull();
-    expect(getTaskById(id)!.producers.code).toMatchObject({ sessionKey: "session:s-coder", model: "sonnet" });
+    expect(getTaskById(id)!.producers.code).toMatchObject({
+      sessionKey: "session:coder:s-coder",
+      identities: ["session:coder:s-coder"],
+      model: "sonnet",
+      modelKeys: ["claude-sonnet"],
+    });
   });
 
   it("approve moves the task to approved; the verdict is recorded", () => {
@@ -749,6 +758,114 @@ describe("autonomy L2: reviews that decide", () => {
     const sameModel = { ...reviewer, model: "sonnet" };
     expect(claimNextTask({ roles: ["review"], agent: sameModel, projectId })).toBeNull();
     expect(claimNextTask({ roles: ["review"], agent: reviewer, projectId })!.task.id).toBe(id);
+  });
+
+  it("requireDifferentModel compares normalized models; a blank model is its tool's default", () => {
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const id = coded();
+    for (const model of ["Sonnet", "anthropic/sonnet", "claude-sonnet-4-5-20250929", "us.anthropic.claude-sonnet-4-v1:0"]) {
+      const claim = claimNextTask({ roles: ["review"], agent: { ...reviewer, model }, projectId });
+      expect({ model, claim }).toEqual({ model, claim: null });
+    }
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "claude-opus-4-5" }, projectId })!.task.id).toBe(id);
+
+    // Runners with no model: a claude runner's code is not refused to a codex runner.
+    const task = createTask({ title: "defaults", description: "d", projectId });
+    createdTaskIds.push(task.id);
+    const runner = (tool: string, runnerId: string) => ({
+      roles: ["code", "review"] as Role[],
+      projectId,
+      runnerId,
+      agent: { toolName: tool, version: "1", model: "default", sessionId: runnerId },
+    });
+    const c = claimNextTask(runner("claude", "claude-1"))!;
+    expect(c.task.assignedAgent).toMatchObject({ sessionKey: "runner:claude-1", modelKey: "claude:default" });
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    expect(claimNextTask(runner("claude", "claude-2"))).toBeNull();
+    expect(claimNextTask({ ...runner("Claude Code", "s-claude"), runnerId: undefined })).toBeNull();
+    expect(claimNextTask(runner("codex", "codex-1"))!.task.id).toBe(task.id);
+  });
+
+  it("every session that coded a round is kept off the review, and under requireDifferentModel every coder's model", () => {
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const id = coded();
+    review(id, { verdict: "request_changes", message: "fix", findings: [{ severity: "major", text: "no tests" }] });
+    const fixer = { toolName: "Fixer", version: "1", model: "gpt-5", sessionId: "s-fixer" };
+    const c = claimNextTask({ roles: ["code"], agent: fixer, projectId })!;
+    expect(c.task.id).toBe(id);
+    submitCode(id, {
+      message: "fixed",
+      worktree: "/w",
+      claimToken: c.claimToken,
+      findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "added" }],
+    });
+    expect(getTaskById(id)!.producers.code).toMatchObject({
+      sessionKey: "session:fixer:s-fixer",
+      identities: ["session:coder:s-coder", "session:fixer:s-fixer"],
+      modelKeys: ["claude-sonnet", "gpt-5"],
+    });
+    // The round-1 coder's commits are still on the branch.
+    expect(claimNextTask({ roles: ["review"], agent: { ...coder, model: "gemini-2.5-pro" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "sonnet" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: { ...reviewer, model: "gpt-5" }, projectId })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: reviewer, projectId })!.task.id).toBe(id);
+  });
+
+  it("the coder never verifies its own code, nor its model under requireDifferentModel; the built-in verifier always can", () => {
+    const verifiable = () => {
+      const task = createTask({ title: "verify", description: "d", projectId, acceptanceCriteria: ["works $ bun test works"] });
+      createdTaskIds.push(task.id);
+      const c = claimNextTask({ roles: ["code", "verify"], agent: coder, projectId, runnerId: "both" })!;
+      expect(c.task.id).toBe(task.id);
+      // The verifier is online only for this submit: other tests expect code to go straight to review.
+      setAppState("verifier_heartbeat", new Date().toISOString());
+      try {
+        expect(submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken }).newStatus).toBe(
+          TaskStatus.VerifyRequested,
+        );
+      } finally {
+        setAppState("verifier_heartbeat", new Date(0).toISOString());
+      }
+      return task.id;
+    };
+    const builtin = { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
+
+    const first = verifiable();
+    expect(claimNextTask({ roles: ["code", "verify"], agent: coder, projectId, runnerId: "both" })).toBeNull();
+    expect(claimNextTask({ roles: ["verify"], agent: reviewer, projectId })!.task.id).toBe(first);
+
+    updateProject(projectId, { policy: { requireDifferentModel: true } });
+    const second = verifiable();
+    expect(claimNextTask({ roles: ["verify"], agent: { ...reviewer, model: "sonnet" }, projectId })).toBeNull();
+    const v = claimNextTask({ roles: ["verify"], agent: builtin, projectId, runnerId: "builtin:verifier" })!;
+    expect(v.task.id).toBe(second);
+    expect(v.task.status).toBe(TaskStatus.Verifying);
+  });
+
+  it("an MCP conversation stays the same agent after its server restarts; a placeholder sessionId falls back to the server", () => {
+    const task = createTask({ title: "restart", description: "d", projectId });
+    createdTaskIds.push(task.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId, instanceKey: "mcp:A" })!;
+    expect(c.task.assignedAgent).toMatchObject({
+      sessionKey: "session:coder:s-coder",
+      identities: ["session:coder:s-coder", "mcp:A"],
+    });
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    // Same conversation on a restarted server, or another sessionId on the same server: still the coder.
+    expect(claimNextTask({ roles: ["review"], agent: coder, projectId, instanceKey: "mcp:B" })).toBeNull();
+    const other = { ...coder, sessionId: "other" };
+    expect(claimNextTask({ roles: ["review"], agent: other, projectId, instanceKey: "mcp:A" })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: other, projectId, instanceKey: "mcp:B" })!.task.id).toBe(task.id);
+
+    // "unknown" names no conversation, so it does not lump every "unknown" session together.
+    const unnamed = createTask({ title: "unnamed", description: "d", projectId });
+    createdTaskIds.push(unnamed.id);
+    const unknown = { ...coder, sessionId: "unknown" };
+    const u = claimNextTask({ roles: ["code"], agent: unknown, projectId, instanceKey: "mcp:C" })!;
+    expect(u.task.assignedAgent).toMatchObject({ sessionKey: "mcp:C", identities: ["mcp:C"] });
+    submitCode(unnamed.id, { message: "c", worktree: "/w", claimToken: u.claimToken });
+    expect(claimNextTask({ roles: ["review"], agent: unknown, projectId, instanceKey: "mcp:C" })).toBeNull();
+    expect(claimNextTask({ roles: ["review"], agent: unknown, projectId, instanceKey: "mcp:D" })!.task.id).toBe(unnamed.id);
   });
 
   it("claims by hand-opened sessions get a lease; the sweeper returns expired ones to the queue", () => {
@@ -827,11 +944,18 @@ describe("evidence, validation plans and findings by id", () => {
         validationPlan: { items: [{ criterionId: "AC9", how: "?" }], regressionCommands: [] },
       }),
     ).toThrow("unknown criteria: AC9");
+    // Every criterion needs an item: a missing plan or a missing criterion is refused.
+    expect(() => submitPlan(task.id, { message: "## Plan", claimToken })).toThrow("validationPlan is required");
+    const persist = { criterionId: "AC1", how: "reload test", command: "bun test persist" };
+    expect(() =>
+      submitPlan(task.id, { message: "## Plan", claimToken, validationPlan: { items: [persist], regressionCommands: [] } }),
+    ).toThrow("validationPlan misses criteria: AC2");
+    // An item with only `how` is a manual check, and it counts.
     submitPlan(task.id, {
       message: "## Plan v1",
       claimToken,
       validationPlan: {
-        items: [{ criterionId: "AC1", how: "reload test", command: "bun test persist" }],
+        items: [persist, { criterionId: "AC2", how: "time it by hand" }],
         regressionCommands: ["bun test", " "],
       },
     });
@@ -839,8 +963,22 @@ describe("evidence, validation plans and findings by id", () => {
     expect(approved.approvedPlan).toMatchObject({
       markdown: "## Plan v1",
       approvedBy: "user",
-      validation: { items: [{ criterionId: "AC1", command: "bun test persist" }], regressionCommands: ["bun test"] },
+      validation: { items: [{ criterionId: "AC1", command: "bun test persist" }, { criterionId: "AC2" }], regressionCommands: ["bun test"] },
     });
+  });
+
+  it("a task without criteria (or with only waived ones) needs no validation plan", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "no criteria", description: "d", projectId, requiresPlan: true });
+    const c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
+    expect(c.task.id).toBe(task.id);
+    expect(submitPlan(task.id, { message: "## Plan", claimToken: c.claimToken }).newStatus).not.toBe(TaskStatus.Planning);
+
+    const waived = createTask({ title: "waived", description: "d", projectId, requiresPlan: true, acceptanceCriteria: ["later"] });
+    patchTask(waived.id, { acceptanceCriteria: waived.acceptanceCriteria.map((a) => ({ ...a, status: "waived" as const })) });
+    const w = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
+    expect(w.task.id).toBe(waived.id);
+    expect(() => submitPlan(waived.id, { message: "## Plan", claimToken: w.claimToken })).not.toThrow();
   });
 
   it("submit_code records evidence per criterion, the branch and the head commit", () => {
@@ -898,6 +1036,88 @@ describe("evidence, validation plans and findings by id", () => {
       expect(out.newStatus).toBe(round === 1 ? TaskStatus.ChangesRequested : TaskStatus.NeedsHuman);
     }
     expect(getTaskById(task.id)!.blocker?.reason).toContain("disagree on R1-1");
+  });
+
+  it("a blocker or major finding the coder answered closes only when a reviewer verifies it", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "trust me", description: "d", projectId });
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    let r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "request_changes",
+      message: "m",
+      claimToken: r.claimToken,
+      findings: [
+        { severity: "blocker", text: "drops data" },
+        { severity: "major", text: "no test" },
+      ],
+    });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, {
+      message: "c",
+      worktree: "/w",
+      claimToken: c.claimToken,
+      findingResolutions: [
+        { id: "R1-1", status: "fixed", resolution: "trust me" },
+        { id: "R1-2", status: "wontfix", resolution: "not needed" },
+      ],
+    });
+    r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    expect(() => submitReview(task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken })).toThrow(
+      "open blocker or major findings: R1-1 (fixed), R1-2 (wontfix)",
+    );
+    const out = submitReview(task.id, {
+      verdict: "approve",
+      message: "ok",
+      claimToken: r.claimToken,
+      verifiedFindings: [
+        { id: "R1-1", status: "verified" },
+        { id: "R1-2", status: "verified" },
+      ],
+    });
+    expect(out.newStatus).toBe(TaskStatus.Approved);
+    expect(getFindings(task.id).map((f) => f.status)).toEqual(["verified", "verified"]);
+  });
+
+  it("submit_code answers only open code findings: not plan findings, not verified ones", () => {
+    const projectId = fresh();
+    const task = createTask({ title: "answers", description: "d", projectId });
+    addFindings(task.id, "P", 1, [{ severity: "major", text: "plan gap" }], "critic");
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    expect(() =>
+      submitCode(task.id, {
+        message: "c",
+        worktree: "/w",
+        claimToken: c.claimToken,
+        findingResolutions: [{ id: "P1-1", status: "fixed", resolution: "done" }],
+      }),
+    ).toThrow("Finding P1-1 is not an open code finding (plan finding)");
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken });
+    let r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, { verdict: "request_changes", message: "m", claimToken: r.claimToken, findings: [{ severity: "minor", text: "a" }] });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken, findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "done" }] });
+    r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "request_changes",
+      message: "m",
+      claimToken: r.claimToken,
+      verifiedFindings: [{ id: "R1-1", status: "verified" }],
+      findings: [{ severity: "minor", text: "b" }],
+    });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    expect(() =>
+      submitCode(task.id, {
+        message: "c",
+        worktree: "/w",
+        claimToken: c.claimToken,
+        findingResolutions: [
+          { id: "R1-1", status: "fixed", resolution: "again" },
+          { id: "R2-1", status: "fixed", resolution: "done" },
+        ],
+      }),
+    ).toThrow("Finding R1-1 is not an open code finding (verified)");
   });
 
   it("a person's edit of the criteria keeps the ids of unchanged ones", () => {

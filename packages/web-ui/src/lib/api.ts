@@ -63,6 +63,8 @@ export interface Task {
     tamperStrikes: number;
     verifiedSha: string | null;
     at: string;
+    /** The evidence this verification recorded (absent on older records). */
+    evidenceIds?: string[];
   } | null;
   riskReasons: string[];
   nonGoals: string[];

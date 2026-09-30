@@ -111,6 +111,8 @@ bun run start
 
 Open **http://localhost:3000**. The API and the dashboard share that single port.
 
+The API has no login, so it only serves you: the server listens on `127.0.0.1`, and it refuses requests another web page could send it (a foreign `Origin`, a `Host` that is not this machine, a body that is not JSON). To reach it from other machines, set `AGENTQ_HOST=0.0.0.0` and list the names you use in `AGENTQ_ALLOWED_HOSTS`; anyone who can reach the port can then drive AgentQ.
+
 ### Your first task in two minutes
 
 1. **Projects → New project.** Give it a name and the absolute path of a local git repository.
@@ -195,11 +197,11 @@ Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first
 
 ### Autonomy
 
-Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody reviews their own code: a second runner (or agent session) that can review picks it up. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
+Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody critiques, verifies or reviews their own plan or code, in any round: a second runner (or agent session) that can review picks it up, and the Runners page warns when no runner may. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
 
 The task ends on GitHub. The agent with the `pr` role opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you, and a change request (on GitHub, or **Request changes** on the task page) sends it back to the coder: the fix goes through verification and review again and lands on the same PR. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves, as long as their head is the commit the review approved. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
-Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds and weakened tests before any reviewer spends time on them. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
+Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds before any reviewer spends time on them. The server also reads every submission's diff itself: weakened tests go straight back to the coder, and changes to protected paths or an oversized diff send the task to a person, with or without commands. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
 
 ### Roles
 
@@ -247,7 +249,7 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 - **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
 - **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
-- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`.
+- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`.
 
 Everything is also available over REST (`/api/runners`). See [docs/runner.md](docs/runner.md) for the exact commands, environment variables and a scripted demo.
 
@@ -291,6 +293,9 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | Port for the API and the dashboard |
+| `AGENTQ_HOST` | `127.0.0.1` | Address the server listens on (`0.0.0.0` for every interface: anyone who reaches it can drive AgentQ) |
+| `AGENTQ_ALLOWED_HOSTS` | none | Comma-separated host names the API answers to besides `localhost` and IP addresses (e.g. `my-mac.local`) |
+| `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv: tool `custom`, or `extraArgs` on any tool |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database used by the server, the MCP server and every runner job |
 | `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
@@ -364,7 +369,7 @@ No. The merge phase pushes the feature branch and opens a pull request into the 
 <details>
 <summary><b>Can I use a model or tool that is not listed?</b></summary>
 
-Yes. Any MCP client can use the `agentq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want.
+Yes. Any MCP client can use the `agentq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want (start the server with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1` to allow it).
 </details>
 
 ## Documentation

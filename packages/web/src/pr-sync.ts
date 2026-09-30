@@ -4,19 +4,23 @@
  * goes to a person, a new change request sends the task back to the coder, and
  * under L3 a green, low-risk PR can merge itself.
  */
-import type { PullRequest, Task } from "@agentq/shared";
+import type { ProjectProfile, PullRequest, Task } from "@agentq/shared";
 import {
   TaskStatus,
   addActivity,
   archiveIfAuto,
   completeFromPullRequest,
+  diffRiskReasons,
   getProjectById,
   getTaskById,
   getTasks,
   policyFor,
+  protectedFiles,
   pullRequestClosed,
+  raiseRisk,
   recordPullRequest,
   requestPrChanges,
+  resolveProfile,
   sameCommit,
 } from "@agentq/shared";
 
@@ -83,7 +87,26 @@ export interface SyncResult {
   errors: { taskId: string; error: string }[];
 }
 
-const FIELDS = "state,mergedAt,mergedBy,url,number,reviews,statusCheckRollup,headRefName,headRefOid";
+const FIELDS = "state,mergedAt,mergedBy,url,number,reviews,statusCheckRollup,headRefName,headRefOid,files,additions,deletions";
+
+/** The diff fields of `gh pr view --json`. */
+interface PrDiff {
+  files?: { path?: string; additions?: number; deletions?: number }[];
+  additions?: number;
+  deletions?: number;
+}
+
+/**
+ * Why the PR's own diff needs a person before it merges: files under the
+ * project's protected paths, or more changed lines than it allows. Commits
+ * pushed after the review count too, since this reads the PR on GitHub.
+ */
+export function prDiffReasons(json: PrDiff | null | undefined, profile: ProjectProfile): string[] {
+  const files = Array.isArray(json?.files) ? json.files : [];
+  const paths = files.map((f) => f.path).filter((p): p is string => !!p);
+  const sum = (key: "additions" | "deletions") => Number(json?.[key]) || files.reduce((n, f) => n + (Number(f[key]) || 0), 0);
+  return diffRiskReasons(protectedFiles(paths, profile), { files: paths.length, insertions: sum("additions"), deletions: sum("deletions") }, profile);
+}
 
 type Check = { conclusion?: string | null; state?: string | null; status?: string | null };
 
@@ -197,12 +220,14 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       result.errors.push({ taskId: task.id, error: (view.stderr || view.stdout).trim().split("\n")[0] || `gh exited ${view.exitCode}` });
       continue;
     }
+    let json: PrDiff;
     let pr: PullRequest;
     let reviews: GhReview[];
     try {
-      const json = JSON.parse(view.stdout);
-      pr = parsePullRequest(json, task.pullRequest, now);
-      reviews = Array.isArray(json.reviews) ? json.reviews : [];
+      const parsed = JSON.parse(view.stdout);
+      json = parsed;
+      pr = parsePullRequest(parsed, task.pullRequest, now);
+      reviews = Array.isArray(parsed.reviews) ? parsed.reviews : [];
     } catch (e: any) {
       result.errors.push({ taskId: task.id, error: `unreadable gh output: ${e?.message ?? e}` });
       continue;
@@ -244,6 +269,12 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       pr.checks === "success" &&
       pr.changesRequestedBy.length === 0
     ) {
+      const reasons = prDiffReasons(json, resolveProfile(project.profile));
+      if (reasons.length) {
+        // Not low risk after all: a person merges it.
+        raiseRisk(task.id, reasons, "system:pr-sync");
+        continue;
+      }
       const approved = task.approval?.sha ?? task.headSha;
       if (!pr.headSha || !sameCommit(approved, pr.headSha)) {
         result.errors.push({

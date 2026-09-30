@@ -6,7 +6,7 @@
 import { getDbHandle, getTaskById } from "./database.js";
 import { TaskStatus, claimRuleFor } from "./catalog.js";
 import { reviewGate } from "./policy.js";
-import { policyFor, revertClaim, transitionTask, verifierOnline } from "./workflow.js";
+import { policyFor, revertClaim, transitionTask, unverifiedRecord, verifierOnline } from "./workflow.js";
 
 /** Minutes a verification may wait for a verifier that stopped sending heartbeats. */
 const VERIFY_WAIT_MIN = 5;
@@ -92,6 +92,7 @@ export function sweepQueue(now: Date = new Date()): SweepResult {
         message: `The verifier is not running, so the code goes to review unverified (waited ${VERIFY_WAIT_MIN} min).`,
         messageType: "system",
         event: "verification_skipped",
+        patch: { verification: unverifiedRecord(task, `Not verified: the verifier is not running (waited ${VERIFY_WAIT_MIN} min).`) },
       });
       result.unverified.push(id);
     }

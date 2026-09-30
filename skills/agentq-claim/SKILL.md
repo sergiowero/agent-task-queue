@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "6.1.0"
+  version: "6.2.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -20,7 +20,7 @@ If the `agentq` tools are missing, the server is not registered: tell the user t
 - **toolName**: name of the invoking tool (e.g. `opencode`, `claude`, `codex`, `kimi`, `junie`)
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
-- **sessionId**: Current session ID from the invoking tool (do not generate)
+- **sessionId**: Current session (conversation) ID from the invoking tool (do not generate, and pass the same one on every claim: it is how AgentQ knows your earlier work, also after its MCP server restarts)
 - **roles**: the phases you work, one or more, as the user asks at skill invocation (e.g. "work as plan and review" → `["plan", "review"]`). When the user names none, **omit `roles`**: the server gives you every role but `verify` (it has a built-in verifier).
 
 | Role | Claims | Phase skill |
@@ -39,7 +39,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "roles": ["<role>", "..."], "sessionId": "<sessionId>",
-  "skillsVersion": "6.0.0",
+  "skillsVersion": "6.1.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -58,7 +58,7 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "code" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "6.0.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "6.1.0" }
 ```
 
 `agent.role` is the one of your roles this claim acts as.
@@ -71,7 +71,7 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
-**Separation of duties**: you never get the review of code your own session wrote (and, when the project requires it, not with the coder's model either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected.
+**Separation of duties**: you never get the plan critique, verification or review of a plan or code your own conversation (`toolName` + `sessionId`) or this MCP server wrote, in any round (and, when the project requires it, not with the model of anyone who wrote it either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected. This relies on your real `sessionId`: a placeholder such as `unknown` only keeps you off work done through this same server.
 
 **Lease**: a claim from a hand-opened session expires after the project's lease (90 min by default) without any AgentQ call, and the task goes back to the queue. Every AgentQ tool call keeps it alive; during a long silent stretch (a long build or test run), call `heartbeat` with the `taskId`.
 

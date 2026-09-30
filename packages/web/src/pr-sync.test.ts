@@ -330,6 +330,24 @@ describe("syncPullRequests", () => {
       expect(getTaskById(id)!.status).toBe(TaskStatus.Complete);
     });
 
+    it("does not merge a PR whose own files touch a protected path or exceed the size: the risk goes to high", async () => {
+      const l3 = { autonomy: 3 as AutonomyLevel, policy: { autoMerge: true } };
+      const url = "https://github.com/org/repo/pull/97";
+      const id = prOpenTask(project({ ...l3, profile: { protectedPaths: [".github/**"] } }), { risk: "low", pr: { url, number: 97 } });
+      const big = "https://github.com/org/repo/pull/98";
+      const bigId = prOpenTask(project({ ...l3, profile: { maxDiffLines: 50 } }), { risk: "low", pr: { url: big, number: 98 } });
+      const { gh, calls } = fakeGh({
+        [url]: green(url, { files: [{ path: "src/a.ts", additions: 1, deletions: 0 }, { path: ".github/workflows/ci.yml", additions: 2, deletions: 1 }] }),
+        [big]: green(big, { files: [{ path: "src/a.ts" }], additions: 40, deletions: 20 }),
+      });
+      await syncPullRequests({ gh });
+      expect(merges(calls, url)).toEqual([]);
+      expect(merges(calls, big)).toEqual([]);
+      expect(getTaskById(id)).toMatchObject({ status: TaskStatus.PrOpen, risk: "high", riskReasons: ["Touches protected paths: .github/workflows/ci.yml"] });
+      expect(getTaskById(bigId)).toMatchObject({ risk: "high", riskReasons: ["Diff of 60 lines exceeds the project's 50"] });
+      expect(getActivityEvents({ taskId: id }).some((e) => e.eventType === "risk_raised")).toBe(true);
+    });
+
     it("keeps the task in pr_open when the merge fails", async () => {
       const url = "https://github.com/org/repo/pull/99";
       const id = prOpenTask(project({ autonomy: 3, policy: { autoMerge: true } }), { risk: "low", pr: { url, number: 99 } });

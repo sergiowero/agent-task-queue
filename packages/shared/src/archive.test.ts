@@ -213,6 +213,13 @@ describe("archiveTask", () => {
       author: "claude@2.1.0|opus",
       context: "plan ready",
       claimToken: claimed.claimToken,
+      validationPlan: {
+        items: [
+          { criterionId: "AC1", how: "reload the page" },
+          { criterionId: "AC2", how: "open it on a phone" },
+        ],
+        regressionCommands: [],
+      },
     });
     approvePlan(t.id);
     claimed = claim(codex);

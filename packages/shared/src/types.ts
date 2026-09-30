@@ -40,20 +40,33 @@ export interface AgentReference {
   /** Agent row id (`tool@version|model`) of the claim. */
   agentId?: string;
   /**
-   * Stable identity used for separation of duties: `runner:<runnerId>` for
-   * runner claims, `session:<sessionId>` for agents that claimed through MCP.
+   * Primary identity used for separation of duties: `runner:<runnerId>` for
+   * runner claims, `session:<tool>:<sessionId>` for agents that claimed through
+   * MCP (`mcp:<instance>` when their sessionId is a placeholder).
    */
   sessionKey?: string;
+  /**
+   * Every identity of the claim, `sessionKey` first. An MCP claim also carries
+   * `mcp:<instance>`, the server process it came through.
+   */
+  identities?: string[];
+  /** The claim's model as `requireDifferentModel` compares it (see modelKey). */
+  modelKey?: string;
   runnerId?: string;
   claimedAt?: string;
 }
 
 /** Who produced a phase's artifact (plan, code, review, merge): used for separation of duties. */
 export interface Producer {
+  /** Identity of the latest producer. */
   sessionKey: string | null;
+  /** Identities of every producer of the phase, across rounds (absent on old tasks). */
+  identities?: string[];
   agentId: string | null;
   tool: string | null;
   model: string | null;
+  /** Model keys of every producer of the phase, across rounds (absent on old tasks). */
+  modelKeys?: string[];
   at: string;
 }
 
@@ -162,10 +175,14 @@ export interface Verification {
   /** Why it was skipped, or the infrastructure problem that stopped it. */
   note: string | null;
   tampering: string[];
-  /** Verifications (so far) that found test tampering. */
+  /** Verifications (so far) that found test tampering; a person's answer resets them. */
   tamperStrikes: number;
+  /** Test changes a person ruled legitimate: later checks of the (cumulative) diff do not flag them again. */
+  acceptedTampering?: string[];
   verifiedSha: string | null;
   at: string;
+  /** The evidence this verification recorded (older records have none: their round's evidence is used). */
+  evidenceIds?: string[];
 }
 
 /** What the planner said beyond the plan text. */

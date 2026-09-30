@@ -1,6 +1,7 @@
 import type { Evidence, Finding, Task } from "../lib/api";
 import { Badge } from "./Badge";
 import { Checkbox } from "./Checkbox";
+import { verificationEvidence } from "./EvidencePanel";
 
 interface DecisionPanelProps {
   task: Task;
@@ -27,7 +28,7 @@ export function DecisionPanel({ task, findings, evidence, selected, onToggle }: 
   const criteria = task.acceptanceCriteria ?? [];
   const met = criteria.filter((c) => c.status === "met" || c.status === "waived").length;
   const v = task.verification;
-  const failing = v ? evidence.filter((e) => e.round === v.round && !e.skipped && e.exitCode !== null && e.exitCode !== 0) : [];
+  const failing = verificationEvidence(task, evidence).filter((e) => !e.skipped && e.exitCode !== null && e.exitCode !== 0);
 
   return (
     <div className="mt-4 space-y-3 rounded-lg border border-border-light p-3">
