@@ -21,7 +21,8 @@ import {
   ReviewIcon,
   SearchIcon,
 } from "../lib/icons";
-import { ALL_STATUSES, STATUS_INFO, type BoardColumn } from "@agentq/shared/catalog";
+import { ALL_STATUSES, STATUS_INFO, type BoardColumn, type TaskStatus } from "@agentq/shared/catalog";
+import { resolvePolicy } from "@agentq/shared/policy";
 import type { Tone } from "../lib/status";
 import { TASK_STATUS, TONE_SOFT, taskStatusMeta } from "../lib/status";
 import { cn } from "../lib/cn";
@@ -100,11 +101,28 @@ export function BoardPage() {
     queryFn: api.getProjects,
   });
 
-  const { data: tasksRes, isLoading } = useQuery({
-    queryKey: ["tasks", projectId],
-    queryFn: () => api.getTasks(projectId),
+  // Every task, page by page: the list endpoint answers 50 at a time, and a board
+  // that stops there would hide the newest low-priority tasks from every column.
+  const { data: allTasks, isLoading } = useQuery({
+    queryKey: ["tasks", "all", projectId ?? ""],
+    queryFn: () => api.getAllTasks(projectId),
   });
-  const tasks = useMemo(() => tasksRes?.data ?? [], [tasksRes]);
+  // Canceled tasks have no column: they are neither shown nor counted.
+  const tasks = useMemo(
+    () => (allTasks ?? []).filter((t) => STATUS_INFO[t.status as TaskStatus]?.boardColumn),
+    [allTasks],
+  );
+  const policyOf = useCallback(
+    (t: Task) => resolvePolicy(projects.find((p) => p.id === t.projectId), t),
+    [projects],
+  );
+  const byId = useMemo(() => new Map((allTasks ?? []).map((t) => [t.id, t])), [allTasks]);
+  /** Tasks a task starts after that are not complete yet (one that left the list, archived, is complete). */
+  const waitingOn = (t: Task) =>
+    t.blockedBy.filter((id) => {
+      const dep = byId.get(id);
+      return dep && dep.status !== "complete";
+    }).length;
 
   useSSE(
     useCallback(() => {
@@ -427,6 +445,8 @@ export function BoardPage() {
                               }
                               selected={selectedTaskIds.has(task.id)}
                               onToggleSelect={editable ? () => toggleSelect(task.id) : undefined}
+                              policy={policyOf(task)}
+                              waitingOn={waitingOn(task)}
                             />
                           </div>
                         ))

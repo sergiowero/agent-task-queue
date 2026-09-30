@@ -6,7 +6,9 @@ import {
   afterPlan,
   afterPlanReview,
   afterReview,
+  planRoundChip,
   resolvePolicy,
+  reviewRoundChip,
   type RoutingTask,
 } from "./policy.js";
 
@@ -98,5 +100,32 @@ describe("routing", () => {
       status: TaskStatus.NeedsHuman,
       reason: "round_limit",
     });
+  });
+});
+
+describe("round chips", () => {
+  const p = resolvePolicy({ autonomy: 2 });
+
+  it("show reviews used against the limit, and nothing before the first review", () => {
+    expect(reviewRoundChip(task({ codeRound: 0 }), p)).toBeNull();
+    expect(reviewRoundChip(task({ codeRound: 1 }), p)).toEqual({ label: "R1/3", used: 1, limit: 3, nearLimit: false, atLimit: false });
+    expect(reviewRoundChip(task({ codeRound: 2 }), p)).toMatchObject({ label: "R2/3", nearLimit: true, atLimit: false });
+    expect(reviewRoundChip(task({ codeRound: 3 }), p)).toMatchObject({ label: "R3/3", nearLimit: true, atLimit: true });
+  });
+
+  it("count from the last human reset, as the routing does, and follow the project's limit", () => {
+    // Three reviews escalated the task; the person's answer starts a fresh set.
+    expect(reviewRoundChip(task({ codeRound: 3, roundBaseline: { code: 3 } }), p)).toMatchObject({ label: "R0/3", atLimit: false });
+    expect(reviewRoundChip(task({ codeRound: 5, roundBaseline: { code: 3 } }), p)).toMatchObject({ label: "R2/3", nearLimit: true });
+    const strict = resolvePolicy({ autonomy: 2, policy: { maxReviewRounds: 1, maxPlanRounds: 4 } });
+    expect(reviewRoundChip(task({ codeRound: 1 }), strict)).toMatchObject({ label: "R1/1", atLimit: true });
+    expect(planRoundChip(task({ planRound: 1 }), strict)).toMatchObject({ label: "P1/4", nearLimit: false });
+  });
+
+  it("show plan critiques used against the limit", () => {
+    expect(planRoundChip(task({ planRound: 0 }), p)).toBeNull();
+    expect(planRoundChip(task({ planRound: 1 }), p)).toEqual({ label: "P1/2", used: 1, limit: 2, nearLimit: true, atLimit: false });
+    expect(planRoundChip(task({ planRound: 2 }), p)).toMatchObject({ label: "P2/2", atLimit: true });
+    expect(planRoundChip(task({ planRound: 4, roundBaseline: { plan: 2 } }), p)).toMatchObject({ label: "P2/2", atLimit: true });
   });
 });

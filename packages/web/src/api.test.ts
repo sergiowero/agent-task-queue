@@ -6,11 +6,13 @@ import { join } from "path";
 import type { Task, Project } from "@agentq/shared";
 import {
   TaskStatus,
+  addFindings,
   createTask,
   beginTransaction,
   getTaskById,
   rollbackTransaction,
   skillsBundleVersion,
+  updateFinding,
 } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import { startServer } from "./index.js";
@@ -434,6 +436,25 @@ describe("GET /api/tasks", () => {
     expect(second.hasMore).toBe(false);
   });
 
+  it("lists the first 50 without a limit and says there are more: the board pages on (100 at a time) to show every task", async () => {
+    const proj = randomUUID();
+    await json("/api/projects", "POST", { id: proj, displayName: "Many", workingDirectory: "/tmp/many" });
+    for (let i = 0; i < 60; i++) await createTaskViaApi({ title: `Many ${i}`, projectId: proj, priority: 100 - i });
+
+    // No limit: one page of 50 (the oldest by priority), and hasMore says the rest is there.
+    const first = (await (await api(`/api/tasks?projectId=${proj}`)).json()) as { data: Task[]; total: number; hasMore: boolean };
+    expect(first.data.length).toBe(50);
+    expect(first.total).toBe(60);
+    expect(first.hasMore).toBe(true);
+    // The next page holds the remaining ten, and the whole list fits in one page of 100.
+    const rest = (await (await api(`/api/tasks?projectId=${proj}&limit=100&offset=50`)).json()) as { data: Task[]; hasMore: boolean };
+    expect(rest.data.map((t) => t.title)).toEqual(Array.from({ length: 10 }, (_, i) => `Many ${50 + i}`));
+    expect(rest.hasMore).toBe(false);
+    const all = (await (await api(`/api/tasks?projectId=${proj}&limit=100`)).json()) as { data: Task[]; total: number; hasMore: boolean };
+    expect(all.data.length).toBe(60);
+    expect(all.hasMore).toBe(false);
+  });
+
   it("falls back to default pagination on invalid params", async () => {
     const res = await api("/api/tasks?limit=abc&offset=-1");
     expect(res.status).toBe(200);
@@ -788,6 +809,82 @@ describe("POST /api/tasks/:id/request-pr-changes", () => {
   });
 });
 
+describe("a person's decision on findings over HTTP", () => {
+  const findingStatuses = async (taskId: string) =>
+    ((await (await api(`/api/tasks/${taskId}/details`)).json()).findings as { id: string; status: string }[])
+      .map((f) => [f.id, f.status])
+      .sort((a, b) => a[0].localeCompare(b[0]));
+
+  it("resolve-blocker reopens findings, accepts open ones and records the answer as a change request", async () => {
+    const task = await createTaskViaApi({ title: "Escalated review" });
+    await setStatus(task.id, TaskStatus.Reviewing);
+    addFindings(
+      task.id,
+      "R",
+      1,
+      [
+        { severity: "major", text: "add a test" },
+        { severity: "minor", text: "rename x" },
+        { severity: "major", text: "guard null" },
+      ],
+      "reviewer",
+    );
+    updateFinding(task.id, "R1-1", { status: "fixed", resolution: "done" });
+    await expectTransition(task.id, "report-blocker", TaskStatus.NeedsHuman, { reason: "Reviewer stuck", question: "Which way?" });
+
+    // A malformed list is a 400; so is a choice the workflow refuses, and nothing changes.
+    const notAList = await subAction(task.id, "resolve-blocker", { answer: "x", targetStatus: TaskStatus.ChangesRequested, findingIds: "R1-1" });
+    expect(notAList.status).toBe(400);
+    const wrongTarget = await subAction(task.id, "resolve-blocker", { answer: "x", targetStatus: TaskStatus.Approved, findingIds: ["R1-1"] });
+    expect(wrongTarget.status).toBe(400);
+    expect((await wrongTarget.json()).error).toContain("only be reopened");
+    expect((await getTask(task.id)).status).toBe(TaskStatus.NeedsHuman);
+    expect(await findingStatuses(task.id)).toEqual([["R1-1", "fixed"], ["R1-2", "open"], ["R1-3", "open"]]);
+
+    const resolved = await expectTransition(task.id, "resolve-blocker", TaskStatus.ChangesRequested, {
+      answer: "Guard null too.",
+      targetStatus: TaskStatus.ChangesRequested,
+      findingIds: ["R1-1"],
+      waiveFindingIds: ["R1-2"],
+    });
+    expect(lastMessage(resolved).message).toContain("Reopened: R1-1\nAccepted as they are: R1-2");
+    // The answer of a review escalation is a finding (H1-1) the coder must answer.
+    expect(await findingStatuses(task.id)).toEqual([["H1-1", "open"], ["R1-1", "open"], ["R1-2", "wontfix"], ["R1-3", "open"]]);
+  });
+
+  it("resolve-blocker: asFinding false keeps the answer a plain reply", async () => {
+    const task = await createTaskViaApi({ title: "Plain reply" });
+    await setStatus(task.id, TaskStatus.Reviewing);
+    await expectTransition(task.id, "report-blocker", TaskStatus.NeedsHuman, { reason: "Stuck", question: "Which way?" });
+    await expectTransition(task.id, "resolve-blocker", TaskStatus.ChangesRequested, {
+      answer: "Go on.",
+      targetStatus: TaskStatus.ChangesRequested,
+      asFinding: false,
+    });
+    expect(await findingStatuses(task.id)).toEqual([]);
+  });
+
+  it("request-plan-changes reopens the chosen plan findings", async () => {
+    const task = await createTaskViaApi({ title: "Plan findings", requiresPlan: true });
+    await setStatus(task.id, TaskStatus.WaitingPlanReview);
+    addFindings(task.id, "P", 1, [{ severity: "major", text: "no rollback step" }], "critic");
+    updateFinding(task.id, "P1-1", { status: "verified" });
+
+    const notAList = await subAction(task.id, "request-plan-changes", { message: "Again", findingIds: "P1-1" });
+    expect(notAList.status).toBe(400);
+    const codeFinding = await subAction(task.id, "request-plan-changes", { message: "Again", findingIds: ["R1-1"] });
+    expect(codeFinding.status).toBe(400);
+    expect((await getTask(task.id)).status).toBe(TaskStatus.WaitingPlanReview);
+
+    const back = await expectTransition(task.id, "request-plan-changes", TaskStatus.PlanChangesRequested, {
+      message: "The rollback step is not enough.",
+      findingIds: ["P1-1"],
+    });
+    expect(lastMessage(back).message).toBe("The rollback step is not enough.\n\nReopened: P1-1");
+    expect(await findingStatuses(task.id)).toEqual([["P1-1", "open"]]);
+  });
+});
+
 describe("agent submissions over HTTP take the MCP tools' arguments", () => {
   it("submit-plan passes every plan field on: a blocking question sends the task to a person, the planner's risk counts", async () => {
     const task = await createTaskViaApi({ title: "HTTP plan", requiresPlan: true });
@@ -1040,6 +1137,82 @@ describe("autonomy, risk and findings", () => {
     }
   });
 
+  it("a new project gets the commands detected from its repository, unless the request names its own", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-api-create-"));
+    const empty = mkdtempSync(join(tmpdir(), "agentq-api-empty-"));
+    try {
+      await Bun.write(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test", lint: "eslint ." } }));
+      await Bun.write(join(repo, "bun.lock"), "");
+      const create = async (body: Record<string, unknown>) => {
+        const res = await json("/api/projects", "POST", { id: randomUUID(), displayName: "Created", ...body });
+        expect(res.status).toBe(201);
+        return (await res.json()) as Project;
+      };
+      // Only what the repository has (no build or typecheck script here).
+      expect((await create({ workingDirectory: repo })).profile.commands).toEqual({
+        install: "bun install",
+        test: "bun run test",
+        lint: "bun run lint",
+      });
+      // Commands the request names are kept as they are, and so is the rest of its profile.
+      const named = await create({ workingDirectory: repo, profile: { commands: { test: "make check" }, maxDiffLines: 200 } });
+      expect(named.profile.commands).toEqual({ test: "make check" });
+      expect(named.profile.maxDiffLines).toBe(200);
+      // Nothing to detect: no commands are stored.
+      expect((await create({ workingDirectory: empty })).profile.commands).toEqual({});
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("projects take every policy and profile setting; a partial edit keeps the rest", async () => {
+    const projectId = randomUUID();
+    await json("/api/projects", "POST", { id: projectId, displayName: "Settings", workingDirectory: "/tmp/settings", autonomy: 3 });
+    const all = {
+      policy: {
+        maxPlanRounds: 4,
+        maxReviewRounds: 5,
+        maxVerifyFailures: 3,
+        requireDifferentModel: true,
+        humanSampleEvery: 7,
+        reviewStarvationMin: 45,
+        leaseMin: 30,
+        autoMerge: true,
+      },
+      profile: {
+        commands: { test: "make ci" },
+        protectedPaths: ["db/**"],
+        guardrails: ["No new dependencies"],
+        verifyAllowlist: ["make ci"],
+        maxDiffLines: 250,
+        maxPlanFiles: 8,
+        maxCriteria: 9,
+        verifyTimeoutSec: 1800,
+        autoArchive: true,
+        dorMode: "enforce" as const,
+      },
+    };
+    const saved = (await (await json(`/api/projects/${projectId}`, "PUT", all)).json()) as Project;
+    expect(saved.policy).toEqual(all.policy);
+    expect(saved.profile).toEqual(all.profile);
+
+    // A partial edit changes what it names and keeps everything else, and it persists.
+    const partial = (await (
+      await json(`/api/projects/${projectId}`, "PUT", { policy: { autoMerge: false, leaseMin: 60 }, profile: { dorMode: "off" } })
+    ).json()) as Project;
+    expect(partial.policy).toEqual({ ...all.policy, autoMerge: false, leaseMin: 60 });
+    expect(partial.profile).toEqual({ ...all.profile, dorMode: "off" });
+    const listed = ((await (await api("/api/projects")).json()) as Project[]).find((p) => p.id === projectId)!;
+    expect(listed.policy).toEqual(partial.policy);
+
+    // The portal clamps to these ranges: outside them the server refuses.
+    for (const bad of [{ policy: { maxPlanRounds: 11 } }, { policy: { leaseMin: 4 } }, { profile: { verifyTimeoutSec: 5 } }, { profile: { dorMode: "strict" } }]) {
+      expect((await json(`/api/projects/${projectId}`, "PUT", bad)).status).toBe(400);
+    }
+    expect(((await (await api("/api/projects")).json()) as Project[]).find((p) => p.id === projectId)!.policy).toEqual(partial.policy);
+  });
+
   it("PUT edits criteria as one-line strings and keeps the ids of unchanged ones", async () => {
     const task = await createTaskViaApi({ title: "Criteria", acceptanceCriteria: ["one", "two $ bun test two"] });
     expect(task.acceptanceCriteria[1]).toMatchObject({ id: "AC2", verify: { kind: "command", command: "bun test two" } });
@@ -1066,6 +1239,8 @@ describe("GET /api/meta", () => {
     expect(typeof meta.installedSkills).toBe("object");
     expect(Array.isArray(meta.outdatedSkills)).toBe(true);
     expect(typeof meta.prSync.available).toBe("boolean");
+    // The periodic sync is started by the server's main(), not by the servers these tests start.
+    expect(meta.prSync).toMatchObject({ enabled: false, lastRunAt: null, errors: [] });
   });
 });
 

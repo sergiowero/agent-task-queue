@@ -173,6 +173,26 @@ blocked in:
   until the planner's next one is approved. From a code review, **Re-plan** does the
   same.
 
+An escalated **review or verification** (round limit, disagreement, the reviewer's
+question, verification failures, weakened tests) is decided like a code review: the
+task page shows the same panel above the answer box, with the AI verdict, the findings
+by round, the verification, the diff size, the risk and the criteria. The answer can
+
+- **reopen** findings (tick an answered one) and go back to the coder (`changes_requested`):
+  the answer becomes a change request, a finding `H<round>-<n>` the coder must answer by id;
+- **accept** open findings (tick them; `wontfix`, noted "accepted by <person>", keeping the
+  coder's reason) so nobody has to fix them, and send the code on: **Approved** for the
+  coder's disputed `wontfix`, or another review;
+- or just answer and pick a status, as for any blocker.
+
+`POST /api/tasks/:id/resolve-blocker` takes `findingIds` (reopen: code findings with
+`changes_requested`, plan findings with `plan_changes_requested`), `waiveFindingIds`
+(accept: open findings only) and `asFinding` (record the answer as a change request;
+default on for a review or verification escalation sent back to the coder, off for a
+coder's own question). A choice the workflow refuses (an unknown or answered finding,
+a finding of the other phase) changes nothing. **Request changes** on a plan waiting for
+a person takes `findingIds` too, to reopen plan findings the planner must answer again.
+
 ## Pull requests
 
 The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens
@@ -197,8 +217,11 @@ so a slow or stuck GitHub never holds up the server:
 | A reviewer asks for changes (their latest review, submitted since the task entered `pr_open`) | `changes_requested`: the review becomes a finding the coder answers by id |
 | Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
 
-Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
-merged** on the task page.
+Without `gh`, or with `AGENTQ_PR_SYNC=0`, nothing changes by itself: a person clicks **Mark
+merged** on the task page. `/api/meta` says so (`prSync.available` is `gh`, `prSync.enabled`
+the running sync, and `prSync.errors` the last error of each task, such as `gh` not logged in),
+and the portal shows it: a warning on the task page and above the pull requests in **Needs you**
+when the sync is off, the error on the task it concerns, and when GitHub was last asked.
 
 **Changes on the PR.** The PR is where a person reviews the code, so its feedback goes
 back to the coder: a change request on GitHub (picked up by the sync) or **Request
@@ -243,7 +266,26 @@ is not ready. On a code review the task page shows the AI verdict (marked "befor
 last change" when the code was submitted again since), the verification, the diff size,
 the risk and the criteria in one panel; answered findings can be ticked to
 reopen them with the change request, which becomes a finding (`H<round>-<n>`) the coder
-must answer by id.
+must answer by id. Under L0 an AI review is advice, so a reviewer that cannot decide
+(verdict `needs_human`) cannot raise a blocker: the task returns to the person's review with
+the question in the panel, in the conversation and as a `review_escalated` event.
+
+A plan waiting for a person, and a blocked plan, have a panel of their own: the plan itself,
+the AI critic's review of it and the critique count (`P1/2`), the risk, the plan findings (tick
+one to have the planner answer it again) and **the commands an approval lets the verifier
+run**: each validation item's command and new tests, the regression commands, and the commands
+of the acceptance criteria. A command that is not one of the project's and not on the verify
+allowlist is flagged ("not allowlisted": it runs only because a person approved the plan), and
+so is one that chains commands (`;`, `&&`, `||`, `|`, backticks, `$( )`). A plan without a
+validation plan says so. **Request changes** needs something to say, feedback or findings to
+reopen: an empty request is not sent.
+
+**The board** lists every task of the selected project, not just the first 50. Its cards show
+`R2/3` (AI reviews used against `maxReviewRounds`) and, while a plan is written, critiqued or
+decided, `P1/2` (plan critiques against `maxPlanRounds`), both counted from the person's last
+answer as the routing counts them, and say why a queued task is not picked up: **held: plan
+pending** (a subtask whose parent's plan is not approved) or **waits for N tasks**. A split
+parent can be canceled from its page, which cancels its unfinished subtasks too.
 
 ## Metrics
 
@@ -329,6 +371,14 @@ whole task with `get_task`. The checkers' own handoffs still reach the agent tha
 verdict (the planner or the coder).
 
 ## Settings
+
+Every one is edited on **Projects → Edit**: the **Autonomy** tab has the level, the round and
+failure limits, the spot check, the reviewer wait, the lease, the different-model rule and
+auto-merge (only enabled at L3); the profile's timeout, archive and Definition-of-Ready
+settings are on the **Commands** and **General** tabs, its size limits, protected paths and
+allowlist on **Guardrails**. Numbers are clamped to the range the server accepts
+(`POLICY_RANGES` and `PROFILE_RANGES`), and `PUT /api/projects/:id` merges what it is given
+into the stored policy and profile, so a partial edit keeps the rest.
 
 | Setting | Default | Meaning |
 |---|---|---|

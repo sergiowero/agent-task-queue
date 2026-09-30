@@ -1,6 +1,8 @@
 import type { Evidence, Finding, Task } from "../lib/api";
+import type { RoundChip } from "@agentq/shared/policy";
+import { Alert } from "./Alert";
 import { Badge } from "./Badge";
-import { Checkbox } from "./Checkbox";
+import { FindingChecklist } from "./FindingChecklist";
 import { verificationEvidence } from "./EvidencePanel";
 
 interface DecisionPanelProps {
@@ -10,6 +12,18 @@ interface DecisionPanelProps {
   /** Findings the person wants reopened when they request changes. */
   selected: string[];
   onToggle: (id: string) => void;
+  /** AI reviews used against the project's limit ("R2/3"). */
+  rounds?: RoundChip | null;
+  /**
+   * Answering an escalated review or verification (a blocked task) instead of
+   * reviewing code: open findings can be accepted, and reopening applies only
+   * while the answer sends the task back to the coder.
+   */
+  blocked?: {
+    accepted: string[];
+    onToggleAccept: (id: string) => void;
+    canReopen: boolean;
+  };
 }
 
 const VERDICT = {
@@ -21,14 +35,17 @@ const VERDICT = {
 /**
  * Everything a person needs to decide on the code in one place: the AI verdict,
  * the verification, the diff size, the risk, the criteria and the findings —
- * answered findings can be picked to reopen with a change request.
+ * answered findings can be picked to reopen with a change request. The same
+ * panel decides an escalated review or verification (`blocked`).
  */
-export function DecisionPanel({ task, findings, evidence, selected, onToggle }: DecisionPanelProps) {
+export function DecisionPanel({ task, findings, evidence, selected, onToggle, rounds, blocked }: DecisionPanelProps) {
   const codeFindings = findings.filter((f) => f.phase === "code");
   const criteria = task.acceptanceCriteria ?? [];
   const met = criteria.filter((c) => c.status === "met" || c.status === "waived").length;
   const v = task.verification;
   const failing = verificationEvidence(task, evidence).filter((e) => !e.skipped && e.exitCode !== null && e.exitCode !== 0);
+  // A needs_human blocker already shows the reviewer's question; under L0 nothing else does.
+  const question = !task.blocker ? task.lastReview?.question : undefined;
 
   return (
     <div className="mt-4 space-y-3 rounded-lg border border-border-light p-3">
@@ -44,6 +61,14 @@ export function DecisionPanel({ task, findings, evidence, selected, onToggle }: 
         ) : (
           <Badge tone="neutral">No AI review</Badge>
         )}
+        {rounds && (
+          <Badge
+            tone={rounds.atLimit ? "danger" : rounds.nearLimit ? "warning" : "neutral"}
+            title="AI reviews that asked for changes, against the project's limit (counted from your last answer)"
+          >
+            {rounds.label}
+          </Badge>
+        )}
         {v ? (
           <Badge tone={v.skipped ? "neutral" : v.passed ? "success" : "danger"} title={v.note ?? undefined}>
             {v.skipped ? "not verified" : v.passed ? "verification green" : `verification red (${failing.length})`}
@@ -51,6 +76,7 @@ export function DecisionPanel({ task, findings, evidence, selected, onToggle }: 
         ) : (
           <Badge tone="neutral">not verified</Badge>
         )}
+        {task.verifyFailures > 0 && <Badge tone="warning">{task.verifyFailures} red in a row</Badge>}
         {task.diffStats && (
           <Badge tone="neutral">
             {task.diffStats.files} files, +{task.diffStats.insertions} −{task.diffStats.deletions}
@@ -65,34 +91,38 @@ export function DecisionPanel({ task, findings, evidence, selected, onToggle }: 
           </Badge>
         )}
       </div>
+      {question && (
+        <Alert tone="warning" title="The AI reviewer asks">
+          {question}
+        </Alert>
+      )}
+      {blocked && v && v.tampering.length > 0 && (
+        <Alert tone="danger" title="Tests were weakened">
+          <ul className="list-disc pl-4">
+            {v.tampering.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
       {task.riskReasons?.length > 0 && (
         <p className="text-xs text-text-muted">Risk: {task.riskReasons.join("; ")}</p>
       )}
       {codeFindings.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs text-text-secondary">
-            Findings — tick an answered one to reopen it with your change request.
+            {blocked
+              ? "Findings: open ones go back with the task unless you accept them; tick an answered one to reopen it with your answer."
+              : "Findings — tick an answered one to reopen it with your change request."}
           </p>
-          <ul className="space-y-1">
-            {codeFindings.map((f) => (
-              <li key={f.id} className="flex items-start gap-2 text-sm">
-                <Checkbox
-                  label={`Reopen ${f.id}`}
-                  checked={f.status === "open" || selected.includes(f.id)}
-                  disabled={f.status === "open"}
-                  onChange={() => onToggle(f.id)}
-                  className="mt-0.5"
-                />
-                <span className="font-mono text-xs text-text-muted">{f.id}</span>
-                <span className="min-w-0 flex-1 truncate text-text-secondary" title={f.text}>
-                  {f.text}
-                </span>
-                <Badge tone={f.status === "open" ? "danger" : f.status === "verified" ? "success" : "info"}>
-                  {f.status}
-                </Badge>
-              </li>
-            ))}
-          </ul>
+          <FindingChecklist
+            findings={codeFindings}
+            reopen={selected}
+            onToggleReopen={onToggle}
+            canReopen={blocked?.canReopen}
+            accepted={blocked?.accepted}
+            onToggleAccept={blocked?.onToggleAccept}
+          />
         </div>
       )}
     </div>

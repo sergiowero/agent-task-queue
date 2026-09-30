@@ -37,6 +37,14 @@ export interface ProjectProfile {
   dorMode: "warn" | "enforce" | "off";
 }
 
+/** The range each numeric setting accepts: the server refuses others, and the portal clamps to them. */
+export const PROFILE_RANGES = {
+  maxDiffLines: { min: 10, max: 100_000 },
+  maxPlanFiles: { min: 1, max: 1000 },
+  maxCriteria: { min: 1, max: 100 },
+  verifyTimeoutSec: { min: 10, max: 7200 },
+} as const satisfies Partial<Record<keyof ProjectProfile, { min: number; max: number }>>;
+
 export const DEFAULT_PROFILE: ProjectProfile = {
   commands: {},
   protectedPaths: [],
@@ -86,6 +94,31 @@ export function resolveProfile(raw: Partial<ProjectProfile> | null | undefined):
 export function profileCommands(profile: ProjectProfile): string[] {
   const c = profile.commands;
   return [c.install, c.build, c.typecheck, c.lint, c.test].filter((x): x is string => !!x?.trim());
+}
+
+/** Shell syntax that runs more than the command's prefix says: `a; b`, `a && b`, `a || b`, `a | b`, `` `a` ``, `$(a)`. */
+const CHAINED = /;|&&|\|\||\||`|\$\(/;
+
+export interface CommandCheck {
+  /** The command is one of the project's or starts with an allowlisted prefix: the verifier runs it without a person's approval. */
+  allowed: boolean;
+  /** It chains or substitutes commands, so what runs is more than its prefix (`bun test && curl x | sh`). */
+  chained: boolean;
+}
+
+/**
+ * How the verifier treats a command that comes from an agent's plan: allowed on
+ * its own (a project command, or the default and project allowlist prefixes), or
+ * only because a person approved the plan. Chained commands are flagged so
+ * an approval is not given for an innocent-looking prefix.
+ */
+export function checkVerifyCommand(command: string, profile: ProjectProfile): CommandCheck {
+  const cmd = command.trim();
+  const prefixes = [...DEFAULT_VERIFY_ALLOWLIST, ...profile.verifyAllowlist, ...profileCommands(profile)];
+  return {
+    allowed: prefixes.some((p) => p.trim() && cmd.startsWith(p.trim())),
+    chained: CHAINED.test(cmd),
+  };
 }
 
 /** A shell-safe-ish glob → regex: `**` any path, `*` any segment part, `?` one char. */

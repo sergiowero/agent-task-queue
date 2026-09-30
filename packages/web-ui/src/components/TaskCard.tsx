@@ -1,3 +1,5 @@
+import { DEFAULT_POLICY, planRoundChip, reviewRoundChip, type PolicySettings } from "@agentq/shared/policy";
+import { STATUS_INFO, type TaskStatus } from "@agentq/shared/catalog";
 import type { Task } from "../lib/api";
 import { AgentsIcon, ArchiveIcon, BranchIcon, DeleteIcon, MergeIcon, PriorityIcon } from "../lib/icons";
 import { priorityTone } from "../lib/status";
@@ -15,6 +17,10 @@ interface TaskCardProps {
   onArchive?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
+  /** The limits its round chips count against (the project's policy). */
+  policy?: Pick<PolicySettings, "maxReviewRounds" | "maxPlanRounds">;
+  /** Tasks it starts after that are not complete yet (the board knows them all). */
+  waitingOn?: number;
 }
 
 export function TaskCard({
@@ -24,7 +30,13 @@ export function TaskCard({
   onArchive,
   selected = false,
   onToggleSelect,
+  policy = DEFAULT_POLICY,
+  waitingOn = 0,
 }: TaskCardProps) {
+  const review = reviewRoundChip(task, policy);
+  // Plan critiques matter while the plan is being written, critiqued or decided.
+  const phase = STATUS_INFO[task.status as TaskStatus]?.phase ?? task.blocker?.phase;
+  const plan = phase === "plan" || phase === "plan_review" ? planRoundChip(task, policy) : null;
   return (
     <div
       role="link"
@@ -71,7 +83,15 @@ export function TaskCard({
 
       <div className="mt-3 flex min-h-6 items-center gap-2">
         <StatusBadge status={task.status} />
-        {task.codeRound > 0 && (
+        {plan && (
+          <Badge
+            tone={plan.atLimit ? "danger" : plan.nearLimit ? "warning" : "neutral"}
+            title="Plan critiques used against the project's limit, counted from the last answer"
+          >
+            {plan.label}
+          </Badge>
+        )}
+        {review && (
           <Badge
             tone={
               task.lastReview?.stale
@@ -80,11 +100,17 @@ export function TaskCard({
                   ? "success"
                   : task.lastReview?.verdict === "needs_human"
                     ? "danger"
-                    : "warning"
+                    : review.atLimit
+                      ? "danger"
+                      : "warning"
             }
-            title={task.lastReview?.stale ? "Not AI-reviewed since the last change" : undefined}
+            title={
+              task.lastReview?.stale
+                ? "Not AI-reviewed since the last change"
+                : "AI reviews used against the project's limit, counted from the last answer"
+            }
           >
-            R{task.codeRound}
+            {review.label}
             {task.lastReview && !task.lastReview.stale
               ? ` ${task.lastReview.verdict === "approve" ? "✓" : task.lastReview.verdict === "request_changes" ? "✗" : "?"}`
               : ""}
@@ -96,6 +122,16 @@ export function TaskCard({
           </Badge>
         )}
         {task.risk === "high" && <Badge tone="danger">high risk</Badge>}
+        {task.held && (
+          <Badge tone="neutral" title="A subtask: no agent takes it until its parent's plan is approved">
+            held: plan pending
+          </Badge>
+        )}
+        {waitingOn > 0 && (
+          <Badge tone="neutral" title="No agent takes it until the tasks it starts after are complete">
+            waits for {waitingOn} task{waitingOn === 1 ? "" : "s"}
+          </Badge>
+        )}
         {task.pullRequest && (
           <Badge
             tone={task.pullRequest.state === "closed" || task.pullRequest.checks === "failure" ? "danger" : task.pullRequest.state === "merged" ? "success" : "primary"}

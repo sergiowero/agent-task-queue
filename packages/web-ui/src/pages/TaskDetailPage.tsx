@@ -55,8 +55,10 @@ import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
+import { PrSyncNotice } from "../components/PrSyncNotice";
 import { BlockerPanel } from "../components/BlockerPanel";
 import { DecisionPanel } from "../components/DecisionPanel";
+import { PlanDecisionPanel } from "../components/PlanDecisionPanel";
 import {
   AUTONOMY_LEVELS,
   RISKS,
@@ -75,14 +77,19 @@ import { HandoffTimeline } from "../components/HandoffTimeline";
 import { Alert } from "../components/Alert";
 import { ApprovedPlanCard, CriteriaList, ProposedValidationCard, VerificationCard } from "../components/EvidencePanel";
 import { formatCriterionLine } from "@agentq/shared/criteria";
+import { planRoundChip, resolvePolicy, reviewRoundChip } from "@agentq/shared/policy";
+import { resolveProfile } from "@agentq/shared/profile";
 import { Select } from "../components/Select";
 
 const info = (status: string) => STATUS_INFO[status as TaskStatus];
 
-/** Statuses that still have something to do (an agent or a person acts next). */
+/**
+ * Statuses that still have something to do: an agent or a person acts next, or (a
+ * split task) the subtasks do, and the person can still cancel it.
+ */
 const hasActions = (status: string) => {
   const kind = info(status)?.kind;
-  return kind === "queued" || kind === "active" || kind === "human";
+  return kind === "queued" || kind === "active" || kind === "human" || kind === "waiting";
 };
 
 type TaskAction =
@@ -125,6 +132,8 @@ export function TaskDetailPage() {
   const [feedback, setFeedback] = useState("");
   /** Answered findings the person wants reopened with a change request. */
   const [reopen, setReopen] = useState<string[]>([]);
+  /** Open findings the person accepts as they are when answering a blocked task. */
+  const [waive, setWaive] = useState<string[]>([]);
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [confirmCancel, setConfirmCancel] = useState(false);
@@ -169,6 +178,7 @@ export function TaskDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setFeedback("");
       setReopen([]);
+      setWaive([]);
       toast.success(ACTION_DONE[action]);
     },
     onError: (e: Error) => {
@@ -240,6 +250,33 @@ export function TaskDetailPage() {
   const reviewingPlan = task.status === "waiting_plan_review";
   const reviewingCode = task.status === "waiting_code_review";
   const prOpen = task.status === "pr_open";
+  const isSplit = task.status === "split";
+  const unfinishedSubtasks = subtasks.filter((c) => c.status !== "complete" && c.status !== "canceled").length;
+  const project = projects.find((p) => p.id === task.projectId);
+  const policy = resolvePolicy(project, task);
+  const profile = resolveProfile(project?.profile);
+  // A blocked review or verification is decided like a code review; a blocked plan like a plan approval.
+  const blockedIn = task.status === "needs_human" ? task.blocker?.phase : undefined;
+  const escalatedCode = blockedIn === "review" || blockedIn === "verify";
+  const escalatedPlan = blockedIn === "plan" || blockedIn === "plan_review";
+  const toggle = (ids: string[], set: (ids: string[]) => void) => (id: string) =>
+    set(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  const toggleReopen = toggle(reopen, setReopen);
+  const toggleWaive = toggle(waive, setWaive);
+  /** The findings the answer reopens (the phase of the status it sends the task back to) and accepts. */
+  const findingChoice = (target: string) => {
+    const phase = target === "changes_requested" ? "code" : target === "plan_changes_requested" ? "plan" : null;
+    const reopened = phase ? reopen.filter((id) => findings.find((f) => f.id === id)?.phase === phase) : [];
+    return {
+      ...(reopened.length ? { findingIds: reopened } : {}),
+      ...(waive.length ? { waiveFindingIds: waive } : {}),
+    };
+  };
+  /** A change request needs something to say: feedback, or findings to reopen (the PR has no findings to pick). */
+  const canRequestChanges = feedback.trim().length > 0 || (!prOpen && reopen.length > 0);
+  const saySomething = "Say what should change, or tick findings to reopen";
+  /** Saves a field from the sidebar and says so when the server refuses it. */
+  const saveField = (data: TaskWrite) => updateMutation.mutate(data, { onError: (e) => toast.error(e.message) });
   const conversation = task.conversation ?? [];
   const history = task.history ?? [];
 
@@ -319,9 +356,47 @@ export function TaskDetailPage() {
                     task={task}
                     busy={pendingAction === "resolveBlocker"}
                     disabled={mutation.isPending}
-                    onResolve={(answer, targetStatus) =>
-                      doAction("resolveBlocker", { answer, targetStatus })
+                    defaultTarget={escalatedCode ? "changes_requested" : escalatedPlan ? "plan_changes_requested" : undefined}
+                    context={
+                      escalatedCode
+                        ? (target) => (
+                            <DecisionPanel
+                              task={task}
+                              findings={findings}
+                              evidence={evidence}
+                              selected={reopen}
+                              onToggle={toggleReopen}
+                              rounds={reviewRoundChip(task, policy)}
+                              blocked={{ accepted: waive, onToggleAccept: toggleWaive, canReopen: target === "changes_requested" }}
+                            />
+                          )
+                        : escalatedPlan
+                          ? (target) => (
+                              <PlanDecisionPanel
+                                task={task}
+                                findings={findings}
+                                profile={profile}
+                                selected={reopen}
+                                onToggle={toggleReopen}
+                                rounds={planRoundChip(task, policy)}
+                                blocked={{ accepted: waive, onToggleAccept: toggleWaive, canReopen: target === "plan_changes_requested" }}
+                              />
+                            )
+                          : undefined
                     }
+                    onResolve={(answer, targetStatus) =>
+                      doAction("resolveBlocker", { answer, targetStatus, ...findingChoice(targetStatus) })
+                    }
+                  />
+                )}
+                {reviewingPlan && (
+                  <PlanDecisionPanel
+                    task={task}
+                    findings={findings}
+                    profile={profile}
+                    selected={reopen}
+                    onToggle={toggleReopen}
+                    rounds={planRoundChip(task, policy)}
                   />
                 )}
                 {reviewingCode && (
@@ -330,9 +405,8 @@ export function TaskDetailPage() {
                     findings={findings}
                     evidence={evidence}
                     selected={reopen}
-                    onToggle={(fid) =>
-                      setReopen((ids) => (ids.includes(fid) ? ids.filter((x) => x !== fid) : [...ids, fid]))
-                    }
+                    onToggle={toggleReopen}
+                    rounds={reviewRoundChip(task, policy)}
                   />
                 )}
                 {(reviewingPlan || reviewingCode || prOpen) && (
@@ -368,10 +442,10 @@ export function TaskDetailPage() {
                         variant="secondary"
                         icon={RequestChangesIcon}
                         {...busy("requestPlanChanges")}
+                        disabled={mutation.isPending || !canRequestChanges}
+                        title={canRequestChanges ? undefined : saySomething}
                         onClick={() =>
-                          doAction("requestPlanChanges", {
-                            message: feedback || "Plan changes requested.",
-                          })
+                          doAction("requestPlanChanges", { message: feedback.trim(), findingIds: reopen })
                         }
                       >
                         Request changes
@@ -391,11 +465,10 @@ export function TaskDetailPage() {
                         variant="secondary"
                         icon={RequestChangesIcon}
                         {...busy("requestCodeChanges")}
+                        disabled={mutation.isPending || !canRequestChanges}
+                        title={canRequestChanges ? undefined : saySomething}
                         onClick={() =>
-                          doAction("requestCodeChanges", {
-                            message: feedback || (reopen.length ? "" : "Code changes requested."),
-                            findingIds: reopen,
-                          })
+                          doAction("requestCodeChanges", { message: feedback.trim(), findingIds: reopen })
                         }
                       >
                         Request changes
@@ -444,11 +517,9 @@ export function TaskDetailPage() {
                         variant="secondary"
                         icon={RequestChangesIcon}
                         {...busy("requestPrChanges")}
-                        onClick={() =>
-                          doAction("requestPrChanges", {
-                            message: feedback || "Changes requested on the pull request.",
-                          })
-                        }
+                        disabled={mutation.isPending || !canRequestChanges}
+                        title={canRequestChanges ? undefined : "Say what should change on the pull request"}
+                        onClick={() => doAction("requestPrChanges", { message: feedback.trim() })}
                       >
                         Request changes
                       </Button>
@@ -481,6 +552,7 @@ export function TaskDetailPage() {
                     </Button>
                   )}
                 </div>
+                {prOpen && <PrSyncNotice task={task} />}
               </section>
             )}
 
@@ -499,7 +571,7 @@ export function TaskDetailPage() {
               </section>
             )}
 
-            {task.dorIssues?.length > 0 && hasActions(task.status) && (
+            {task.dorIssues?.length > 0 && hasActions(task.status) && !isSplit && (
               <Alert tone="warning" title="This task may not be ready for an agent">
                 <ul className="list-disc pl-4">
                   {task.dorIssues.map((issue) => (
@@ -769,7 +841,7 @@ export function TaskDetailPage() {
                     wrapperClassName="w-32"
                     value={task.type}
                     disabled={!canEdit || updateMutation.isPending}
-                    onChange={(e) => updateMutation.mutate({ type: e.target.value as TaskType })}
+                    onChange={(e) => saveField({ type: e.target.value as TaskType })}
                   >
                     {Object.entries(TASK_TYPES).map(([value, t]) => (
                       <option key={value} value={value}>
@@ -785,7 +857,7 @@ export function TaskDetailPage() {
                     wrapperClassName="w-32"
                     value={task.risk}
                     disabled={!canEdit || updateMutation.isPending}
-                    onChange={(e) => updateMutation.mutate({ risk: e.target.value as Risk })}
+                    onChange={(e) => saveField({ risk: e.target.value as Risk })}
                   >
                     {Object.entries(RISKS).map(([value, r]) => (
                       <option key={value} value={value}>
@@ -802,13 +874,13 @@ export function TaskDetailPage() {
                     value={task.autonomy === null ? "" : String(task.autonomy)}
                     disabled={!canEdit || updateMutation.isPending}
                     onChange={(e) =>
-                      updateMutation.mutate({
+                      saveField({
                         autonomy: e.target.value === "" ? null : (Number(e.target.value) as AutonomyLevel),
                       })
                     }
                   >
                     <option value="">
-                      Project ({AUTONOMY_LEVELS[(projects.find((p) => p.id === task.projectId)?.autonomy ?? 2) as AutonomyLevel].label})
+                      Project ({AUTONOMY_LEVELS[(project?.autonomy ?? 2) as AutonomyLevel].label})
                     </option>
                     {Object.entries(AUTONOMY_LEVELS).map(([value, l]) => (
                       <option key={value} value={value}>
@@ -817,9 +889,24 @@ export function TaskDetailPage() {
                     ))}
                   </Select>
                 </PropertyRow>
+                {task.planRound > 0 && (
+                  <PropertyRow icon={PlanIcon} label="AI plan critique">
+                    <Badge
+                      tone={planRoundChip(task, policy)!.atLimit ? "danger" : "neutral"}
+                      title="Critiques used against the project's limit, counted from your last answer"
+                    >
+                      {planRoundChip(task, policy)!.label}
+                    </Badge>
+                  </PropertyRow>
+                )}
                 {task.codeRound > 0 && (
                   <PropertyRow icon={AiReviewIcon} label="AI review">
-                    <Badge tone="neutral">R{task.codeRound}</Badge>
+                    <Badge
+                      tone={reviewRoundChip(task, policy)!.atLimit ? "danger" : "neutral"}
+                      title="Reviews used against the project's limit, counted from your last answer"
+                    >
+                      {reviewRoundChip(task, policy)!.label}
+                    </Badge>
                     {task.lastReview && (
                       <Badge tone={VERDICT_TONE[task.lastReview.verdict]}>
                         {task.lastReview.verdict.replace("_", " ")}
@@ -836,12 +923,7 @@ export function TaskDetailPage() {
                       wrapperClassName="w-32"
                       value={task.requiresPlan ? "yes" : "no"}
                       disabled={updateMutation.isPending}
-                      onChange={(e) =>
-                        updateMutation.mutate(
-                          { requiresPlan: e.target.value === "yes" },
-                          { onError: (err) => toast.error(err.message) },
-                        )
-                      }
+                      onChange={(e) => saveField({ requiresPlan: e.target.value === "yes" })}
                     >
                       <option value="yes">Yes</option>
                       <option value="no">No</option>
@@ -955,9 +1037,10 @@ export function TaskDetailPage() {
               </div>
             )}
             {task.verification && <VerificationCard task={task} evidence={evidence} />}
-            {task.approvedPlan && <ApprovedPlanCard plan={task.approvedPlan} criteria={task.acceptanceCriteria} />}
-            {!task.approvedPlan && task.validationPlan && (
-              <ProposedValidationCard validation={task.validationPlan} criteria={task.acceptanceCriteria} />
+            {task.approvedPlan && <ApprovedPlanCard plan={task.approvedPlan} criteria={task.acceptanceCriteria} profile={profile} />}
+            {/* The decision panel shows the validation of a plan a person is deciding on. */}
+            {!task.approvedPlan && task.validationPlan && !reviewingPlan && !escalatedPlan && (
+              <ProposedValidationCard validation={task.validationPlan} criteria={task.acceptanceCriteria} profile={profile} />
             )}
             {findings.length > 0 && (
               <div className="card mb-4 p-4">
@@ -1008,7 +1091,10 @@ export function TaskDetailPage() {
           message={
             <>
               Agents stop working on <span className="font-medium text-text">{task.title}</span> and
-              it leaves the queue. This cannot be undone.
+              it leaves the queue.
+              {unfinishedSubtasks > 0 &&
+                ` Its ${unfinishedSubtasks} unfinished subtask${unfinishedSubtasks === 1 ? " is" : "s are"} canceled too.`}{" "}
+              This cannot be undone.
             </>
           }
           // Rejects on failure (already toasted), which keeps the dialog open.
@@ -1020,7 +1106,7 @@ export function TaskDetailPage() {
       {confirmArchive && (
         <ArchiveTaskModal
           task={task}
-          project={projects.find((p) => p.id === task.projectId)}
+          project={project}
           onClose={() => setConfirmArchive(false)}
         />
       )}

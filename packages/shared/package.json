@@ -14,6 +14,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./catalog": "./src/catalog.ts",
+    "./policy": "./src/policy.ts",
     "./skills": "./src/skills.ts",
     "./testing": "./src/testing.ts",
     "./criteria": "./src/criteria.ts",

@@ -80,6 +80,8 @@ export interface LastReview {
   sha?: string | null;
   /** The code was submitted again since: this verdict is about an earlier submission. */
   stale?: boolean;
+  /** What the reviewer asked a person to decide (verdict `needs_human`). */
+  question?: string;
 }
 
 /**

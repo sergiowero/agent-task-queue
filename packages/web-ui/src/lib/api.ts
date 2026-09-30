@@ -44,8 +44,18 @@ export interface Task {
   /** AI code reviews so far. */
   codeRound: number;
   verifyFailures: number;
-  /** The latest AI verdict; `stale` once the code was submitted again after it. */
-  lastReview: { round: number; verdict: Verdict; by: string; at: string; sha?: string | null; stale?: boolean } | null;
+  /** Round counts when a person last answered an escalation: the limits count from there. */
+  roundBaseline: { plan?: number; code?: number };
+  /** The latest AI verdict; `stale` once the code was submitted again after it; `question` is what it asked a person. */
+  lastReview: {
+    round: number;
+    verdict: Verdict;
+    by: string;
+    at: string;
+    sha?: string | null;
+    stale?: boolean;
+    question?: string;
+  } | null;
   /** Who approved the code for the pull request, and the commit the PR ships. */
   approval: { sha: string | null; by: string; human: boolean; round: number; at: string } | null;
   validationPlan: ValidationPlan | null;
@@ -208,8 +218,11 @@ export interface Meta {
   installedSkills: Record<string, string | null>;
   outdatedSkills: string[];
   verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
-  /** GitHub sync of open PRs: unavailable without the `gh` CLI. */
-  prSync?: { available: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
+  /**
+   * GitHub sync of open PRs: `available` is the `gh` CLI, `enabled` the periodic sync running (off with
+   * AGENTQ_PR_SYNC=0). Unless both are true a merged PR does not complete its task by itself.
+   */
+  prSync?: { available: boolean; enabled: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
 }
 
 /** What the portal sends when it edits a project: partial profile and policy. */
@@ -370,6 +383,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /** One page only: the server answers 50 tasks without `limit`. Lists that must be complete use getAllTasks. */
   getTasks: (projectId?: string) =>
     request<PaginatedResponse<Task>>(projectId ? `/tasks?projectId=${projectId}` : "/tasks"),
   /** Every task, page by page (the list endpoint returns at most 100 at a time). */
@@ -390,13 +404,13 @@ export const api = {
   deleteTask: (id: string) => request<void>(`/tasks/${id}?hard=true`, { method: "DELETE" }),
 
   approvePlan: (id: string) => request<Task>(`/tasks/${id}/approve-plan`, { method: "POST" }),
-  requestPlanChanges: (id: string, data: any) =>
+  requestPlanChanges: (id: string, data: { message?: string; findingIds?: string[] }) =>
     request<Task>(`/tasks/${id}/request-plan-changes`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
   approveCode: (id: string) => request<Task>(`/tasks/${id}/approve-code`, { method: "POST" }),
-  requestCodeChanges: (id: string, data: any) =>
+  requestCodeChanges: (id: string, data: { message?: string; findingIds?: string[] }) =>
     request<Task>(`/tasks/${id}/request-code-changes`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -417,7 +431,19 @@ export const api = {
     request<ArchiveResult>(`/tasks/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
   unblock: (id: string) => request<Task>(`/tasks/${id}/unblock`, { method: "POST" }),
   promoteDraft: (id: string) => request<Task>(`/tasks/${id}/promote-draft`, { method: "POST" }),
-  resolveBlocker: (id: string, data: { answer: string; targetStatus: string }) =>
+  resolveBlocker: (
+    id: string,
+    data: {
+      answer: string;
+      targetStatus: string;
+      /** Findings to reopen (with Changes requested or Plan changes requested). */
+      findingIds?: string[];
+      /** Open findings accepted as they are. */
+      waiveFindingIds?: string[];
+      /** Record the answer as a finding (default: review and verification escalations sent back to the coder). */
+      asFinding?: boolean;
+    },
+  ) =>
     request<Task>(`/tasks/${id}/resolve-blocker`, { method: "POST", body: JSON.stringify(data) }),
   getMeta: () => request<Meta>("/meta"),
   getTaskDetails: (id: string) => request<TaskDetails>(`/tasks/${id}/details`),

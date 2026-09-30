@@ -1,4 +1,5 @@
-import type { AcceptanceCriterion, Evidence, Task, ValidationPlan } from "../lib/api";
+import { checkVerifyCommand } from "@agentq/shared/profile";
+import type { AcceptanceCriterion, Evidence, ProjectProfile, Task, ValidationPlan } from "../lib/api";
 import type { Tone } from "../lib/status";
 import { CheckIcon, CloseIcon, PendingIcon, PlanIcon, VerifyIcon } from "../lib/icons";
 import { formatRelative } from "../lib/format";
@@ -135,35 +136,93 @@ export function VerificationCard({ task, evidence }: { task: Task; evidence: Evi
 }
 
 /**
- * How each acceptance criterion will be verified, and the commands that must
- * keep passing. Criteria the validation plan does not cover are flagged.
+ * Flags on a command the verifier would run: not a project command and not on
+ * the allowlist (it runs only because a person approved the plan), or chaining
+ * commands (what runs is more than it starts with).
  */
-export function ValidationTable({ validation, criteria }: { validation: ValidationPlan; criteria: AcceptanceCriterion[] }) {
+export function CommandFlags({ command, profile }: { command: string; profile: ProjectProfile }) {
+  const check = checkVerifyCommand(command, profile);
+  return (
+    <>
+      {!check.allowed && (
+        <Badge
+          tone="warning"
+          className="ml-1.5 align-middle"
+          title="Not one of the project's commands and not on its verify allowlist: it runs only because a person approved the plan"
+        >
+          not allowlisted
+        </Badge>
+      )}
+      {check.chained && (
+        <Badge
+          tone="danger"
+          className="ml-1.5 align-middle"
+          title="It chains or substitutes commands (; && || | ` $( ): everything it says runs, not just how it starts"
+        >
+          chains commands
+        </Badge>
+      )}
+    </>
+  );
+}
+
+/**
+ * How each acceptance criterion will be verified, and the commands that must
+ * keep passing. Criteria the validation plan does not cover are flagged; with
+ * the project's profile, so is every command the verifier would run from it
+ * that is off the allowlist or chains commands.
+ */
+export function ValidationTable({
+  validation,
+  criteria,
+  profile,
+}: {
+  validation: ValidationPlan;
+  criteria: AcceptanceCriterion[];
+  profile?: ProjectProfile;
+}) {
   const text = new Map(criteria.map((c) => [c.id, c.text]));
   const covered = new Set(validation.items.map((i) => i.criterionId));
   const uncovered = criteria.filter((c) => c.status !== "waived" && !covered.has(c.id));
+  // Criteria that carry their own command run it too, whatever the plan says.
+  const inPlan = new Set([...validation.items.map((i) => i.command?.trim()), ...validation.regressionCommands.map((c) => c.trim())]);
+  const fromCriteria = criteria.filter(
+    (c) => c.verify.command && (c.verify.kind === "command" || c.verify.kind === "test") && !inPlan.has(c.verify.command.trim()),
+  );
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead className="text-xs text-text-muted">
-          <tr>
-            <th className="py-1 pr-3">Criterion</th>
-            <th className="py-1 pr-3">How</th>
-            <th className="py-1">Command</th>
-          </tr>
-        </thead>
-        <tbody>
-          {validation.items.map((item, i) => (
-            <tr key={`${item.criterionId}-${i}`} className="border-t border-border-light align-top">
-              <td className="py-1 pr-3">
-                <span className="font-mono text-xs text-text-muted">{item.criterionId}</span> {text.get(item.criterionId)}
-              </td>
-              <td className="py-1 pr-3 text-text-secondary">{item.how}</td>
-              <td className="py-1 font-mono text-xs">{item.command ?? "manual"}</td>
+      {validation.items.length > 0 && (
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs text-text-muted">
+            <tr>
+              <th className="py-1 pr-3">Criterion</th>
+              <th className="py-1 pr-3">How</th>
+              <th className="py-1">Command</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {validation.items.map((item, i) => (
+              <tr key={`${item.criterionId}-${i}`} className="border-t border-border-light align-top">
+                <td className="py-1 pr-3">
+                  <span className="font-mono text-xs text-text-muted">{item.criterionId}</span> {text.get(item.criterionId)}
+                </td>
+                <td className="py-1 pr-3 text-text-secondary">
+                  {item.how}
+                  {item.newTests && item.newTests.length > 0 && (
+                    <div className="mt-0.5 text-xs text-text-muted">
+                      New tests: <span className="font-mono">{item.newTests.join(", ")}</span>
+                    </div>
+                  )}
+                </td>
+                <td className="py-1 font-mono text-xs">
+                  {item.command ?? "manual"}
+                  {item.command && profile && <CommandFlags command={item.command} profile={profile} />}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {uncovered.length > 0 && (
         <Alert tone="warning" title="Criteria without a check" className="mt-2">
           {uncovered.map((c) => `${c.id} ${c.text}`).join("; ")}
@@ -173,9 +232,21 @@ export function ValidationTable({ validation, criteria }: { validation: Validati
         <p className="mt-2 text-xs text-text-muted">
           Must keep passing (besides the project's commands):{" "}
           {validation.regressionCommands.map((c) => (
-            <code key={c} className="mr-2 font-mono">
-              {c}
-            </code>
+            <span key={c} className="mr-2 inline-block">
+              <code className="font-mono">{c}</code>
+              {profile && <CommandFlags command={c} profile={profile} />}
+            </span>
+          ))}
+        </p>
+      )}
+      {fromCriteria.length > 0 && (
+        <p className="mt-2 text-xs text-text-muted">
+          Also run, from the acceptance criteria:{" "}
+          {fromCriteria.map((c) => (
+            <span key={c.id} className="mr-2 inline-block">
+              <span className="font-mono">{c.id}</span> <code className="font-mono">$ {c.verify.command}</code>
+              {profile && c.verify.command && <CommandFlags command={c.verify.command} profile={profile} />}
+            </span>
           ))}
         </p>
       )}
@@ -184,14 +255,22 @@ export function ValidationTable({ validation, criteria }: { validation: Validati
 }
 
 /** The validation plan of a plan still waiting for approval, so a person approves what the verifier will run. */
-export function ProposedValidationCard({ validation, criteria }: { validation: ValidationPlan; criteria: AcceptanceCriterion[] }) {
+export function ProposedValidationCard({
+  validation,
+  criteria,
+  profile,
+}: {
+  validation: ValidationPlan;
+  criteria: AcceptanceCriterion[];
+  profile?: ProjectProfile;
+}) {
   return (
     <div className="card mb-4 p-4">
       <div className="mb-3 flex items-center gap-2">
         <PlanIcon aria-hidden className="h-4 w-4 text-text-muted" />
         <h2 className="eyebrow">Proposed validation</h2>
       </div>
-      <ValidationTable validation={validation} criteria={criteria} />
+      <ValidationTable validation={validation} criteria={criteria} profile={profile} />
     </div>
   );
 }
@@ -200,9 +279,11 @@ export function ProposedValidationCard({ validation, criteria }: { validation: V
 export function ApprovedPlanCard({
   plan,
   criteria,
+  profile,
 }: {
   plan: NonNullable<Task["approvedPlan"]>;
   criteria: AcceptanceCriterion[];
+  profile?: ProjectProfile;
 }) {
   return (
     <details className="card mb-4 p-4">
@@ -215,7 +296,7 @@ export function ApprovedPlanCard({
       </summary>
       {plan.validation && (
         <div className="mt-3">
-          <ValidationTable validation={plan.validation} criteria={criteria} />
+          <ValidationTable validation={plan.validation} criteria={criteria} profile={profile} />
         </div>
       )}
       <div className="mt-3">

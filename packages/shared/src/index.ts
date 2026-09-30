@@ -167,6 +167,7 @@ export * from "./catalog.js";
 
 export {
   DEFAULT_POLICY,
+  POLICY_RANGES,
   LEVEL_GATES,
   resolvePolicy,
   reviewRoundsUsed,
@@ -177,10 +178,13 @@ export {
   afterReview,
   afterPlanReview,
   planRoundsUsed,
+  reviewRoundChip,
+  planRoundChip,
   type Gate,
   type GatePolicy,
   type PolicySettings,
   type ReviewRouting,
+  type RoundChip,
   type RoutingTask,
 } from "./policy.js";
 
@@ -237,11 +241,14 @@ export {
 
 export {
   DEFAULT_PROFILE,
+  PROFILE_RANGES,
   DEFAULT_VERIFY_ALLOWLIST,
   resolveProfile,
   profileCommands,
+  checkVerifyCommand,
   globToRegExp,
   matchesAny,
+  type CommandCheck,
 } from "./profile.js";
 
 export {
