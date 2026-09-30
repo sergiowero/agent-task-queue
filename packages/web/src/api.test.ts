@@ -436,6 +436,25 @@ describe("GET /api/tasks", () => {
     expect(second.hasMore).toBe(false);
   });
 
+  it("lists the first 50 without a limit and says there are more: the board pages on (100 at a time) to show every task", async () => {
+    const proj = randomUUID();
+    await json("/api/projects", "POST", { id: proj, displayName: "Many", workingDirectory: "/tmp/many" });
+    for (let i = 0; i < 60; i++) await createTaskViaApi({ title: `Many ${i}`, projectId: proj, priority: 100 - i });
+
+    // No limit: one page of 50 (the oldest by priority), and hasMore says the rest is there.
+    const first = (await (await api(`/api/tasks?projectId=${proj}`)).json()) as { data: Task[]; total: number; hasMore: boolean };
+    expect(first.data.length).toBe(50);
+    expect(first.total).toBe(60);
+    expect(first.hasMore).toBe(true);
+    // The next page holds the remaining ten, and the whole list fits in one page of 100.
+    const rest = (await (await api(`/api/tasks?projectId=${proj}&limit=100&offset=50`)).json()) as { data: Task[]; hasMore: boolean };
+    expect(rest.data.map((t) => t.title)).toEqual(Array.from({ length: 10 }, (_, i) => `Many ${50 + i}`));
+    expect(rest.hasMore).toBe(false);
+    const all = (await (await api(`/api/tasks?projectId=${proj}&limit=100`)).json()) as { data: Task[]; total: number; hasMore: boolean };
+    expect(all.data.length).toBe(60);
+    expect(all.hasMore).toBe(false);
+  });
+
   it("falls back to default pagination on invalid params", async () => {
     const res = await api("/api/tasks?limit=abc&offset=-1");
     expect(res.status).toBe(200);
