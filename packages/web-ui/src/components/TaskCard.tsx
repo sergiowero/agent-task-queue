@@ -74,15 +74,20 @@ export function TaskCard({
         {task.codeRound > 0 && (
           <Badge
             tone={
-              task.lastReview?.verdict === "approve"
-                ? "success"
-                : task.lastReview?.verdict === "needs_human"
-                  ? "danger"
-                  : "warning"
+              task.lastReview?.stale
+                ? "neutral"
+                : task.lastReview?.verdict === "approve"
+                  ? "success"
+                  : task.lastReview?.verdict === "needs_human"
+                    ? "danger"
+                    : "warning"
             }
+            title={task.lastReview?.stale ? "Not AI-reviewed since the last change" : undefined}
           >
             R{task.codeRound}
-            {task.lastReview ? ` ${task.lastReview.verdict === "approve" ? "✓" : task.lastReview.verdict === "request_changes" ? "✗" : "?"}` : ""}
+            {task.lastReview && !task.lastReview.stale
+              ? ` ${task.lastReview.verdict === "approve" ? "✓" : task.lastReview.verdict === "request_changes" ? "✗" : "?"}`
+              : ""}
           </Badge>
         )}
         {task.verification && !task.verification.skipped && (

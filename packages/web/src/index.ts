@@ -6,6 +6,7 @@ import type {
 import {
   archiveTask,
   TaskStatus,
+  archiveIfAuto,
   WorkflowError,
   getTasks,
   getTasksUpdatedSince,
@@ -42,6 +43,7 @@ import {
   sweepQueue,
   requestAiReview,
   requestCodeChanges,
+  requestPrChanges,
   requestPlanChanges,
   requestReplan,
   dependencyDeleted,
@@ -878,9 +880,18 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         message: data.message,
         findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
       }),
+    request_pr_changes: () =>
+      requestPrChanges(taskId, {
+        message: data.message,
+        findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
+      }),
     request_ai_review: () => requestAiReview(taskId),
     request_replan: () => requestReplan(taskId, { message: data.message }),
-    complete: () => completeTask(taskId),
+    // "Mark merged" (when the PR sync cannot see GitHub) archives like a merge the sync saw.
+    complete: () => {
+      const completed = completeTask(taskId);
+      return archiveIfAuto(taskId, { runnerJobs: runnerJobsForTask(taskId) })?.task ?? completed;
+    },
     cancel: () => cancelTask(taskId, { message: data.message }),
     unblock: () => unblockTask(taskId),
     promote_draft: () => promoteDraft(taskId, { message: data.message }),

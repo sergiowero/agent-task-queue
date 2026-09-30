@@ -88,6 +88,11 @@ describe("status catalog", () => {
     expect(canTransition(TaskStatus.WaitingCodeReview, TaskStatus.PlanChangesRequested)).toBe(true);
   });
 
+  it("an open PR can go back to the coder, directly or after it was closed", () => {
+    expect(canTransition(TaskStatus.PrOpen, TaskStatus.ChangesRequested)).toBe(true);
+    expect(RESOLVE_TARGETS.merge).toContain(TaskStatus.ChangesRequested);
+  });
+
   it("maps the legacy ready-for-code spelling", () => {
     expect(normalizeStatus("ready for code")).toBe(TaskStatus.ReadyForCode);
   });

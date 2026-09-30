@@ -129,7 +129,7 @@ A unit of work assigned to an agent. Contains:
 - **Subtasks**: parentId, blockedBy (claimable only when those are complete; a canceled or deleted one sends the task to `needs_human`), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths, size warnings). Canceling a task cancels its unfinished subtasks
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
-- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification (the latest result with its evidence ids, tamper strikes and the tampering a person accepted; "not verified" while a new submission waits for the verifier), riskReasons; evidence rows live in `task_evidence`
+- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, commits (the commit of every code submission, verification and PR, with its round and branch, read from the worktree by the server), diffStats, verification (the latest result with its evidence ids, tamper strikes and the tampering a person accepted; "not verified" while a new submission waits for the verifier), riskReasons, approval (who approved the code and the commit the PR ships); evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
 - **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact, with the identities and model keys of every round), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
@@ -203,13 +203,13 @@ The task lifecycle moves through these states:
 
 **reviewing** → Agent is actively reviewing the submitted code.
 
-**changes_requested** → A person or the AI reviewer (L1+) asked for changes; the findings are tracked by id. Feedback loop back to coding.
+**changes_requested** → A person or the AI reviewer (L1+) asked for changes, on the code or on the open pull request; the findings are tracked by id. Feedback loop back to coding.
 
 **approved** → Code accepted by a person, or by the AI reviewer under L1+. Ready for the pull request.
 
 **merging** → An agent with the `pr` role is pushing the branch and opening the pull request.
 
-**pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. Under L3 with `autoMerge`, a green low-risk PR merges itself. A person can also mark it merged.
+**pr_open** → The pull request is open (replaces the old `merged`, which only ever meant that). A person reviews and merges it on GitHub; the server's PR sync (`gh`) then completes the task, or sends it to `needs_human` if the PR is closed. A change request on the PR (a GitHub review, or **Request changes** on the task page) sends the task back to `changes_requested` with the PR kept: the fix goes through verification and review again and the `pr` phase updates the same PR. Under L3 with `autoMerge`, a green low-risk PR whose head is the approved commit merges itself. A person can also mark it merged.
 
 **complete** → All work finished. Terminal state.
 

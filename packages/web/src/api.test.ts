@@ -746,6 +746,37 @@ describe("POST /api/tasks/:id/archive", () => {
     expect(forced.status).toBe(200);
     expect((await forced.json()).summaryPath).toBe(result.summaryPath);
   });
+
+  it("Mark merged archives the task when the project archives automatically", async () => {
+    const autoId = randomUUID();
+    const created = await json("/api/projects", "POST", {
+      id: autoId,
+      displayName: "Auto-archive API Project",
+      workingDirectory: archiveRoot,
+      profile: { autoArchive: true },
+    });
+    expect(created.status).toBe(201);
+    const task = await createTaskViaApi({ title: "Archive on merge", projectId: autoId });
+    await setStatus(task.id, TaskStatus.PrOpen);
+    const done = await expectTransition(task.id, "confirm-completion", TaskStatus.Complete);
+    expect(done.archivedAt).toBeTruthy();
+    expect(done.archivePath).toStartWith(join(archiveRoot, "archive"));
+  });
+});
+
+describe("POST /api/tasks/:id/request-pr-changes", () => {
+  it("sends a task with an open PR back to the coder with the person's feedback, and nothing else", async () => {
+    const task = await createTaskViaApi({ title: "PR send-back" });
+    const early = await subAction(task.id, "request-pr-changes", { message: "Rename the flag" });
+    expect(early.status).toBe(400);
+    expect((await early.json()).error).toContain("PR open");
+
+    await setStatus(task.id, TaskStatus.PrOpen);
+    const back = await expectTransition(task.id, "request-pr-changes", TaskStatus.ChangesRequested, { message: "Rename the flag" });
+    expect(lastMessage(back)).toMatchObject({ authorName: "user", message: "Rename the flag", messageType: "user" });
+    const details = await (await api(`/api/tasks/${task.id}/details`)).json();
+    expect(details.findings).toContainEqual(expect.objectContaining({ id: "H1-1", text: "Rename the flag", status: "open" }));
+  });
 });
 
 describe("cancel / unblock / comment", () => {

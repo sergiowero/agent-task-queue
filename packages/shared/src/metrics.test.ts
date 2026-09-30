@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 import { TaskStatus } from "./catalog.js";
-import { addActivityEvent, createProject, createTask, patchTask } from "./database.js";
+import { addActivityEvent, createProject, createTask, getTaskById, patchTask } from "./database.js";
 import { computeMetrics } from "./metrics.js";
 import type { StatusHistoryEntry } from "./types.js";
 
@@ -94,6 +94,25 @@ describe("computeMetrics", () => {
       },
     });
     expect(computeMetrics({ projectId: pid }).humanRejectionAfterAiApproval).toBe(1);
+
+    // The reviewer approved later: the PR no longer waits on them, but the rejection still counts.
+    patchTask(id, { pullRequest: { ...getTaskById(id)!.pullRequest!, changesRequestedBy: [], changesEverRequestedBy: ["reviewer"] } });
+    expect(computeMetrics({ projectId: pid }).humanRejectionAfterAiApproval).toBe(1);
+  });
+
+  it("counts a person sending the open PR back as a rejection after an AI approval", () => {
+    const pid = randomUUID();
+    createProject({ id: pid, displayName: "Metrics PR send-back", workingDirectory: "/tmp/metrics-pr-back" });
+    seed(
+      "pr sent back",
+      [[TaskStatus.PrOpen, 1], [TaskStatus.ChangesRequested, 2]],
+      [["review_submitted", "agent", "approve"], ["pr_changes_requested", "user"]],
+      1,
+      pid,
+    );
+    const m = computeMetrics({ projectId: pid });
+    expect(m.humanRejectionAfterAiApproval).toBe(1);
+    expect(m.humanClicksPerTask).toBe(1);
   });
 
   it("treats the old merged status as reaching the PR", () => {

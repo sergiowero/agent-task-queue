@@ -3,7 +3,7 @@ name: agentq-claim
 description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
 allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
 metadata:
-  version: "6.2.0"
+  version: "6.3.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -39,7 +39,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "roles": ["<role>", "..."], "sessionId": "<sessionId>",
-  "skillsVersion": "6.2.0",
+  "skillsVersion": "6.3.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -58,7 +58,7 @@ Call `claim_task`:
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "agent": { "id": "opencode@1.0|model", "role": "code" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "6.2.0" }
+  "claimToken": "<secret for this claim>", "skillsVersion": "6.3.0" }
 ```
 
 `agent.role` is the one of your roles this claim acts as.

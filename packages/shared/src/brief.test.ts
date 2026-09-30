@@ -6,12 +6,14 @@ import { getHandoffs } from "./records.js";
 import { TaskStatus } from "./catalog.js";
 import {
   addUserComment,
+  approveCode,
   approvePlan,
   claimNextTask,
   createSubtask,
   createTaskForProject,
   postComment,
   reportBlocker,
+  requestAiReview,
   requestCodeChanges,
   resolveBlocker,
   submitCode,
@@ -165,6 +167,63 @@ describe("pull request body", () => {
     expect(pr.body).toContain("## Risk\n\n**medium**");
     expect(pr.body).toContain("Out of scope: PDF export");
     expect(pr.body).toContain(`AgentQ task \`${task.id}\``);
+  });
+
+  it("a person's approval over open blocker findings says so, and labels them as blocking", () => {
+    const projectId = project();
+    const task = createTaskForProject({ title: "override", description: "Rename the public export of the parser module.", projectId });
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "done", worktree: "/w", claimToken: c.claimToken });
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, {
+      verdict: "needs_human",
+      message: "not sure",
+      question: "Is breaking the public API acceptable here?",
+      findings: [
+        { severity: "blocker", text: "Breaks public API" },
+        { severity: "minor", text: "Typo in a comment" },
+      ],
+      claimToken: r.claimToken,
+    });
+    resolveBlocker(task.id, { answer: "Yes, it is a major release.", targetStatus: TaskStatus.Approved });
+
+    const body = buildTaskBrief(task.id)!.pr!.body;
+    expect(body).toContain("AI review: **needs_human** in round 1 by `reviewer@1|r`.");
+    expect(body).toMatch(/Approved by a person \(`user`\) on \d{4}-\d{2}-\d{2}\./);
+    expect(body).toContain("Open blocker/major findings a person accepted (`user`):\n- R1-1 (blocker) Breaks public API");
+    expect(body).toContain("Still open (non-blocking):\n- R1-2 (minor) Typo in a comment");
+    expect(body).not.toMatch(/Still open \(non-blocking\):[^#]*R1-1/);
+  });
+
+  it("an AI verdict on an earlier submission is marked as such", () => {
+    const projectId = `brief-l0-${Date.now()}-${n++}`;
+    createProject({ id: projectId, displayName: "Brief L0", workingDirectory: "/tmp/brief", autonomy: 0 });
+    const task = createTaskForProject({ title: "stale", description: "Cache the parsed config between calls.", projectId });
+    let c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "r1", worktree: "/w", claimToken: c.claimToken });
+    requestAiReview(task.id);
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+    submitReview(task.id, { verdict: "request_changes", message: "one", findings: [{ severity: "minor", text: "Name it cache" }], claimToken: r.claimToken });
+    expect(getTaskById(task.id)!.lastReview?.stale).toBeUndefined();
+
+    // A person sends it back and approves the new submission without another AI review.
+    requestCodeChanges(task.id, { message: "Use the shared helper" });
+    c = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, {
+      message: "r2",
+      worktree: "/w",
+      findingResolutions: [
+        { id: "R1-1", status: "fixed", resolution: "renamed" },
+        { id: "H1-1", status: "fixed", resolution: "uses it" },
+      ],
+      claimToken: c.claimToken,
+    });
+    expect(getTaskById(task.id)!.lastReview).toMatchObject({ verdict: "request_changes", stale: true });
+    approveCode(task.id);
+
+    const body = buildTaskBrief(task.id)!.pr!.body;
+    expect(body).toContain("AI review: **request_changes** in round 1 by `reviewer@1|r`, on an earlier submission: not AI-reviewed since the last change.");
+    expect(body).toContain("Approved by a person (`user`)");
   });
 });
 
