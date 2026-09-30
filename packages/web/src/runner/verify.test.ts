@@ -184,7 +184,8 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(blocked.blocker?.reason).toContain("❌");
     expect(blocked.blocker?.reason).toContain("process.exit(1)");
 
-    const resolved = resolveBlocker(blocked.id, { answer: "Fixed the environment, try again.", targetStatus: TaskStatus.ChangesRequested });
+    // A plain reply: by default a verification answer sent to the coder becomes a finding it must answer.
+    const resolved = resolveBlocker(blocked.id, { answer: "Fixed the environment, try again.", targetStatus: TaskStatus.ChangesRequested, asFinding: false });
     expect(resolved.verifyFailures).toBe(0);
     recode(resolved, worktree);
     const again = await verify(pid);
