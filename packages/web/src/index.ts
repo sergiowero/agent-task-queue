@@ -813,18 +813,10 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   // Each action is one shared workflow call; the workflow checks the status.
   const actions: Record<string, () => Task | Response> = {
     approve_plan: () => approvePlan(taskId, { message: data.message }),
-    request_plan_changes: () => requestPlanChanges(taskId, { message: data.message }),
+    request_plan_changes: () => requestPlanChanges(taskId, { message: data.message, findingIds: data.findingIds }),
     approve_code: () => approveCode(taskId, { message: data.message }),
-    request_code_changes: () =>
-      requestCodeChanges(taskId, {
-        message: data.message,
-        findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
-      }),
-    request_pr_changes: () =>
-      requestPrChanges(taskId, {
-        message: data.message,
-        findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
-      }),
+    request_code_changes: () => requestCodeChanges(taskId, { message: data.message, findingIds: data.findingIds }),
+    request_pr_changes: () => requestPrChanges(taskId, { message: data.message, findingIds: data.findingIds }),
     request_ai_review: () => requestAiReview(taskId),
     request_replan: () => requestReplan(taskId, { message: data.message }),
     // "Mark merged" (when the PR sync cannot see GitHub) archives like a merge the sync saw.
@@ -837,7 +829,13 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
     promote_draft: () => promoteDraft(taskId, { message: data.message }),
     resolve_blocker: () => {
       if (!data.targetStatus) return errorResponse("targetStatus is required");
-      return resolveBlocker(taskId, { answer: data.answer ?? data.message ?? "", targetStatus: data.targetStatus });
+      return resolveBlocker(taskId, {
+        answer: data.answer ?? data.message ?? "",
+        targetStatus: data.targetStatus,
+        findingIds: data.findingIds,
+        waiveFindingIds: data.waiveFindingIds,
+        asFinding: data.asFinding,
+      });
     },
     comment: () => {
       if (!data.message) return errorResponse("message is required");

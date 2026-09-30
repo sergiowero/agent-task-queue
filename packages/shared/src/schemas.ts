@@ -150,9 +150,15 @@ export const transitionTaskSchema = z.object({
   ]),
   authorName: z.string().optional(),
   message: z.string().max(10000).optional(),
+  /** request_plan_changes, request_code_changes, request_pr_changes, resolve_blocker: findings to reopen. */
+  findingIds: z.array(z.string().min(1)).max(200).optional(),
   // resolve_blocker
   answer: z.string().max(10000).optional(),
   targetStatus: z.nativeEnum(TaskStatus).optional(),
+  /** Open findings the person accepts as they are. */
+  waiveFindingIds: z.array(z.string().min(1)).max(200).optional(),
+  /** Record the answer as a finding the coder must answer (default: for a review or verification escalation sent back to the coder). */
+  asFinding: z.boolean().optional(),
   // archive
   force: z.boolean().optional(),
   pullRequests: z.array(z.string().min(1).max(500)).max(20).optional(),

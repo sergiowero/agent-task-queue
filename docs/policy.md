@@ -173,6 +173,26 @@ blocked in:
   until the planner's next one is approved. From a code review, **Re-plan** does the
   same.
 
+An escalated **review or verification** (round limit, disagreement, the reviewer's
+question, verification failures, weakened tests) is decided like a code review: the
+task page shows the same panel above the answer box, with the AI verdict, the findings
+by round, the verification, the diff size, the risk and the criteria. The answer can
+
+- **reopen** findings (tick an answered one) and go back to the coder (`changes_requested`):
+  the answer becomes a change request, a finding `H<round>-<n>` the coder must answer by id;
+- **accept** open findings (tick them; `wontfix`, noted "accepted by <person>", keeping the
+  coder's reason) so nobody has to fix them, and send the code on: **Approved** for the
+  coder's disputed `wontfix`, or another review;
+- or just answer and pick a status, as for any blocker.
+
+`POST /api/tasks/:id/resolve-blocker` takes `findingIds` (reopen: code findings with
+`changes_requested`, plan findings with `plan_changes_requested`), `waiveFindingIds`
+(accept: open findings only) and `asFinding` (record the answer as a change request;
+default on for a review or verification escalation sent back to the coder, off for a
+coder's own question). A choice the workflow refuses (an unknown or answered finding,
+a finding of the other phase) changes nothing. **Request changes** on a plan waiting for
+a person takes `findingIds` too, to reopen plan findings the planner must answer again.
+
 ## Pull requests
 
 The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens

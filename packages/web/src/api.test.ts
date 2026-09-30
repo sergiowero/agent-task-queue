@@ -6,11 +6,13 @@ import { join } from "path";
 import type { Task, Project } from "@agentq/shared";
 import {
   TaskStatus,
+  addFindings,
   createTask,
   beginTransaction,
   getTaskById,
   rollbackTransaction,
   skillsBundleVersion,
+  updateFinding,
 } from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import { startServer } from "./index.js";
@@ -785,6 +787,82 @@ describe("POST /api/tasks/:id/request-pr-changes", () => {
     expect(lastMessage(back)).toMatchObject({ authorName: "user", message: "Rename the flag", messageType: "user" });
     const details = await (await api(`/api/tasks/${task.id}/details`)).json();
     expect(details.findings).toContainEqual(expect.objectContaining({ id: "H1-1", text: "Rename the flag", status: "open" }));
+  });
+});
+
+describe("a person's decision on findings over HTTP", () => {
+  const findingStatuses = async (taskId: string) =>
+    ((await (await api(`/api/tasks/${taskId}/details`)).json()).findings as { id: string; status: string }[])
+      .map((f) => [f.id, f.status])
+      .sort((a, b) => a[0].localeCompare(b[0]));
+
+  it("resolve-blocker reopens findings, accepts open ones and records the answer as a change request", async () => {
+    const task = await createTaskViaApi({ title: "Escalated review" });
+    await setStatus(task.id, TaskStatus.Reviewing);
+    addFindings(
+      task.id,
+      "R",
+      1,
+      [
+        { severity: "major", text: "add a test" },
+        { severity: "minor", text: "rename x" },
+        { severity: "major", text: "guard null" },
+      ],
+      "reviewer",
+    );
+    updateFinding(task.id, "R1-1", { status: "fixed", resolution: "done" });
+    await expectTransition(task.id, "report-blocker", TaskStatus.NeedsHuman, { reason: "Reviewer stuck", question: "Which way?" });
+
+    // A malformed list is a 400; so is a choice the workflow refuses, and nothing changes.
+    const notAList = await subAction(task.id, "resolve-blocker", { answer: "x", targetStatus: TaskStatus.ChangesRequested, findingIds: "R1-1" });
+    expect(notAList.status).toBe(400);
+    const wrongTarget = await subAction(task.id, "resolve-blocker", { answer: "x", targetStatus: TaskStatus.Approved, findingIds: ["R1-1"] });
+    expect(wrongTarget.status).toBe(400);
+    expect((await wrongTarget.json()).error).toContain("only be reopened");
+    expect((await getTask(task.id)).status).toBe(TaskStatus.NeedsHuman);
+    expect(await findingStatuses(task.id)).toEqual([["R1-1", "fixed"], ["R1-2", "open"], ["R1-3", "open"]]);
+
+    const resolved = await expectTransition(task.id, "resolve-blocker", TaskStatus.ChangesRequested, {
+      answer: "Guard null too.",
+      targetStatus: TaskStatus.ChangesRequested,
+      findingIds: ["R1-1"],
+      waiveFindingIds: ["R1-2"],
+    });
+    expect(lastMessage(resolved).message).toContain("Reopened: R1-1\nAccepted as they are: R1-2");
+    // The answer of a review escalation is a finding (H1-1) the coder must answer.
+    expect(await findingStatuses(task.id)).toEqual([["H1-1", "open"], ["R1-1", "open"], ["R1-2", "wontfix"], ["R1-3", "open"]]);
+  });
+
+  it("resolve-blocker: asFinding false keeps the answer a plain reply", async () => {
+    const task = await createTaskViaApi({ title: "Plain reply" });
+    await setStatus(task.id, TaskStatus.Reviewing);
+    await expectTransition(task.id, "report-blocker", TaskStatus.NeedsHuman, { reason: "Stuck", question: "Which way?" });
+    await expectTransition(task.id, "resolve-blocker", TaskStatus.ChangesRequested, {
+      answer: "Go on.",
+      targetStatus: TaskStatus.ChangesRequested,
+      asFinding: false,
+    });
+    expect(await findingStatuses(task.id)).toEqual([]);
+  });
+
+  it("request-plan-changes reopens the chosen plan findings", async () => {
+    const task = await createTaskViaApi({ title: "Plan findings", requiresPlan: true });
+    await setStatus(task.id, TaskStatus.WaitingPlanReview);
+    addFindings(task.id, "P", 1, [{ severity: "major", text: "no rollback step" }], "critic");
+    updateFinding(task.id, "P1-1", { status: "verified" });
+
+    const notAList = await subAction(task.id, "request-plan-changes", { message: "Again", findingIds: "P1-1" });
+    expect(notAList.status).toBe(400);
+    const codeFinding = await subAction(task.id, "request-plan-changes", { message: "Again", findingIds: ["R1-1"] });
+    expect(codeFinding.status).toBe(400);
+    expect((await getTask(task.id)).status).toBe(TaskStatus.WaitingPlanReview);
+
+    const back = await expectTransition(task.id, "request-plan-changes", TaskStatus.PlanChangesRequested, {
+      message: "The rollback step is not enough.",
+      findingIds: ["P1-1"],
+    });
+    expect(lastMessage(back).message).toBe("The rollback step is not enough.\n\nReopened: P1-1");
+    expect(await findingStatuses(task.id)).toEqual([["P1-1", "open"]]);
   });
 });
 

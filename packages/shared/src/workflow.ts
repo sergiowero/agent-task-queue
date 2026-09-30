@@ -713,6 +713,20 @@ export interface ResolveBlockerInput {
   answer: string;
   targetStatus: TaskStatus;
   actor?: string;
+  /**
+   * Findings to reopen so they are answered again: code findings when the task
+   * goes back to the coder (Changes requested), plan findings when it goes back
+   * to the planner (Plan changes requested).
+   */
+  findingIds?: string[];
+  /** Open findings the person accepts as they are (closed as wontfix): nobody has to fix them. */
+  waiveFindingIds?: string[];
+  /**
+   * Record the answer as a finding (H<round>-<n>) the coder must answer, like a
+   * change request. Default: on when a review or verification escalation goes
+   * back to the coder, where the answer is an instruction rather than a reply.
+   */
+  asFinding?: boolean;
 }
 
 /**
@@ -721,6 +735,9 @@ export interface ResolveBlockerInput {
  * the plan, as approvePlan does: it is frozen and the subtasks it created are
  * released (the task then waits in `split`). Dependencies that will never
  * complete (canceled or deleted) are dropped, so the task can be claimed again.
+ * An escalated review or verification is decided like a code review: reopen
+ * findings and add the answer as a change request (Changes requested), or
+ * accept open findings and send the code on.
  */
 export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task {
   const head = input.targetStatus === TaskStatus.Approved ? reviewedHead(getTaskById(taskId)) : null;
@@ -756,6 +773,25 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
       });
     }
+    // The person's verdict on the findings, applied with the move so a refused one changes nothing.
+    const toCoder = input.targetStatus === TaskStatus.ChangesRequested;
+    const toPlanner = input.targetStatus === TaskStatus.PlanChangesRequested;
+    if (input.findingIds?.length && !toCoder && !toPlanner) {
+      throw new WorkflowError("Findings can only be reopened when the task goes back to the coder (Changes requested) or the planner (Plan changes requested).");
+    }
+    const overlap = (input.findingIds ?? []).filter((id) => input.waiveFindingIds?.includes(id));
+    if (overlap.length) throw new WorkflowError(`${overlap.join(", ")} cannot be both reopened and accepted.`);
+    const reopened = reopenFindings(taskId, input.findingIds, toPlanner ? "plan" : "code");
+    const accepted = acceptFindings(taskId, input.waiveFindingIds, actor);
+    const blockedIn = task.blocker?.phase;
+    if (toCoder && answer && (input.asFinding ?? (blockedIn === "review" || blockedIn === "verify"))) {
+      addFindings(taskId, "H", Math.max(1, task.codeRound), [{ severity: "major", text: answer }], actor);
+    }
+    const verdicts = [
+      reopened.length ? `Reopened: ${reopened.join(", ")}` : "",
+      accepted.length ? `Accepted as they are: ${accepted.join(", ")}` : "",
+    ].filter(Boolean);
+
     let to = input.targetStatus;
     let approvedPlan: ApprovedPlan | undefined;
     const planBlocker = task.blocker?.phase === "plan" || task.blocker?.phase === "plan_review";
@@ -766,7 +802,9 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     const blockedBy = task.blockedBy.filter(dependencyAlive);
     const updated = transitionTask(task, to, {
       actor,
-      message: answer ? `**Blocker resolved** → ${statusLabel(to)}\n\n${answer}` : `Blocker resolved → ${statusLabel(to)}.`,
+      message:
+        (answer ? `**Blocker resolved** → ${statusLabel(to)}\n\n${answer}` : `Blocker resolved → ${statusLabel(to)}.`) +
+        (verdicts.length ? `\n\n${verdicts.join("\n")}` : ""),
       messageType: "user",
       event: "blocker_resolved",
       details: answer || undefined,
@@ -894,10 +932,71 @@ function humanHandoff(taskId: string, phase: Phase, summary: string | undefined,
   if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: handoffRound(task, phase), agentId: actor, summary });
 }
 
-export function requestPlanChanges(taskId: string, input: HumanActionInput = {}): Task {
+export interface RequestPlanChangesInput extends HumanActionInput {
+  /** Plan findings (P<round>-<n>) to reopen: the planner must answer them again. */
+  findingIds?: string[];
+}
+
+/** A person asks the planner for changes; chosen earlier plan findings are reopened. */
+export function requestPlanChanges(taskId: string, input: RequestPlanChangesInput = {}): Task {
   const message = input.message?.trim();
-  humanHandoff(taskId, "plan", message, input.actor);
-  return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.WaitingPlanReview) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingPlanReview)} status`);
+    }
+    const reopened = reopenFindings(taskId, input.findingIds, "plan");
+    humanHandoff(taskId, "plan", message, input.actor);
+    const said = message || "Plan changes requested.";
+    return humanTransition(
+      taskId,
+      TaskStatus.WaitingPlanReview,
+      TaskStatus.PlanChangesRequested,
+      "plan_changes_requested",
+      reopened.length ? `${said}\n\nReopened: ${reopened.join(", ")}` : said,
+      input,
+      message,
+    );
+  });
+}
+
+/**
+ * Reopens answered findings of one phase so the coder (code) or the planner
+ * (plan) has to answer them again. Returns the ids; unknown ids and findings
+ * of the other phase are refused.
+ */
+function reopenFindings(taskId: string, ids: string[] | undefined, phase: "code" | "plan"): string[] {
+  const reopened: string[] = [];
+  for (const id of new Set(ids ?? [])) {
+    const finding = getFinding(taskId, id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
+    if (finding.phase !== phase) {
+      throw new WorkflowError(`Finding ${id} is a ${finding.phase} finding: it can only be reopened when the task goes back to the ${finding.phase === "plan" ? "planner" : "coder"}.`);
+    }
+    if (finding.status !== "open") updateFinding(taskId, id, { status: "open", reopened: true });
+    reopened.push(id);
+  }
+  return reopened;
+}
+
+/**
+ * A person accepts open findings as they are: each closes as wontfix, keeping the
+ * author's reason (if any) and noting who accepted it. Only open findings can be
+ * accepted: an answered one is the reviewer's to verify or a person's to reopen.
+ */
+function acceptFindings(taskId: string, ids: string[] | undefined, actor: string): string[] {
+  const accepted: string[] = [];
+  for (const id of new Set(ids ?? [])) {
+    const finding = getFinding(taskId, id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
+    if (finding.status !== "open") {
+      throw new WorkflowError(`Finding ${id} is ${finding.status}, not open: only an open finding can be accepted.`);
+    }
+    const note = `accepted by ${actor}`;
+    updateFinding(taskId, id, { status: "wontfix", resolution: finding.resolution ? `${finding.resolution} (${note})` : note });
+    accepted.push(id);
+  }
+  return accepted;
 }
 
 /** A person approves the code: the commit in the worktree is the one the PR may ship. */
@@ -961,19 +1060,14 @@ export function requestPrChanges(taskId: string, input: RequestCodeChangesInput 
 function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: string, fallback: string): Task {
   const message = input.message?.trim();
   const actor = input.actor ?? "user";
-  for (const id of input.findingIds ?? []) {
-    const finding = getFinding(task.id, id);
-    if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
-    if (finding.status !== "open") updateFinding(task.id, id, { status: "open", reopened: true });
-  }
+  const reopened = reopenFindings(task.id, input.findingIds, "code");
   if (message && input.asFinding !== false) {
     addFindings(task.id, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
   }
   humanHandoff(task.id, "code", message, actor);
-  const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
   return transitionTask(task, TaskStatus.ChangesRequested, {
     actor,
-    message: (message || fallback) + reopened,
+    message: (message || fallback) + (reopened.length ? `\n\nReopened: ${reopened.join(", ")}` : ""),
     messageType: "user",
     event,
     details: message,
@@ -2315,6 +2409,9 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
           message: `The AI reviewer approved; this approval was picked for a human spot check (1 in ${policy.humanSampleEvery}).`,
           event: "review_sampled",
         };
+      } else if (input.verdict === "needs_human") {
+        // L0: the verdict is advice and the task waits for a person anyway, but the question must reach them.
+        note = { message: `The AI reviewer could not decide and asks: ${input.question!.trim()}\n\nOpen findings: ${openIds}.`, event: "review_escalated" };
       }
 
       return {
@@ -2324,7 +2421,14 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
         note,
         patch: {
           codeRound: round,
-          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString(), sha: reviewed },
+          lastReview: {
+            round,
+            verdict: input.verdict,
+            by: reviewer,
+            at: new Date().toISOString(),
+            sha: reviewed,
+            ...(input.verdict === "needs_human" ? { question: input.question!.trim() } : {}),
+          },
           ...(routing.status === TaskStatus.Approved ? { approval: approvalOf({ ...task, codeRound: round }, reviewed, reviewer, false) } : {}),
           ...(blocker ? { blocker } : {}),
         },
