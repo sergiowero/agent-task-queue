@@ -44,10 +44,15 @@ export interface Task {
   /** AI code reviews so far. */
   codeRound: number;
   verifyFailures: number;
-  lastReview: { round: number; verdict: Verdict; by: string; at: string } | null;
+  /** The latest AI verdict; `stale` once the code was submitted again after it. */
+  lastReview: { round: number; verdict: Verdict; by: string; at: string; sha?: string | null; stale?: boolean } | null;
+  /** Who approved the code for the pull request, and the commit the PR ships. */
+  approval: { sha: string | null; by: string; human: boolean; round: number; at: string } | null;
   validationPlan: ValidationPlan | null;
   approvedPlan: { markdown: string; validation: ValidationPlan | null; approvedBy: string; at: string } | null;
   headSha: string | null;
+  /** Every commit recorded along the way (code submissions, verifications, the PR). */
+  commits?: { round: number; phase: "code" | "verify" | "pr"; sha: string; branch: string | null; at: string }[];
   diffStats: { files: number; insertions: number; deletions: number } | null;
   verification: {
     round: number;
@@ -92,10 +97,17 @@ export interface PullRequest {
   number: number | null;
   state: "open" | "merged" | "closed";
   branch: string | null;
+  /** Base branch and authors submit_pr named (absent on old tasks). */
+  base?: string | null;
+  authors?: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
+  /** The PR's head commit (absent on old tasks). */
+  headSha?: string | null;
   /** GitHub users whose latest review asks for changes. */
   changesRequestedBy: string[];
+  /** Everyone who asked for changes at any point (absent on old tasks). */
+  changesEverRequestedBy?: string[];
   checks: "pending" | "success" | "failure" | null;
   checkedAt: string | null;
 }
@@ -393,6 +405,11 @@ export const api = {
   approveCode: (id: string) => request<Task>(`/tasks/${id}/approve-code`, { method: "POST" }),
   requestCodeChanges: (id: string, data: any) =>
     request<Task>(`/tasks/${id}/request-code-changes`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  requestPrChanges: (id: string, data: { message?: string; findingIds?: string[] }) =>
+    request<Task>(`/tasks/${id}/request-pr-changes`, {
       method: "POST",
       body: JSON.stringify(data),
     }),

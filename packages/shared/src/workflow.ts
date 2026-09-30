@@ -68,11 +68,13 @@ import {
   type Role,
   type Verdict,
 } from "./catalog.js";
-import { detectDefaultBranch } from "./git.js";
+import { detectDefaultBranch, git, sameCommit } from "./git.js";
 import type {
   AgentReference,
   Agent,
+  Approval,
   ApprovedPlan,
+  CommitRecord,
   PlanSubmission,
   PullRequest,
   Blocker,
@@ -574,6 +576,7 @@ export interface ResolveBlockerInput {
 
 /** A person answers a blocked task and sends it on (the answer stays in the conversation). */
 export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task {
+  const head = input.targetStatus === TaskStatus.Approved ? reviewedHead(getTaskById(taskId)) : null;
   return withTransaction(() => {
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.NeedsHuman) {
@@ -587,6 +590,9 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
     }
     const actor = input.actor ?? "user";
     const answer = input.answer.trim();
+    // Sending reviewed code on to the PR is a person's approval of it. After a merge
+    // blocker (a closed PR) the code did not change: the approval it had stands.
+    const approves = input.targetStatus === TaskStatus.Approved && task.blocker?.phase !== "merge";
     // Sending weakened tests on (not back to the coder) accepts them: the diff is
     // cumulative, so without this the same lines would be flagged on every later check.
     const v = task.verification;
@@ -616,6 +622,7 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         blocker: null,
         revertStreak: 0,
         roundBaseline: { plan: task.planRound, code: task.codeRound },
+        ...(approves ? { approval: approvalOf(task, head, actor, true) } : {}),
         verifyFailures: 0,
         ...(v
           ? {
@@ -692,6 +699,36 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
   });
 }
 
+/**
+ * The commit and branch a worktree has checked out, as the server reads them
+ * (nulls without a worktree, or when git cannot read it). Read them before a
+ * transaction: git can take a while.
+ */
+function checkedOut(worktree: string | null | undefined): { sha: string | null; branch: string | null } {
+  if (!worktree) return { sha: null, branch: null };
+  return {
+    sha: git(worktree, ["rev-parse", "HEAD"]) || null,
+    // Empty on a detached HEAD.
+    branch: git(worktree, ["branch", "--show-current"]) || null,
+  };
+}
+
+/** The commit a review of the task looks at: the worktree's HEAD, else the submitted commit. */
+function reviewedHead(task: Task | null): string | null {
+  if (!task) return null;
+  return checkedOut(task.worktreePath).sha || task.headSha || task.verification?.verifiedSha || null;
+}
+
+/** The task's commit log with one more entry (unchanged without a sha). */
+function withCommit(task: Task, phase: CommitRecord["phase"], sha: string | null | undefined, round: number, branch: string | null): CommitRecord[] {
+  const id = sha?.trim();
+  return id ? [...task.commits, { round, phase, sha: id, branch, at: new Date().toISOString() }] : task.commits;
+}
+
+function approvalOf(task: Task, sha: string | null, by: string, human: boolean): Approval {
+  return { sha, by, human, round: task.codeRound, at: new Date().toISOString() };
+}
+
 function humanHandoff(taskId: string, summary: string | undefined, actor = "user"): void {
   const task = getTaskById(taskId);
   if (task && summary?.trim()) addHandoff(taskId, { phase: "human", round: task.codeRound, agentId: actor, summary });
@@ -703,8 +740,23 @@ export function requestPlanChanges(taskId: string, input: HumanActionInput = {})
   return humanTransition(taskId, TaskStatus.WaitingPlanReview, TaskStatus.PlanChangesRequested, "plan_changes_requested", message || "Plan changes requested.", input, message);
 }
 
+/** A person approves the code: the commit in the worktree is the one the PR may ship. */
 export function approveCode(taskId: string, input: HumanActionInput = {}): Task {
-  return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.Approved, "code_approved", input.message?.trim() || "Code approved.", input);
+  const sha = reviewedHead(getTaskById(taskId));
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.WaitingCodeReview) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingCodeReview)} status`);
+    }
+    const actor = input.actor ?? "user";
+    return transitionTask(task, TaskStatus.Approved, {
+      actor,
+      message: input.message?.trim() || "Code approved.",
+      messageType: "user",
+      event: "code_approved",
+      patch: { revertStreak: 0, approval: approvalOf(task, sha, actor, true) },
+    });
+  });
 }
 
 export interface RequestCodeChangesInput extends HumanActionInput {
@@ -719,31 +771,53 @@ export interface RequestCodeChangesInput extends HumanActionInput {
  * id (like a reviewer's), and chosen earlier findings are reopened.
  */
 export function requestCodeChanges(taskId: string, input: RequestCodeChangesInput = {}): Task {
-  const message = input.message?.trim();
   return withTransaction(() => {
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.WaitingCodeReview) {
       throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.WaitingCodeReview)} status`);
     }
-    const actor = input.actor ?? "user";
-    for (const id of input.findingIds ?? []) {
-      const finding = getFinding(taskId, id);
-      if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
-      if (finding.status !== "open") updateFinding(taskId, id, { status: "open", reopened: true });
+    return sendBackToCoder(task, input, "code_changes_requested", "Code changes requested.");
+  });
+}
+
+/**
+ * A person asks for changes on the open pull request (on the task page, or a
+ * change request on GitHub the PR sync picked up). As with requestCodeChanges
+ * the message becomes a finding the coder answers by id. The PR stays open and
+ * stays on the task: the coder commits on the same branch, the code goes
+ * through verification and review again, and the pr phase updates the same PR.
+ */
+export function requestPrChanges(taskId: string, input: RequestCodeChangesInput = {}): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.status !== TaskStatus.PrOpen) {
+      throw new WorkflowError(`task must be in ${statusLabel(TaskStatus.PrOpen)} status`);
     }
-    if (message && input.asFinding !== false) {
-      addFindings(taskId, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
-    }
-    humanHandoff(taskId, message, actor);
-    const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
-    return transitionTask(task, TaskStatus.ChangesRequested, {
-      actor,
-      message: (message || "Code changes requested.") + reopened,
-      messageType: "user",
-      event: "code_changes_requested",
-      details: message,
-      patch: { revertStreak: 0 },
-    });
+    return sendBackToCoder(task, input, "pr_changes_requested", "Changes requested on the pull request.");
+  });
+}
+
+/** Reopens the chosen findings, records the message as a finding (H<round>-<n>) and sends the task to the coder. */
+function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: string, fallback: string): Task {
+  const message = input.message?.trim();
+  const actor = input.actor ?? "user";
+  for (const id of input.findingIds ?? []) {
+    const finding = getFinding(task.id, id);
+    if (!finding) throw new WorkflowError(`Unknown finding ${id}.`);
+    if (finding.status !== "open") updateFinding(task.id, id, { status: "open", reopened: true });
+  }
+  if (message && input.asFinding !== false) {
+    addFindings(task.id, "H", Math.max(1, task.codeRound), [{ severity: "major", text: message }], actor);
+  }
+  humanHandoff(task.id, message, actor);
+  const reopened = input.findingIds?.length ? `\n\nReopened: ${input.findingIds.join(", ")}` : "";
+  return transitionTask(task, TaskStatus.ChangesRequested, {
+    actor,
+    message: (message || fallback) + reopened,
+    messageType: "user",
+    event,
+    details: message,
+    patch: { revertStreak: 0 },
   });
 }
 
@@ -795,7 +869,7 @@ export function pullRequestClosed(taskId: string, pr: PullRequest): Task {
     if (task.status !== TaskStatus.PrOpen) throw new WorkflowError("The task has no open pull request.");
     const blocker: Blocker = {
       reason: `The pull request ${pr.url ?? `#${pr.number}`} was closed without merging.`,
-      question: "Reopen it and send the task back to PR open, send it back to Approved for a new PR, or cancel it.",
+      question: "Reopen it and send the task back to PR open, send it back to Approved for a new PR or to the coder (Changes requested), or cancel it.",
       phase: "merge",
       fromStatus: task.status,
       raisedBy: "github",
@@ -1519,6 +1593,9 @@ export function raiseRisk(taskId: string, reasons: string[], actor: string): Tas
 }
 
 export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitResult {
+  // The server reads the submitted commit and branch from the worktree itself (before
+  // the transaction); the agent's headSha and branch only count when it cannot.
+  const head = checkedOut(input.worktree);
   // The diff is read before the transaction, so git never runs while the database is locked.
   const facts = worktreeFacts(getTaskById(taskId), input.worktree);
   return submit(
@@ -1565,14 +1642,20 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
 
       const now = new Date().toISOString();
       const guards = diffGuards(task, facts);
+      const sha = head.sha ?? (input.headSha?.trim() || null);
+      const branch = head.branch ?? (input.branch?.trim() || task.realBranch);
       const patch: TaskPatch = {
         worktreePath: input.worktree ?? null,
-        realBranch: input.branch?.trim() || task.realBranch,
-        headSha: input.headSha?.trim() || null,
+        realBranch: branch,
+        // A submission that names no commit keeps the previous one rather than erasing it.
+        headSha: sha ?? task.headSha,
+        commits: withCommit(task, "code", sha, round, branch),
         acceptanceCriteria: criteria,
         diffStats: facts?.diffStats ?? task.diffStats,
         risk: guards.risk,
         riskReasons: guards.riskReasons,
+        // The last AI verdict was about the previous submission.
+        ...(task.lastReview ? { lastReview: { ...task.lastReview, stale: true } } : {}),
       };
       const events = guards.newReasons.length ? [{ event: "risk_raised", details: guards.newReasons.join("; ") }] : [];
       const raised = guards.newReasons.length ? `Risk raised to high: ${guards.newReasons.join("; ")}.` : null;
@@ -1784,6 +1867,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
         diffStats: diffStats ?? task.diffStats,
         risk,
         riskReasons: guards.riskReasons,
+        commits: withCommit(task, "verify", input.verifiedSha, round, task.realBranch),
         producers: { ...task.producers, verify: producerOf(task) },
         ...(blocker ? { blocker } : {}),
       },
@@ -1823,6 +1907,8 @@ function approvalsInProject(projectId: string | null): number {
 }
 
 export function submitReview(taskId: string, input: SubmitReviewInput): SubmitResult {
+  // The commit under review, read before the transaction: an approval pins it for the PR.
+  const reviewed = reviewedHead(getTaskById(taskId));
   return submit(
     taskId,
     { from: TaskStatus.Reviewing, phase: "review", messageType: "review", event: "review_submitted", done: `Review submitted (${input.verdict})` },
@@ -1917,7 +2003,8 @@ export function submitReview(taskId: string, input: SubmitReviewInput): SubmitRe
         note,
         patch: {
           codeRound: round,
-          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString() },
+          lastReview: { round, verdict: input.verdict, by: reviewer, at: new Date().toISOString(), sha: reviewed },
+          ...(routing.status === TaskStatus.Approved ? { approval: approvalOf({ ...task, codeRound: round }, reviewed, reviewer, false) } : {}),
           ...(blocker ? { blocker } : {}),
         },
       };
@@ -1943,7 +2030,11 @@ function prNumberOf(url: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** The agent with the `pr` role opened the PR: the task waits in pr_open until it is merged on GitHub. */
+/**
+ * The agent with the `pr` role opened the PR: the task waits in pr_open until
+ * it is merged on GitHub. A pushed commit other than the approved one (commits
+ * nobody verified or reviewed) sends the task to a person instead.
+ */
 export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
   const url = input.prUrl?.trim() || input.message?.match(PR_URL_RE)?.[0];
   // archive.ts parses this format (Branch/Commit/Authors/Worktree/Message).
@@ -1960,26 +2051,57 @@ export function submitPr(taskId: string, input: SubmitPrInput): SubmitResult {
     taskId,
     { from: TaskStatus.Merging, phase: "merge", messageType: "merge", event: "pr_opened", done: "Pull request recorded" },
     input,
-    (task) => ({
-      to: TaskStatus.PrOpen,
-      message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
-      details: url ?? details,
-      patch: {
-        headSha: input.commit || task.headSha,
-        realBranch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
-        pullRequest: {
-          url: url ?? null,
-          number: input.prNumber ?? prNumberOf(url),
-          state: "open",
-          branch: input.headBranch?.trim() || task.realBranch || task.recommendedBranch,
-          mergedAt: null,
-          mergedBy: null,
-          changesRequestedBy: [],
-          checks: null,
-          checkedAt: null,
+    (task) => {
+      const approved = task.approval?.sha;
+      const pushed = input.commit.trim();
+      const blocker: Blocker | null =
+        approved && pushed && !sameCommit(approved, pushed)
+          ? {
+              reason: `The pull request's head ${pushed.slice(0, 12)} is not the approved commit ${approved.slice(0, 12)}: it carries commits nobody verified or reviewed.`,
+              question:
+                "Send the task back to the coder (Changes requested) so the extra commits are verified and reviewed, accept the PR as it is (PR open; the L3 auto-merge stays off), or cancel it.",
+              phase: "merge",
+              fromStatus: task.status,
+              raisedBy: "system",
+              at: new Date().toISOString(),
+            }
+          : null;
+      const base = input.branch.trim();
+      if (base && base !== task.mergeBranch) {
+        addActivity(taskId, "pr_base_mismatch", "system", `The pull request targets ${base}, not the task's merge branch ${task.mergeBranch}.`);
+      }
+      const headBranch = input.headBranch?.trim() || task.realBranch || task.recommendedBranch;
+      // The PR's commit belongs to the round of the latest code submission.
+      const round = task.commits.filter((c) => c.phase === "code").at(-1)?.round ?? Math.max(1, task.codeRound);
+      return {
+        to: blocker ? TaskStatus.NeedsHuman : TaskStatus.PrOpen,
+        message: `${url ? `PR opened: ${url}. ` : "PR opened. "}${details}`,
+        details: url ?? details,
+        ...(blocker ? { note: { message: `**Blocked:** ${blocker.reason}\n\n**Question:** ${blocker.question}`, event: "task_blocked" } } : {}),
+        patch: {
+          headSha: pushed || task.headSha,
+          realBranch: headBranch,
+          commits: withCommit(task, "pr", pushed, round, headBranch),
+          pullRequest: {
+            url: url ?? null,
+            number: input.prNumber ?? prNumberOf(url),
+            state: "open",
+            branch: headBranch,
+            base: base || null,
+            authors: input.authors.trim() || null,
+            headSha: pushed || null,
+            mergedAt: null,
+            mergedBy: null,
+            changesRequestedBy: [],
+            // Kept across PRs of the task: a reopened PR still counts the earlier change requests.
+            changesEverRequestedBy: task.pullRequest?.changesEverRequestedBy ?? task.pullRequest?.changesRequestedBy ?? [],
+            checks: null,
+            checkedAt: null,
+          },
+          ...(blocker ? { blocker } : {}),
         },
-      },
-    }),
+      };
+    },
   );
 }
 

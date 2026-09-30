@@ -103,7 +103,7 @@ findings already verified cannot be answered again.
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
 | Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
-| The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR, or cancel) |
+| The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR or to the coder, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
 answer in the conversation and resets the round limits, the consecutive verification
@@ -115,33 +115,71 @@ not flagged again on later rounds.
 
 The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens
 the PR with the body AgentQ writes (`brief.pr.body`: summary, each acceptance criterion
-with its evidence, the verification, the AI review and the findings it addressed, the
-risk), then calls `submit_pr`: the task waits in `pr_open`. The human review happens on
+with its evidence, the verification, the review, the risk), then calls `submit_pr`: the
+task waits in `pr_open`. The review section gives the latest AI verdict with the commit it
+saw (or says it was about an earlier submission, when the code changed since and no AI
+reviewed it again), the person who approved the code when a person did, the findings
+addressed, and the open findings: blocker and major ones apart ("a person accepted"),
+since only a person can approve code with those open, then the non-blocking ones. The human review happens on
 the PR, where the diff and CI are.
 
 With the `gh` CLI installed and logged in, the web server checks every open PR each
-`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off):
+`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off). Its `gh` calls run in the
+background, one at a time, and each is killed after `AGENTQ_PR_SYNC_TIMEOUT_SEC` (30 s),
+so a slow or stuck GitHub never holds up the server:
 
 | On GitHub | Task |
 |---|---|
 | Merged | `complete`, credited to the person who merged it (archived too when the project's `autoArchive` is on) |
 | Closed without merging | `needs_human` |
+| A reviewer asks for changes (their latest review, submitted since the task entered `pr_open`) | `changes_requested`: the review becomes a finding the coder answers by id |
 | Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
 
 Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
 merged** on the task page.
 
+**Changes on the PR.** The PR is where a person reviews the code, so its feedback goes
+back to the coder: a change request on GitHub (picked up by the sync) or **Request
+changes** on the task page (`POST /api/tasks/:id/request-pr-changes`, which works without
+`gh` too) moves the task from `pr_open` to `changes_requested`. The request becomes a
+finding (`H<round>-<n>`) the coder must answer by id, like a change request on the code
+review. The PR stays open and stays on the task: the coder commits on the same branch,
+the code goes through verification and review again, and the `pr` phase pushes to the
+same PR and refreshes its body instead of opening a new one. A request the coder already
+got is not sent again while it stays on GitHub; it keeps holding back the L3 auto-merge
+until the reviewer approves or dismisses it.
+
+With `autoArchive` on, every way a task completes through its PR archives it: a merge
+the sync sees, an L3 auto-merge and **Mark merged**. When archiving fails (for example
+the project folder moved), the task stays complete and its activity shows an
+`archive_failed` event with the reason.
+
+**Only the approved commit ships.** Every approval (the AI reviewer's, a person's
+**Approve code**, or a person answering a review blocker with `approved`) records who
+approved and which commit (`task.approval`: the worktree's `HEAD`, else the submitted
+commit). The `pr` phase gets it as `brief.pr.commit` and never commits leftovers itself.
+A `submit_pr` whose pushed commit is not the approved one (commits nobody verified or
+reviewed) goes to `needs_human` with the PR recorded: send the task back to the coder,
+accept the PR as it is (`pr_open`), or cancel it.
+
 **L3 auto-merge.** With `autonomy: 3` and `autoMerge: true`, the sync merges a PR
-itself (`gh pr merge --squash`) when the task is **low risk**, every check is green and
-no one asked for changes on GitHub. Anything else waits for a person.
+itself (`gh pr merge --squash --match-head-commit <head>`) when the task is **low
+risk**, every check is green, no reviewer's latest review asks for changes (only each
+reviewer's newest approve, request-changes or dismissal counts; a later comment does not
+clear a change request) and the PR's head (`headRefOid`) is the approved commit. A head
+with commits pushed after the approval is reported in the sync's errors and never merged;
+`--match-head-commit` makes GitHub refuse a commit that lands in between.
+Anything else waits for a person. The metrics still count a change request that was
+approved later.
 
 ## What needs you
 
 The **Needs you** page lists every task waiting for a person, grouped by what they must
 do and oldest first: answer a blocker, approve a plan (medium or high risk), review code
 (high risk, a spot check, or no reviewer available), merge a PR, or refine a draft that
-is not ready. On a code review the task page shows the AI verdict, the verification, the
-diff size, the risk and the criteria in one panel; answered findings can be ticked to
+is not ready. On a code review the task page shows the AI verdict (marked "before the
+last change" when the code was submitted again since), the verification, the diff size,
+the risk and the criteria in one panel; answered findings can be ticked to
 reopen them with the change request, which becomes a finding (`H<round>-<n>`) the coder
 must answer by id.
 

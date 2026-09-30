@@ -610,6 +610,22 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    // Who approved the code and which commit: the PR and the auto-merge ship only that commit.
+    name: "029_task_approval",
+    up: (d) => addColumn(d, "tasks", "approval TEXT"),
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET approval = NULL"); } catch {}
+    },
+  },
+  {
+    // The commit of every code submission, verification and PR, with its round and branch.
+    name: "029_task_commits",
+    up: (d) => addColumn(d, "tasks", "commits TEXT DEFAULT '[]'"),
+    down: (d) => {
+      try { d.exec("UPDATE tasks SET commits = '[]'"); } catch {}
+    },
+  },
 ];
 
 function runMigrations(): void {
@@ -722,9 +738,11 @@ function rowToTask(row: any): Task {
     producers: parseJson(row.producers, {}),
     leaseExpiresAt: row.lease_expires_at ?? null,
     lastReview: parseJson(row.last_review, null),
+    approval: parseJson(row.approval, null),
     validationPlan: parseJson(row.validation_plan, null),
     approvedPlan: parseJson(row.approved_plan, null),
     headSha: row.head_sha ?? null,
+    commits: parseJson(row.commits, []),
     diffStats: parseJson(row.diff_stats, null),
     verification: parseJson(row.verification, null),
     riskReasons: parseJson(row.risk_reasons, []),
@@ -882,9 +900,11 @@ export function createTask(data: {
     producers: {},
     leaseExpiresAt: null,
     lastReview: null,
+    approval: null,
     validationPlan: null,
     approvedPlan: null,
     headSha: null,
+    commits: [],
     diffStats: null,
     verification: null,
     riskReasons: [],
@@ -1070,9 +1090,11 @@ const TASK_COLUMNS = {
   producers: { column: "producers", json: true },
   leaseExpiresAt: { column: "lease_expires_at", json: false },
   lastReview: { column: "last_review", json: true },
+  approval: { column: "approval", json: true },
   validationPlan: { column: "validation_plan", json: true },
   approvedPlan: { column: "approved_plan", json: true },
   headSha: { column: "head_sha", json: false },
+  commits: { column: "commits", json: true },
   diffStats: { column: "diff_stats", json: true },
   verification: { column: "verification", json: true },
   riskReasons: { column: "risk_reasons", json: true },

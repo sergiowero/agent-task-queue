@@ -184,6 +184,7 @@ stateDiagram-v2
     merging --> pr_open: submit_pr (PR opened)
     pr_open --> complete: PR merged on GitHub
     pr_open --> needs_human: PR closed
+    pr_open --> changes_requested: changes requested on the PR
     complete --> [*]
     planning --> needs_human: report_blocker
     coding --> needs_human: report_blocker
@@ -198,7 +199,7 @@ Everything waiting for you is in the **Needs you** inbox (sidebar), oldest first
 
 Each project has an autonomy level (L0–L3, default **L2**). From L1 up, `submit_code` goes straight to an AI review, and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and after three rounds (or a high-risk task, or a random spot check) a person decides. Nobody critiques, verifies or reviews their own plan or code, in any round: a second runner (or agent session) that can review picks it up, and the Runners page warns when no runner may. L0 keeps every gate human. See [docs/policy.md](docs/policy.md).
 
-The task ends on GitHub. The agent with the `pr` role opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
+The task ends on GitHub. The agent with the `pr` role opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you, and a change request (on GitHub, or **Request changes** on the task page) sends it back to the coder: the fix goes through verification and review again and lands on the same PR. Without `gh`, click **Mark merged**. At **L3** with `autoMerge`, green low-risk PRs merge themselves, as long as their head is the commit the review approved. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
 Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds before any reviewer spends time on them. The server also reads every submission's diff itself: weakened tests go straight back to the coder, and changes to protected paths or an oversized diff send the task to a person, with or without commands. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
 
@@ -299,6 +300,7 @@ Skills are the playbooks agents follow in each phase. `bun run install:skills` c
 | `AGENTQ_HOME` | `~/.agentq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
 | `AGENTQ_PR_SYNC_SEC` | `180` | How often the server asks `gh` about open PRs (`AGENTQ_PR_SYNC=0` turns it off) |
+| `AGENTQ_PR_SYNC_TIMEOUT_SEC` | `30` | Kill a `gh` call of the PR sync that runs longer than this (the sync never blocks the server) |
 
 Point the MCP server at another database with `bun run install:mcp --db <path>`.
 

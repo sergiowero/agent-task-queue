@@ -75,6 +75,26 @@ export interface LastReview {
   verdict: Verdict;
   by: string;
   at: string;
+  /** The commit the reviewer looked at (absent on old reviews). */
+  sha?: string | null;
+  /** The code was submitted again since: this verdict is about an earlier submission. */
+  stale?: boolean;
+}
+
+/**
+ * The approval that sent the code to the pull request: who approved it and
+ * which commit. The PR and the L3 auto-merge ship only this commit.
+ */
+export interface Approval {
+  /** The approved commit; null when neither the worktree nor the submission named one. */
+  sha: string | null;
+  /** The AI reviewer's agent id, or the person who approved ("user"). */
+  by: string;
+  /** A person approved (on the task page, or answering a blocker), not the AI reviewer. */
+  human: boolean;
+  /** AI code reviews so far when it was approved (task.codeRound). */
+  round: number;
+  at: string;
 }
 
 /** A review finding, tracked by id across rounds ("R2-3" = code review round 2, finding 3). */
@@ -130,6 +150,17 @@ export interface Evidence {
   createdAt: string;
 }
 
+/** A commit the task's work went through: one per code submission, verification and pull request. */
+export interface CommitRecord {
+  /** The code round it belongs to (the round its code submission is reviewed in). */
+  round: number;
+  /** code: the coder submitted it · verify: the verifier checked it · pr: the pull request's head. */
+  phase: "code" | "verify" | "pr";
+  sha: string;
+  branch: string | null;
+  at: string;
+}
+
 export interface DiffStats {
   files: number;
   insertions: number;
@@ -171,10 +202,21 @@ export interface PullRequest {
   state: "open" | "merged" | "closed";
   /** Head branch, used to find the PR when the URL is unknown. */
   branch: string | null;
+  /** Base branch submit_pr named (absent on old tasks). */
+  base?: string | null;
+  /** Who wrote the code, as submit_pr named them (absent on old tasks). */
+  authors?: string | null;
   mergedAt: string | null;
   mergedBy: string | null;
-  /** People who asked for changes on GitHub (for the "human rejection after AI approval" metric). */
+  /** The PR's head commit: what submit_pr pushed, then what GitHub reports (absent on old tasks). */
+  headSha?: string | null;
+  /** GitHub users whose latest review asks for changes (it holds back the L3 auto-merge). */
   changesRequestedBy: string[];
+  /**
+   * Everyone who asked for changes on the task's PR at any point, even if they
+   * approved later (for the "human rejection after AI approval" metric). Absent on old tasks.
+   */
+  changesEverRequestedBy?: string[];
   checks: "pending" | "success" | "failure" | null;
   checkedAt: string | null;
 }
@@ -257,12 +299,16 @@ export interface Task {
   /** Hand-opened agent sessions must show activity before this time or lose the claim. */
   leaseExpiresAt: string | null;
   lastReview: LastReview | null;
+  /** Who approved the code for the pull request, and which commit (null until approved). */
+  approval: Approval | null;
   /** The latest plan's validation plan (proposed; approvedPlan holds the approved one). */
   validationPlan: ValidationPlan | null;
   /** Frozen when the plan is approved; the coder may not change it. */
   approvedPlan: ApprovedPlan | null;
-  /** Commit the coder says it submitted. */
+  /** The latest submitted commit: the worktree's HEAD when the server can read it, else what the agent said. */
   headSha: string | null;
+  /** Every commit recorded along the way, oldest first (code submissions, verifications, the PR). */
+  commits: CommitRecord[];
   diffStats: DiffStats | null;
   verification: Verification | null;
   /** Why the risk was raised (touched protected paths, a large diff, the plan). */

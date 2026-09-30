@@ -12,6 +12,7 @@ export const HUMAN_DECISIONS = new Set([
   "plan_changes_requested",
   "code_approved",
   "code_changes_requested",
+  "pr_changes_requested",
   "ai_review_requested",
   "task_completed",
   "task_canceled",
@@ -109,9 +110,13 @@ export function computeMetrics(filter: MetricsFilter = {}): FlowMetrics {
       aiApproved++;
       const firstApproval = approvals[0].createdAt;
       const humanSentBack = events.some(
-        (e) => e.actor === "user" && e.eventType === "code_changes_requested" && e.createdAt >= firstApproval,
+        (e) =>
+          e.actor === "user" &&
+          (e.eventType === "code_changes_requested" || e.eventType === "pr_changes_requested") &&
+          e.createdAt >= firstApproval,
       );
-      if (humanSentBack || (task.pullRequest?.changesRequestedBy.length ?? 0) > 0) rejectedAfterAi++;
+      const pr = task.pullRequest;
+      if (humanSentBack || (pr?.changesEverRequestedBy ?? pr?.changesRequestedBy ?? []).length > 0) rejectedAfterAi++;
     }
 
     const done = task.history.find((h) => h.new_status === TaskStatus.Complete);
