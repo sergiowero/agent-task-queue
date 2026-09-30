@@ -284,7 +284,7 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               checked={requireDifferentModel}
               onChange={setRequireDifferentModel}
               label="Reviewer uses a different model"
-              description="An AI review is never claimed by an agent on the coder's model."
+              description="A plan critique, verification or AI review is never claimed by an agent on the model of anyone who wrote the plan or code. A blank model counts as the tool's own default."
             />
           </div>
         )}

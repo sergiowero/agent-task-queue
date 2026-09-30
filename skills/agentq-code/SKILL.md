@@ -58,7 +58,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 
 ## Commit Before Submit
 
-Every time you change code, commit it. Do NOT call `submit_code` with uncommitted changes in the worktree.
+Every time you change code, commit it. Do NOT call `submit_code` with uncommitted changes in the worktree: the verifier refuses a worktree with uncommitted or untracked files (`git status --porcelain` must be empty; gitignore generated files) or checked out at another commit than your `headSha`, and sends the code back.
 
 ### Initial implementation (claimed from `ready_for_code`)
 
@@ -111,13 +111,13 @@ Commit your changes in the worktree BEFORE calling `submit_code` — it only rec
 
 - `evidence.summary` holds the relevant output lines, not the whole log.
 - `criteria` is your view; the verifier and the reviewer check every criterion themselves without seeing it. Evidence and criteria go into the pull request body for people.
-- `findingResolutions` is required for every open finding (none on the first round).
+- `findingResolutions` is required for every open finding (none on the first round), and only for open code findings: the tool refuses a plan finding (`P…`) or one a reviewer already verified.
 
 `context` is required too (see Context Handoff in `agentq-claim`). It is for the coder of the next round and the person who merges: known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
 
 The verifier and the reviewer check your work independently: they never see your `message`, `context`, `evidence` or `criteria`, only the task, the diff and the commands they run. Make the code, the tests and the commit messages speak for themselves. The only words of yours a reviewer reads are the `resolution` of a `wontfix` finding, so give the real reason there.
 
-It stores the worktree path and the evidence and releases the task. When the project has commands, the AgentQ verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output, and deleted, skipped or weakened tests count as a failure. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It stores the worktree path and the evidence and releases the task. The server checks your committed diff on every submit: deleted, moved-out, skipped or weakened tests (and lowered or removed coverage thresholds) send the task straight back, and protected paths or a large diff send it to a person. When the project has commands, the AgentQ verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Code Template
 

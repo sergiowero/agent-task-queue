@@ -117,6 +117,7 @@ export {
   editTask,
   verifierOnline,
   hasVerificationCommands,
+  raiseRisk,
   reportBlocker,
   resolveBlocker,
   approvePlan,
@@ -181,10 +182,18 @@ export {
 } from "./policy.js";
 
 export {
+  separationGaps,
+  type SeparationGap,
+  type SeparationProject,
+  type SeparationRunner,
+} from "./separation.js";
+
+export {
   addFindings,
   getFinding,
   getFindings,
   getOpenFindings,
+  getUnverifiedFindings,
   updateFinding,
   addEvidence,
   getEvidence,
@@ -249,6 +258,7 @@ export {
 } from "./skills.js";
 
 export { git, isGitRepo, detectDefaultBranch, detectProjectCommands } from "./git.js";
+export { analyzeDiff, protectedFiles, diffRiskReasons, mergeDiffReasons, type DiffAnalysis } from "./diff.js";
 
 export {
   archiveTask,

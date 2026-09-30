@@ -3,22 +3,31 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import type { Task } from "@agentq/shared";
+import type { SubmitCodeInput, Task } from "@agentq/shared";
 import {
   TaskStatus,
+  analyzeDiff,
+  buildTaskBrief,
+  cancelTask,
   claimNextTask,
   createProject,
   createTask,
+  getActivityEvents,
   getEvidence,
   getProjectById,
   getTaskById,
+  patchTask,
+  renderPrBody,
+  resolveBlocker,
   setAppState,
   submitCode,
   submitReview,
   submitVerification,
+  sweepQueue,
   updateProject,
+  verifierOnline,
 } from "@agentq/shared";
-import { analyzeDiff, runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
+import { execCommand, runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
 
 process.env.AGENTQ_DB_PATH = ":memory:";
 const HOME = mkdtempSync(join(tmpdir(), "agentq-verify-home-"));
@@ -97,13 +106,20 @@ async function verify(projectId: string, opts: Parameters<typeof runVerification
   return getTaskById(claimed.task.id)!;
 }
 
-function recode(task: Task, worktree: string, files: Record<string, string | null> = {}) {
+function recode(task: Task, worktree: string, files: Record<string, string | null> = {}, extra: Partial<SubmitCodeInput> = {}) {
   if (Object.keys(files).length) commit(worktree, files);
   const c = claimNextTask({ roles: ["code"], agent: coder, projectId: task.projectId! })!;
   expect(c.task.id).toBe(task.id);
   setAppState("verifier_heartbeat", new Date().toISOString());
-  submitCode(task.id, { message: "again", worktree, claimToken: c.claimToken });
+  submitCode(task.id, { message: "again", worktree, claimToken: c.claimToken, ...extra });
   return getTaskById(task.id)!;
+}
+
+/** An AI review that asks for one (minor) change; returns the finding's id. */
+function requestChanges(projectId: string): string {
+  const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId })!;
+  submitReview(r.task.id, { verdict: "request_changes", message: "fix", findings: [{ severity: "minor", text: "rename" }], claimToken: r.claimToken });
+  return `R${r.task.codeRound + 1}-1`;
 }
 
 beforeAll(() => {
@@ -157,6 +173,59 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(second.blocker?.reason).toContain("failed 2 times");
   });
 
+  it("a person's answer resets the failure count, and the blocker names what failed", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "console.error('boom'); process.exit(1)"` });
+    coded(pid, worktree);
+    recode(await verify(pid), worktree);
+    const blocked = await verify(pid);
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker?.reason).toContain("Failing now:");
+    expect(blocked.blocker?.reason).toContain("❌");
+    expect(blocked.blocker?.reason).toContain("process.exit(1)");
+
+    const resolved = resolveBlocker(blocked.id, { answer: "Fixed the environment, try again.", targetStatus: TaskStatus.ChangesRequested });
+    expect(resolved.verifyFailures).toBe(0);
+    recode(resolved, worktree);
+    const again = await verify(pid);
+    expect(again.status).toBe(TaskStatus.ChangesRequested);
+    recode(again, worktree);
+    expect((await verify(pid)).status).toBe(TaskStatus.NeedsHuman);
+  });
+
+  it("weakened tests a person accepts are not flagged again, and the answer resets the strikes", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const first = coded(pid, worktree);
+    const blocked = recode(first, worktree, { "src/a.ts": "export const a = 2;\n" });
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.verification?.tamperStrikes).toBe(2);
+
+    // The person rules the skip legitimate and sends the code on.
+    const resolved = resolveBlocker(blocked.id, { answer: "The skip is intended.", targetStatus: TaskStatus.CodeReviewRequested });
+    expect(resolved.verification?.tamperStrikes).toBe(0);
+    expect(resolved.verification?.acceptedTampering).toEqual(blocked.verification?.tampering);
+
+    // An unrelated change later: the accepted skip is still in the diff but not flagged.
+    const finding = requestChanges(pid);
+    const recoded = recode(resolved, worktree, { "src/a.ts": "export const a = 3;\n" }, {
+      findingResolutions: [{ id: finding, status: "fixed", resolution: "renamed" }],
+    });
+    expect(recoded.status).toBe(TaskStatus.VerifyRequested);
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(verified.verification?.tampering).toEqual([]);
+
+    // New tampering after the answer is a first strike again: back to the coder, not to a person.
+    const second = requestChanges(pid);
+    const deleted = recode(verified, worktree, { "src/a.test.ts": null }, {
+      findingResolutions: [{ id: second, status: "fixed", resolution: "done" }],
+    });
+    expect(deleted.status).toBe(TaskStatus.ChangesRequested);
+    expect(deleted.verification).toMatchObject({ tamperStrikes: 1, tampering: ["deleted test file src/a.test.ts"] });
+  });
+
   it("a command that fails once and then passes is marked flaky", async () => {
     const { repo, worktree } = makeRepo();
     const marker = join(root, `flaky-${randomUUID()}`);
@@ -177,19 +246,101 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(getEvidence(task.id)[0].summary).toContain("Timed out");
   }, 15_000);
 
-  it("skipped or deleted tests count as tampering: back to the coder, then to a person", async () => {
+  it.skipIf(process.platform === "win32")("a timeout kills the whole command, not just the shell", async () => {
+    const started = Date.now();
+    const result = await execCommand("true && sleep 20", root, 500);
+    expect(result).toMatchObject({ exitCode: 124, timedOut: true });
+    expect(Date.now() - started).toBeLessThan(3000);
+
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: "true && sleep 20" });
+    coded(pid, worktree);
+    const at = Date.now();
+    const task = await verify(pid, { timeoutMs: 500 });
+    expect(Date.now() - at).toBeLessThan(3000);
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    expect(getEvidence(task.id)[0].summary).toContain("Timed out");
+  }, 15_000);
+
+  it("skipped or deleted tests are caught on submit, before the verifier: back to the coder, then to a person", () => {
     const { repo, worktree } = makeRepo();
     const pid = project(repo, { test: `${BUN} -e "0"` });
     commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
-    coded(pid, worktree);
-    const first = await verify(pid);
+    const first = coded(pid, worktree);
     expect(first.status).toBe(TaskStatus.ChangesRequested);
+    expect(first.verification).toMatchObject({ passed: false, skipped: false, tamperStrikes: 1 });
     expect(first.verification?.tampering[0]).toContain("skipped or focused test added in src/a.test.ts");
-    recode(first, worktree, { "src/a.test.ts": null });
-    const second = await verify(pid);
+    expect(first.conversation.at(-1)?.message).toContain("Test tampering");
+    const second = recode(first, worktree, { "src/a.test.ts": null });
     expect(second.verification?.tampering.some((t) => t.includes("deleted test file src/a.test.ts"))).toBe(true);
     expect(second.status).toBe(TaskStatus.NeedsHuman);
+    expect(second.blocker).toMatchObject({ phase: "verify" });
     expect(second.blocker?.reason).toContain("Tests were weakened again");
+  });
+
+  it("without commands the diff is still checked: tampering goes back, protected paths raise the risk", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, {}, { protectedPaths: ["migrations/**"] });
+    commit(worktree, { "src/a.test.ts": "it.only('works', () => {});\n" });
+    const tampered = coded(pid, worktree);
+    expect(tampered.status).toBe(TaskStatus.ChangesRequested);
+    expect(tampered.verification?.tampering).toHaveLength(1);
+
+    const fixed = recode(tampered, worktree, { "src/a.test.ts": "it('works', () => {});\n", "migrations/001.sql": "create table x (id int);\n" });
+    expect(fixed.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(fixed.verification).toMatchObject({ skipped: true, tampering: [] });
+    expect(fixed.risk).toBe("high");
+    expect(fixed.riskReasons).toEqual(["Touches protected paths: migrations/001.sql"]);
+    expect(fixed.diffStats).toEqual({ files: 1, insertions: 1, deletions: 0 });
+    expect(getActivityEvents({ taskId: fixed.id }).some((e) => e.eventType === "risk_raised")).toBe(true);
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
+    const out = submitReview(r.task.id, { verdict: "approve", message: "ok", claimToken: r.claimToken });
+    expect(out.newStatus).toBe(TaskStatus.WaitingCodeReview);
+  });
+
+  it("with the verifier offline, weakened tests still go back and a large diff still raises the risk", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: "bun test" }, { maxDiffLines: 5 });
+    const submitOffline = (files: Record<string, string | null>) => {
+      commit(worktree, files);
+      const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+      setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+      submitCode(c.task.id, { message: "c", worktree, claimToken: c.claimToken });
+      return getTaskById(c.task.id)!;
+    };
+    createTask({ title: "offline", description: "d", projectId: pid });
+    const tampered = submitOffline({ "src/a.test.ts": null });
+    expect(tampered.status).toBe(TaskStatus.ChangesRequested);
+    expect(tampered.verification?.tampering).toEqual(["deleted test file src/a.test.ts"]);
+
+    const big = submitOffline({ "src/a.test.ts": "it('works', () => {});\n", "src/big.ts": "x\n".repeat(20) });
+    expect(big.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(big.verification?.note).toContain("not running");
+    expect(big.risk).toBe("high");
+    expect(big.riskReasons).toEqual(["Diff of 20 lines exceeds the project's 5"]);
+  });
+
+  it("the server checks an agent verifier's report against the diff itself", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` }, { protectedPaths: ["migrations/**"] });
+    const task = coded(pid, worktree);
+    expect(task.status).toBe(TaskStatus.VerifyRequested);
+    // The agent verifier reports a clean pass and no diff; the branch it verified says otherwise.
+    commit(worktree, { "migrations/001.sql": "create table x (id int);\n", "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const claimed = claimNextTask({ roles: ["verify"], agent: { ...reviewer, sessionId: "llm-verifier" }, projectId: pid })!;
+    submitVerification(task.id, {
+      passed: true,
+      evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "1 pass" }],
+      tampering: [],
+      claimToken: claimed.claimToken,
+    });
+    const verified = getTaskById(task.id)!;
+    expect(verified.status).toBe(TaskStatus.ChangesRequested);
+    expect(verified.verification?.tampering[0]).toContain("skipped or focused test added in src/a.test.ts");
+    expect(verified.verification?.verifiedSha).toBe(git(worktree, "rev-parse", "HEAD"));
+    expect(verified.risk).toBe("high");
+    expect(verified.riskReasons).toEqual(["Touches protected paths: migrations/001.sql"]);
+    expect(verified.diffStats).toEqual({ files: 2, insertions: 2, deletions: 1 });
   });
 
   it("detects lowered coverage thresholds", () => {
@@ -198,6 +349,25 @@ describe.skipIf(!hasGit)("verification", () => {
     git(worktree, "branch", "base", "HEAD");
     commit(worktree, { "vitest.config.ts": "export default { coverage: { lines: 50 } };\n" });
     expect(analyzeDiff(worktree, "base")!.tampering).toEqual(["coverage lines lowered from 90 to 50 in vitest.config.ts"]);
+  });
+
+  it("a test the approved plan promised but the coder did not add fails its criterion", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    const task = coded(pid, worktree, { acceptanceCriteria: [{ text: "exports", verify: { kind: "test" } }] });
+    patchTask(task.id, {
+      approvedPlan: {
+        markdown: "plan",
+        validation: { items: [{ criterionId: "AC1", how: "unit test", newTests: ["src/b.test.ts", "src/a.test.ts"] }], regressionCommands: [] },
+        approvedBy: "user",
+        at: new Date().toISOString(),
+      },
+    });
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.ChangesRequested);
+    const missing = getEvidence(verified.id).filter((e) => e.exitCode === 1);
+    expect(missing.map((e) => [e.criterionId, e.summary])).toEqual([["AC1", "Planned test src/b.test.ts was not added."]]);
+    expect(verified.acceptanceCriteria[0].status).toBe("failed");
   });
 
   it("touching protected paths or a large diff raises the risk to high, so a person reviews", async () => {
@@ -239,6 +409,85 @@ describe.skipIf(!hasGit)("verification", () => {
       ["AC1", "met"],
       ["AC2", "pending"],
     ]);
+    // The pass says which commands it does not cover.
+    const body = renderPrBody(verified);
+    expect(body).toContain("✅ Passed");
+    expect(body).toContain("⚠ Skipped (not in the project's commands or verify allowlist): `curl http://example.com` (AC2)");
+  });
+
+  it("the project's commands always run; a plan's regression commands only add to them", () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { install: "bun install", typecheck: "bun run typecheck", test: "bun test" });
+    const task = coded(pid, worktree);
+    patchTask(task.id, {
+      approvedPlan: {
+        markdown: "plan",
+        validation: { items: [], regressionCommands: ["bun test src/foo.test.ts", "bun test"] },
+        approvedBy: "critic-agent",
+        at: new Date().toISOString(),
+      },
+    });
+    const commands = verificationCommands(getTaskById(task.id)!, getProjectById(pid));
+    expect(commands.map((c) => [c.command, c.source])).toEqual([
+      ["bun install", "project"],
+      ["bun run typecheck", "project"],
+      ["bun test", "project"],
+      ["bun test src/foo.test.ts", "plan"],
+    ]);
+  });
+
+  it("when every command is skipped the code is not verified, never passed", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, {});
+    const task = coded(pid, worktree, { acceptanceCriteria: [{ text: "works", verify: { kind: "command", command: "./gradlew test" } }] });
+    expect(task.status).toBe(TaskStatus.VerifyRequested);
+    const verified = await verify(pid);
+    expect(verified.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(verified.verification).toMatchObject({ passed: false, skipped: true });
+    expect(verified.verification?.note).toContain("no verification command ran");
+    expect(verified.verification?.note).toContain("`./gradlew test`");
+    expect(verified.verifyFailures).toBe(0);
+    expect(renderPrBody(verified)).not.toContain("Passed");
+    expect(renderPrBody(verified)).toContain("Not verified");
+
+    // An agent verifier's pass with nothing that ran is not verified either.
+    const other = coded(pid, worktree, { acceptanceCriteria: [{ text: "works", verify: { kind: "command", command: "./gradlew test" } }] });
+    const claimed = claimNextTask({ roles: ["verify"], agent: { ...reviewer, sessionId: "llm-verifier-2" }, projectId: pid })!;
+    expect(claimed.task.id).toBe(other.id);
+    submitVerification(other.id, {
+      passed: true,
+      evidence: [{ kind: "command", command: "./gradlew test", criterionId: "AC1", skipped: true, summary: "no gradle" }],
+      claimToken: claimed.claimToken,
+    });
+    expect(getTaskById(other.id)!.verification).toMatchObject({ passed: false, skipped: true });
+  });
+
+  it("uncommitted changes in the worktree are refused before any command runs", async () => {
+    const { repo, worktree } = makeRepo();
+    const marker = join(root, `ran-${randomUUID()}`);
+    const pid = project(repo, { test: `${BUN} -e ${JSON.stringify(`require('fs').writeFileSync(${JSON.stringify(marker)}, '1')`)}` });
+    commit(worktree, { "src/a.ts": "export const a = 2;\n" });
+    write(worktree, "src/a.ts", "export const a = 3;\n");
+    write(worktree, "src/extra.ts", "export {};\n");
+    coded(pid, worktree);
+    const task = await verify(pid);
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    const [row] = getEvidence(task.id);
+    expect(row).toMatchObject({ command: "git status --porcelain", exitCode: 1 });
+    expect(row.summary).toContain("Uncommitted changes");
+    expect(row.summary).toContain("src/extra.ts");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("a worktree checked out at another commit than the submitted one fails", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.ts": "export const a = 2;\n" });
+    const submitted = coded(pid, worktree);
+    commit(worktree, { "src/a.ts": "export const a = 3;\n" });
+    const task = await verify(pid);
+    expect(task.status).toBe(TaskStatus.ChangesRequested);
+    expect(getEvidence(task.id)[0].summary).toContain(`is not the submitted commit ${submitted.headSha!.slice(0, 12)}`);
   });
 
   it("without commands, or without a running verifier, the code goes straight to review", () => {
@@ -267,6 +516,107 @@ describe.skipIf(!hasGit)("verification", () => {
     expect(task.status).toBe(TaskStatus.NeedsHuman);
     expect(task.verifyFailures).toBe(0);
     expect(task.blocker?.phase).toBe("verify");
+    // The code was not verified, whatever an earlier submission's result said.
+    expect(task.verification).toMatchObject({ passed: false, skipped: true });
+    expect(task.verification?.note).toContain("does not exist");
+  });
+
+  it("a new submission never shows the previous verification: pending, then not verified when the verifier is gone", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    coded(pid, worktree);
+    expect((await verify(pid)).verification).toMatchObject({ passed: true, skipped: false });
+    const r = claimNextTask({ roles: ["review"], agent: reviewer, projectId: pid })!;
+    submitReview(r.task.id, { verdict: "request_changes", message: "fix", findings: [{ severity: "minor", text: "rename" }], claimToken: r.claimToken });
+
+    commit(worktree, { "src/a.ts": "export const a = 3;\n" });
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    setAppState("verifier_heartbeat", new Date().toISOString());
+    submitCode(c.task.id, {
+      message: "renamed",
+      worktree,
+      findingResolutions: [{ id: "R1-1", status: "fixed", resolution: "renamed" }],
+      claimToken: c.claimToken,
+    });
+    const pending = getTaskById(c.task.id)!;
+    expect(pending.status).toBe(TaskStatus.VerifyRequested);
+    expect(pending.verification).toMatchObject({ round: 2, passed: false, skipped: true, note: "Waiting for the verifier." });
+    expect(renderPrBody(pending)).not.toContain("Passed");
+
+    // The verifier never comes: the sweeper sends the code on, marked as not verified.
+    sweepQueue(new Date(Date.now() + 10 * 60_000));
+    const swept = getTaskById(c.task.id)!;
+    expect(swept.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(swept.verification?.note).toContain("verifier is not running");
+    expect(renderPrBody(swept)).toContain("Not verified");
+    expect(renderPrBody(swept)).not.toContain("Passed");
+  });
+
+  it("red then green in the same round: the brief lists no failing command", async () => {
+    const { repo, worktree } = makeRepo();
+    const marker = join(root, `green-${randomUUID()}`);
+    const pid = project(repo, { test: `${BUN} -e ${JSON.stringify(`process.exit(require('fs').existsSync(${JSON.stringify(marker)}) ? 0 : 1)`)}` });
+    coded(pid, worktree);
+    const red = await verify(pid);
+    expect(red.status).toBe(TaskStatus.ChangesRequested);
+    expect(buildTaskBrief(red)!.verification?.failing).toHaveLength(1);
+    writeFileSync(marker, "1");
+    recode(red, worktree);
+    const green = await verify(pid);
+    expect(green.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(green.verification?.round).toBe(red.verification?.round);
+    expect(buildTaskBrief(green)!.verification?.failing).toEqual([]);
+    expect(getEvidence(green.id).find((e) => e.id === green.verification?.evidenceIds?.[0])?.logPath).toContain("verify-R1-2-1.log");
+  });
+
+  it("the tamper strikes survive the pending record: weakened again at verification asks a person", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    commit(worktree, { "src/a.test.ts": "it.skip('works', () => {});\n" });
+    const first = coded(pid, worktree);
+    expect(first.verification?.tamperStrikes).toBe(1);
+    const clean = recode(first, worktree, { "src/a.test.ts": "it('works', () => {});\n" });
+    expect(clean.status).toBe(TaskStatus.VerifyRequested);
+    expect(clean.verification).toMatchObject({ skipped: true, tamperStrikes: 1 });
+    commit(worktree, { "src/a.test.ts": null });
+    const second = await verify(pid);
+    expect(second.status).toBe(TaskStatus.NeedsHuman);
+    expect(second.blocker?.reason).toContain("Tests were weakened again");
+  });
+
+  it("the worker keeps its heartbeat while a long verification runs", async () => {
+    const { repo, worktree } = makeRepo();
+    const pid = project(repo, { test: `${BUN} -e "0"` });
+    coded(pid, worktree);
+    let finish!: () => void;
+    const running = new Promise<void>((r) => (finish = r));
+    const worker = new VerifyWorker({
+      heartbeatMs: 20,
+      intervalMs: 60_000,
+      run: async () => {
+        await running;
+        return { passed: true, evidence: [] };
+      },
+    });
+    setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+    worker.start();
+    for (let i = 0; i < 50 && !worker.currentTaskId; i++) await Bun.sleep(10);
+    expect(worker.currentTaskId).not.toBeNull();
+    setAppState("verifier_heartbeat", new Date(Date.now() - 10 * 60_000).toISOString());
+    await Bun.sleep(100);
+    expect(verifierOnline()).toBe(true);
+
+    // Other code submitted meanwhile still waits for the verifier instead of skipping it.
+    const other = createTask({ title: "meanwhile", description: "d", projectId: pid });
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(other.id);
+    submitCode(other.id, { message: "c", worktree, claimToken: c.claimToken });
+    expect(getTaskById(other.id)!.status).toBe(TaskStatus.VerifyRequested);
+
+    finish();
+    for (let i = 0; i < 50 && worker.currentTaskId; i++) await Bun.sleep(10);
+    worker.stop();
+    cancelTask(other.id);
   });
 
   it("the worker claims and verifies a task on its own", async () => {

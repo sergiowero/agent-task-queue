@@ -4,7 +4,14 @@ import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { Task, Project } from "@agentq/shared";
-import { TaskStatus, createTask, beginTransaction, rollbackTransaction, skillsBundleVersion } from "@agentq/shared";
+import {
+  TaskStatus,
+  createTask,
+  beginTransaction,
+  getTaskById,
+  rollbackTransaction,
+  skillsBundleVersion,
+} from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import { startServer } from "./index.js";
 
@@ -121,6 +128,94 @@ describe("startServer", () => {
     const res = await api("/api/does-not-exist");
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "not found" });
+  });
+
+  it("listens on loopback unless AGENTQ_HOST names another address", () => {
+    const saved = process.env.AGENTQ_HOST;
+    try {
+      delete process.env.AGENTQ_HOST;
+      const local = startServer({ port: 0, dev: false });
+      expect(local.hostname).toBe("127.0.0.1");
+      local.stop(true);
+
+      process.env.AGENTQ_HOST = "localhost";
+      const named = startServer({ port: 0, dev: false });
+      expect(named.hostname).toBe("localhost");
+      named.stop(true);
+    } finally {
+      if (saved === undefined) delete process.env.AGENTQ_HOST;
+      else process.env.AGENTQ_HOST = saved;
+    }
+  });
+});
+
+describe("request guard: a web page cannot drive the local API", () => {
+  it("refuses a state-changing request that is not JSON with 415", async () => {
+    const title = `text/plain ${randomUUID()}`;
+    const res = await api("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ title, description: "x", projectId: testProjectId }),
+    });
+    expect(res.status).toBe(415);
+    expect((await res.json()).error).toContain("application/json");
+    const list = (await (await api(`/api/tasks?projectId=${testProjectId}&limit=100`)).json()) as { data: Task[] };
+    expect(list.data.some((t) => t.title === title)).toBe(false);
+
+    // A bodiless POST is a human gate too: it needs the JSON Content-Type as well.
+    const task = await createTaskViaApi({ title: "No content type" });
+    await setStatus(task.id, TaskStatus.WaitingCodeReview);
+    expect((await api(`/api/tasks/${task.id}/approve-code`, { method: "POST" })).status).toBe(415);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingCodeReview);
+  });
+
+  it("refuses state-changing requests from another origin with 403, not the portal's own", async () => {
+    const task = await createTaskViaApi({ title: "Cross-origin target" });
+    await setStatus(task.id, TaskStatus.WaitingCodeReview);
+    for (const origin of ["http://evil.example", "null", `http://localhost:${server.port! + 1}`]) {
+      const res = await api(`/api/tasks/${task.id}/approve-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: origin },
+      });
+      expect(res.status).toBe(403);
+    }
+    const del = await api(`/api/tasks/${task.id}`, { method: "DELETE", headers: { Origin: "http://evil.example" } });
+    expect(del.status).toBe(403);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingCodeReview);
+
+    const own = await api(`/api/tasks/${task.id}/approve-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it("guards every path: the task routes also match below a prefix", async () => {
+    const task = await createTaskViaApi({ title: "Prefixed path" });
+    await setStatus(task.id, TaskStatus.WaitingCodeReview);
+    const path = `/x/api/tasks/${task.id}/approve-code`;
+    expect((await api(path, { method: "POST", headers: { "Content-Type": "text/plain" } })).status).toBe(415);
+    const foreign = await api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://evil.example" },
+    });
+    expect(foreign.status).toBe(403);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingCodeReview);
+  });
+
+  it("refuses a Host that does not name this machine (DNS rebinding) unless AGENTQ_ALLOWED_HOSTS lists it", async () => {
+    expect((await api("/api/tasks", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(403);
+    expect((await api("/api/events", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(403);
+    expect((await api("/api/tasks", { headers: { Host: `127.0.0.1:${server.port}` } })).status).toBe(200);
+
+    const saved = process.env.AGENTQ_ALLOWED_HOSTS;
+    process.env.AGENTQ_ALLOWED_HOSTS = "rebound.example";
+    try {
+      expect((await api("/api/tasks", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(200);
+    } finally {
+      if (saved === undefined) delete process.env.AGENTQ_ALLOWED_HOSTS;
+      else process.env.AGENTQ_ALLOWED_HOSTS = saved;
+    }
   });
 });
 
@@ -455,7 +550,9 @@ describe("workflow sub-actions (requiresPlan task)", () => {
       pre_status: TaskStatus.Planning,
       new_status: TaskStatus.WaitingPlanReview,
     });
-    expect(task.claimToken).toBeNull();
+    // The claim is released (the API never shows the token itself).
+    expect(task).not.toHaveProperty("claimToken");
+    expect(getTaskById(taskId)!.claimToken).toBeNull();
   });
 
   it("request-plan-changes -> plan_changes_requested with the user's message", async () => {
@@ -779,7 +876,7 @@ describe("state changes only go through the workflow", () => {
     await setStatus(task.id, TaskStatus.Merging);
     const unblocked = await expectTransition(task.id, "unblock", TaskStatus.Approved);
     expect(unblocked.assignedAgent).toBeNull();
-    expect(unblocked.claimToken).toBeNull();
+    expect(getTaskById(task.id)!.claimToken).toBeNull();
   });
 });
 
@@ -1025,4 +1122,88 @@ describe("GET /api/events (SSE)", () => {
     expect(payload.title).toBe("SSE task");
     expect(payload.status).toBe(TaskStatus.ReadyForCode);
   }, 10_000);
+});
+
+describe("claim tokens stay private", () => {
+  /** Reads /api/events in the background; `text()` is everything received so far. */
+  async function openEvents() {
+    const controller = new AbortController();
+    const res = await api("/api/events", { signal: controller.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+        }
+      } catch {}
+    })();
+    return {
+      text: () => text,
+      close: async () => {
+        controller.abort();
+        await pump;
+      },
+    };
+  }
+
+  it("no HTTP response or SSE event carries a claimed task's token", async () => {
+    // A project of its own, so the list below holds just this task.
+    const projectId = randomUUID();
+    expect((await json("/api/projects", "POST", { id: projectId, displayName: "Private claims", workingDirectory: "/tmp/private-claims" })).status).toBe(201);
+    const events = await openEvents();
+    try {
+      const task = await createTaskViaApi({ title: "Private claim", projectId });
+      // An agent claims it through MCP: a write straight to the database, which the SSE watcher re-broadcasts.
+      await setStatus(task.id, TaskStatus.Coding);
+      const token = claimTokens.get(task.id)!;
+      expect(getTaskById(task.id)!.claimToken).toBe(token);
+
+      // The edit is refused while the agent holds the task (409), and its answer carries no token either.
+      const edit = await json(`/api/tasks/${task.id}`, "PUT", { title: "Private claim (edited)" });
+      expect(edit.status).toBe(409);
+      const outputs = [
+        await (await api(`/api/tasks/${task.id}`)).text(),
+        await (await api(`/api/tasks?projectId=${projectId}`)).text(),
+        await edit.text(),
+        await (await subAction(task.id, "add-comment", { message: "still yours" })).text(),
+      ];
+      expect(outputs[1]).toContain(task.id);
+
+      // One direct broadcast (the comment) plus at least one from the database watcher.
+      const frames = () => events.text().split("\n\n").filter((f) => f.startsWith("event: task_updated") && f.includes(task.id));
+      const deadline = Date.now() + 5_000;
+      while (frames().length < 2 && Date.now() < deadline) await Bun.sleep(50);
+      expect(frames().length).toBeGreaterThanOrEqual(2);
+      expect(frames().some((f) => f.includes(`"status":"${TaskStatus.Coding}"`))).toBe(true);
+
+      for (const text of [...outputs, events.text()]) {
+        expect(text).not.toContain(token);
+        expect(text).not.toContain('"claimToken"');
+      }
+    } finally {
+      await events.close();
+    }
+  }, 10_000);
+
+  it("a submit needs the claim token, and the API never hands it out", async () => {
+    const task = await createTaskViaApi({ title: "Claimed review" });
+    await setStatus(task.id, TaskStatus.Reviewing);
+    const seen = (await (await api(`/api/tasks/${task.id}`)).json()) as Record<string, unknown>;
+    expect(seen).not.toHaveProperty("claimToken");
+
+    const res = await json(`/api/tasks/${task.id}/submit-review`, "POST", {
+      verdict: "approve",
+      message: "LGTM",
+      context: "reviewed",
+      claimToken: seen.claimToken,
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("Missing claimToken");
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.Reviewing);
+  });
 });

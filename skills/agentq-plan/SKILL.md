@@ -39,7 +39,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 2. Read `task.description`, `task.steerDetails`, `task.guardrails`, `task.acceptanceCriteria`, `task.conversation[]` and `task.contexts[]` (see Context Reading in `agentq-claim`)
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
-5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). Add the regression commands that must keep passing (usually the project's test, typecheck and lint commands)
+5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). The project's own commands (install, build, typecheck, lint, test) always run; add as regression commands only the extra ones that must keep passing (e.g. a focused test file)
 6. List **open questions** (mark one `blocking` only if you cannot plan without a person's answer: the task then goes to that person first), your **risk** estimate (`suggestedRisk`; migrations, auth, CI and public APIs are high) and the **paths** the plan touches (`touchedPaths`; protected ones raise the risk to high)
 7. **Size**: when the work is bigger than one reviewable PR (over `brief.sizeLimits`: more than `maxDiffLines` changed lines, `maxPlanFiles` files or `maxCriteria` criteria), split it: call `create_subtask` for each part (with `blockedBy` naming earlier subtasks, never this task) while you still hold the task, and list them in the plan. Each subtask needs a real description and criteria: the project's Definition of Ready applies to it. Subtasks wait until this plan is approved; then they run and this task completes when they all do. A plan over the limits that creates no subtasks is submitted with size warnings for the critic and the person who approves it
 8. Submit it with `context` handoff notes for the coder (see Submit Plan), then stop and wait for the next claim
@@ -71,7 +71,7 @@ Call the `submit_plan` MCP tool:
   "context": "<handoff notes>" }
 ```
 
-Every `criterionId` must be one of the task's criteria; the tool rejects unknown ids.
+Every `criterionId` must be one of the task's criteria, and every criterion (except waived ones) needs at least one item: the tool rejects unknown ids and a plan that leaves a criterion without a check. An item with only `how` is a manual check.
 
 `context` is required (see Context Handoff in `agentq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 

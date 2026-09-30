@@ -79,6 +79,9 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - Request validation via Zod schemas
 - Automatic Vite dev server management in development mode
 - CORS support for development
+- Local user only: it listens on loopback (`AGENTQ_HOST`), and before any route runs it refuses requests a web page could forge: a `Host` that is not localhost, an IP address or listed in `AGENTQ_ALLOWED_HOSTS` (403), a state-changing request from another `Origin` (403), a POST/PUT/PATCH that is not `application/json` (415)
+- Claim tokens never leave it: every JSON response and SSE event drops `claimToken`, and runner job output shows `[claimToken]` in its place
+- Custom argv runners (tool `custom`, or `extraArgs`) only with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`
 
 ### MCP Server
 Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction; see `docs/mcp.md`. Tools:
@@ -126,11 +129,11 @@ A unit of work assigned to an agent. Contains:
 - **Subtasks**: parentId, blockedBy (claimable only when those are complete; a canceled or deleted one sends the task to `needs_human`), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths, size warnings). Canceling a task cancels its unfinished subtasks
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
-- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification, riskReasons; evidence rows live in `task_evidence`
+- **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, diffStats, verification (the latest result with its evidence ids, tamper strikes and the tampering a person accepted; "not verified" while a new submission waits for the verifier), riskReasons; evidence rows live in `task_evidence`
 - **Priority**: Numeric value, higher = more urgent
 - **Branching**: recommendedBranch, realBranch, mergeBranch (default: the project's defaultMergeBranch), worktreePath
-- **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
-- **Workflow**: requiresPlan flag (a person can change it before work starts: draft, plan_requested, ready_for_code), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
+- **Autonomy and review**: type (feature/bug/refactor/docs/chore), risk (low/medium/high), autonomy override, planRound, codeRound, verifyFailures, roundBaseline, producers (who produced each phase's artifact, with the identities and model keys of every round), lastReview, leaseExpiresAt; review findings live in `task_findings` (ids like `R2-3`). See [policy.md](policy.md)
+- **Workflow**: requiresPlan flag (a person can change it before work starts: draft, plan_requested, ready_for_code), status (16 lifecycle states), assignedAgent reference (tool, model, agentId, sessionKey, identities, modelKey, runnerId), claimToken (secret of the current claim), blocker (set in `needs_human`), revertStreak
 - **History**: chronological conversation thread, status transition history, agent context snippets
 - **Timestamps**: created_at, updated_at, deleted_at (soft delete)
 - **Archive**: archivedAt, archivePath (the summary file; the detailed record sits next to it)
@@ -165,6 +168,9 @@ A message in a task's conversation thread. Contains:
 ### TaskBrief
 What an agent reads to continue a task (`packages/shared/src/brief.ts`, MCP `get_task_brief`, the runner prompt): approved plan and validation, criteria, the tasks it starts after (`dependencies`), open findings, the latest handoff per phase, project commands, guardrails and size limits, round, and what people said since the last submission. The phases that check another agent's work (plan critique, verification, code review) get an **independent brief** instead (`buildIndependentBrief`): the task, criteria, plan, guardrails, commands and findings to verify, never the author's conversation, handoffs, messages or evidence (see [policy.md](policy.md#independent-checks)).
 
+### Diff guards
+`packages/shared/src/diff.ts` reads a task's diff against its merge branch: size, changed files, and test tampering (deleted or moved-out tests, skipped or focused tests, lowered or removed coverage thresholds). The workflow runs it on every `submit_code` and `submit_verification` (outside the database transaction), so protected paths and `maxDiffLines` raise the risk and weakened tests send the code back whether or not the built-in verifier runs; the verifier and the L3 auto-merge (on the PR's files) use the same rules.
+
 ### StatusHistoryEntry
 A record of a task status transition. Contains:
 - pre_status, new_status, timestamp, actor (`user`, an agent id, `runner` or `system`)
@@ -193,7 +199,7 @@ The task lifecycle moves through these states:
 
 **waiting_code_review** → Code waiting for a person: under L0 after every submit; under L1+ only when an AI approval is high risk or sampled, or no reviewer picked it up. Can trigger an on-demand AI review.
 
-**code_review_requested** → Waiting for an AI reviewer: under L1+ right after `submit_code`, under L0 when a person requests it. Never claimed by the session that wrote the code.
+**code_review_requested** → Waiting for an AI reviewer: under L1+ right after `submit_code`, under L0 when a person requests it. Never claimed by an agent that wrote the code in any round.
 
 **reviewing** → Agent is actively reviewing the submitted code.
 
@@ -213,11 +219,11 @@ The task lifecycle moves through these states:
 
 **refining** → An agent with the `refine` role is writing the criteria, risk and scope.
 
-**plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never the planner's own session).
+**plan_review_requested** / **plan_reviewing** → Under L2+ an AI critic reviews the plan (never an agent that wrote the plan).
 
 **split** → The plan split the task into subtasks; it completes when they all finish (at least one completed). If every subtask was canceled it goes to `needs_human`.
 
-**verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier.
+**verify_requested** → Code submitted to a project with commands; waiting for the built-in verifier (never an agent that wrote the code).
 
 **verifying** → The verifier is running the project's commands in the task's worktree.
 

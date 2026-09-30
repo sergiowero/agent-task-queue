@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -13,11 +13,13 @@ import {
   getTasks,
   getTaskById,
   getActivityEvents,
+  patchTask,
   updateTask,
   ROLES,
   TaskStatus,
   skillsBundleVersion,
 } from "@agentq/shared";
+import { forceStatus } from "@agentq/shared/testing";
 import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
 import {
   MCP_ENTRY,
@@ -201,7 +203,10 @@ describe("AgentQ MCP server", () => {
       tool: "TestAgent",
       model: "test-model",
       agentId: "testagent@1.0|test-model",
-      sessionKey: expect.stringMatching(/^mcp:/),
+      // The conversation, then this server process.
+      sessionKey: "session:testagent:session-mcp",
+      identities: ["session:testagent:session-mcp", expect.stringMatching(/^mcp:/)],
+      modelKey: "test-model",
     });
     // The token comes back once, to the claimer; the task itself never shows it.
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
@@ -210,9 +215,24 @@ describe("AgentQ MCP server", () => {
     expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
     expect(claimed.task.contexts).toEqual(["initial context", "claim context"]);
 
+    // Every criterion needs a line in the validation plan.
+    const uncovered = parse(
+      (await client.callTool({
+        name: "submit_plan",
+        arguments: { taskId, message: "1. do it", context: "plan context" },
+      })) as CallToolResult,
+    );
+    expect(uncovered.success).toBe(false);
+    expect(uncovered.error).toContain("validationPlan is required");
+
     const planResult = (await client.callTool({
       name: "submit_plan",
-      arguments: { taskId, message: "1. do it", context: "plan context" },
+      arguments: {
+        taskId,
+        message: "1. do it",
+        context: "plan context",
+        validationPlan: { items: [{ criterionId: "AC1", how: "run the suite", command: "bun test" }], regressionCommands: [] },
+      },
     })) as CallToolResult;
     expect(planResult.isError).toBeFalsy();
     const plan = parse(planResult);
@@ -982,6 +1002,38 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(out.isError).toBeFalsy();
   });
 
+  it("a runner job's server has no claim_task: the job cannot claim more work, such as its own review", async () => {
+    const task = createTask({ title: "job claim", description: "d", projectId, requiresPlan: true });
+    const claimer = await connect();
+    const claimed = parse(await call(claimer, "claim_task", { ...agent, roles: ["plan"], sessionId: "s2j", projectId }));
+    expect(claimed.task.id).toBe(task.id);
+    const job = await connect({ claims: { [task.id]: claimed.claimToken } });
+    const names = (await job.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("claim_task");
+    for (const tool of RUNNER_MCP_TOOLS) expect(names).toContain(tool);
+    const denied = await call(job, "claim_task", { ...agent, roles: ["plan_review"], sessionId: "s2j", projectId });
+    expect(denied.isError).toBe(true);
+  });
+
+  it("a conversation stays the same agent after its MCP server restarts", async () => {
+    const restartProject = `${projectId}-restart`;
+    createProject({ id: restartProject, displayName: "Restart", workingDirectory: "/tmp/restart" });
+    const task = createTask({ title: "restart", description: "d", projectId: restartProject });
+    const before = await connect();
+    const roles = ["code", "review"];
+    parse(await call(before, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    const coded = parse(await call(before, "submit_code", { taskId: task.id, message: "c", worktree: "/w", context: "c" }));
+    expect(coded.newStatus).toBe(TaskStatus.CodeReviewRequested);
+
+    // Claude Code resumed the conversation with a new server process.
+    const after = await connect();
+    const own = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-1", projectId: restartProject }));
+    expect(own.reason).toBe("no_tasks_available");
+    const other = parse(await call(after, "claim_task", { ...agent, roles, sessionId: "conv-2", projectId: restartProject }));
+    expect(other.task).toMatchObject({ id: task.id, status: TaskStatus.Reviewing });
+    removeProjectTasks(restartProject);
+  });
+
   it("report_blocker moves the task to needs_human and releases it", async () => {
     const task = createTask({ title: "cannot push", description: "d", projectId });
     const client = await connect();
@@ -1133,12 +1185,27 @@ describe("AgentQ MCP claims and blockers", () => {
       }),
     );
     expect(bad.error).toContain("unknown criteria: AC3");
-    parse(
+    const partial = parse(
       await call(agentClient, "submit_plan", {
         taskId: created.task.id,
         message: "p",
         context: "c",
         validationPlan: { items: [{ criterionId: "AC2", how: "test", command: "bun test x" }], regressionCommands: ["bun test"] },
+      }),
+    );
+    expect(partial.error).toContain("validationPlan misses criteria: AC1");
+    parse(
+      await call(agentClient, "submit_plan", {
+        taskId: created.task.id,
+        message: "p",
+        context: "c",
+        validationPlan: {
+          items: [
+            { criterionId: "AC1", how: "read the diff" },
+            { criterionId: "AC2", how: "test", command: "bun test x" },
+          ],
+          regressionCommands: ["bun test"],
+        },
       }),
     );
     expect(getTaskById(created.task.id)!.validationPlan?.regressionCommands).toEqual(["bun test"]);
@@ -1149,6 +1216,53 @@ describe("AgentQ MCP claims and blockers", () => {
     const tool = tools.find((t) => t.name === "submit_verification")!;
     expect(tool.inputSchema.required).toEqual(expect.arrayContaining(["taskId", "passed", "evidence"]));
     expect(RUNNER_MCP_TOOLS).toContain("submit_verification");
+  });
+
+  it.skipIf(!Bun.which("git"))("submit_verification reads the worktree's diff itself: protected paths and size raise the risk", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-mcp-verify-"));
+    const run = (...args: string[]) => {
+      const out = Bun.spawnSync(["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...args]);
+      if (out.exitCode !== 0) throw new Error(out.stderr.toString());
+    };
+    try {
+      run("init", "-q", "-b", "main");
+      writeFileSync(join(repo, "README.md"), "x\n");
+      run("add", "-A");
+      run("commit", "-q", "-m", "init");
+      run("switch", "-q", "-c", "feat");
+      mkdirSync(join(repo, "migrations"));
+      writeFileSync(join(repo, "migrations/001.sql"), "select 1;\n".repeat(500));
+      run("add", "-A");
+      run("commit", "-q", "-m", "migration");
+
+      const pid = `mcp-verify-${Date.now()}`;
+      createProject({ id: pid, displayName: "Verify", workingDirectory: repo, profile: { protectedPaths: ["migrations/**"], maxDiffLines: 400 } });
+      const task = createTask({ title: "verify over mcp", description: "d", projectId: pid, risk: "low", mergeBranch: "main" });
+      forceStatus(task.id, TaskStatus.VerifyRequested, { claim: false });
+      patchTask(task.id, { worktreePath: repo });
+
+      const client = await connect();
+      const claimed = parse(await call(client, "claim_task", { ...agent, roles: ["verify"], sessionId: "v1", projectId: pid }));
+      expect(claimed.task.id).toBe(task.id);
+      const out = parse(
+        await call(client, "submit_verification", {
+          taskId: task.id,
+          passed: true,
+          evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "3 pass" }],
+        }),
+      );
+      expect(out.success).toBe(true);
+      const verified = getTaskById(task.id)!;
+      expect(verified.risk).toBe("high");
+      expect(verified.riskReasons).toEqual([
+        "Touches protected paths: migrations/001.sql",
+        "Diff of 500 lines exceeds the project's 400",
+      ]);
+      expect(verified.diffStats).toEqual({ files: 1, insertions: 500, deletions: 0 });
+      removeProjectTasks(pid);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("claim_task returns the brief instead of the conversation; get_task_brief re-reads it", async () => {
