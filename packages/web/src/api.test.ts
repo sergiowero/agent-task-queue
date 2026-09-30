@@ -1239,6 +1239,8 @@ describe("GET /api/meta", () => {
     expect(typeof meta.installedSkills).toBe("object");
     expect(Array.isArray(meta.outdatedSkills)).toBe(true);
     expect(typeof meta.prSync.available).toBe("boolean");
+    // The periodic sync is started by the server's main(), not by the servers these tests start.
+    expect(meta.prSync).toMatchObject({ enabled: false, lastRunAt: null, errors: [] });
   });
 });
 

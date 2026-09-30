@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { inboxReason, type InboxReason } from "@agentq/shared/catalog";
 import { api } from "../lib/api";
@@ -11,6 +11,7 @@ import { formatDateTime, formatRelative } from "../lib/format";
 import { Badge, StatusBadge } from "../components/Badge";
 import { EmptyState } from "../components/EmptyState";
 import { CountPill, PageBody, PageHeader } from "../components/PageHeader";
+import { PrSyncBadge, PrSyncGroupNotice } from "../components/PrSyncNotice";
 import { Select } from "../components/Select";
 import { Skeleton } from "../components/Skeleton";
 
@@ -21,11 +22,18 @@ interface Item {
   since: string;
 }
 
-const GROUPS: { priority: number; label: string }[] = [
+interface Group {
+  priority: number;
+  label: string;
+  /** Shown above the group's tasks. */
+  note?: ReactNode;
+}
+
+const GROUPS: Group[] = [
   { priority: 0, label: "Blocked, waiting for an answer" },
   { priority: 1, label: "Plans to approve" },
   { priority: 2, label: "Code to review" },
-  { priority: 3, label: "Pull requests to merge" },
+  { priority: 3, label: "Pull requests to merge", note: <PrSyncGroupNotice /> },
   { priority: 4, label: "Drafts that are not ready" },
 ];
 
@@ -105,6 +113,7 @@ export function InboxPage() {
                   {group.label}
                   <CountPill>{groupItems.length}</CountPill>
                 </h2>
+                {group.note}
                 <ul className="space-y-2">
                   {groupItems.map(({ task, reason, since }) => (
                     <li key={task.id} className="stagger" style={{ "--i": index++ } as CSSProperties}>
@@ -120,6 +129,7 @@ export function InboxPage() {
                             </Link>
                             <StatusBadge status={task.status} />
                             {task.risk === "high" && <Badge tone="danger">high risk</Badge>}
+                            <PrSyncBadge task={task} />
                           </div>
                           <p className="mt-0.5 truncate text-sm text-text-secondary">{reason.action}</p>
                           <p className="mt-0.5 text-xs text-text-muted" title={formatDateTime(since)}>

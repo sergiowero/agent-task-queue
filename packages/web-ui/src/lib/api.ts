@@ -218,8 +218,11 @@ export interface Meta {
   installedSkills: Record<string, string | null>;
   outdatedSkills: string[];
   verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
-  /** GitHub sync of open PRs: unavailable without the `gh` CLI. */
-  prSync?: { available: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
+  /**
+   * GitHub sync of open PRs: `available` is the `gh` CLI, `enabled` the periodic sync running (off with
+   * AGENTQ_PR_SYNC=0). Unless both are true a merged PR does not complete its task by itself.
+   */
+  prSync?: { available: boolean; enabled: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
 }
 
 /** What the portal sends when it edits a project: partial profile and policy. */

@@ -217,8 +217,11 @@ so a slow or stuck GitHub never holds up the server:
 | A reviewer asks for changes (their latest review, submitted since the task entered `pr_open`) | `changes_requested`: the review becomes a finding the coder answers by id |
 | Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
 
-Without `gh` nothing changes by itself (`/api/meta` says so): a person clicks **Mark
-merged** on the task page.
+Without `gh`, or with `AGENTQ_PR_SYNC=0`, nothing changes by itself: a person clicks **Mark
+merged** on the task page. `/api/meta` says so (`prSync.available` is `gh`, `prSync.enabled`
+the running sync, and `prSync.errors` the last error of each task, such as `gh` not logged in),
+and the portal shows it: a warning on the task page and above the pull requests in **Needs you**
+when the sync is off, the error on the task it concerns, and when GitHub was last asked.
 
 **Changes on the PR.** The PR is where a person reviews the code, so its feedback goes
 back to the coder: a change request on GitHub (picked up by the sync) or **Request

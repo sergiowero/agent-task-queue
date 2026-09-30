@@ -306,18 +306,23 @@ export class PrSync {
   private running: Promise<SyncResult> | null = null;
   lastRunAt: string | null = null;
   lastErrors: SyncResult["errors"] = [];
+  /** `gh` is installed. */
   readonly available: boolean;
+  /** The periodic sync is running (start() ran and `gh` is there); false when it was never started or was turned off. */
+  private started = false;
 
   constructor(
     private readonly broadcast: (event: string, data: unknown) => void = () => {},
     private readonly intervalMs = Math.max(30, Number(process.env.AGENTQ_PR_SYNC_SEC ?? "180") || 180) * 1000,
     private readonly gh: GhRunner = defaultGh,
+    available = !!Bun.which("gh"),
   ) {
-    this.available = !!Bun.which("gh");
+    this.available = available;
   }
 
   start(): void {
     if (!this.available || this.timer) return;
+    this.started = true;
     const tick = () => {
       this.runOnce().catch((e) => console.error("[pr-sync]", e));
     };
@@ -328,6 +333,7 @@ export class PrSync {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.started = false;
   }
 
   /** One pass. While a pass runs (gh can be slow), another call joins it instead of starting a second one. */
@@ -349,7 +355,12 @@ export class PrSync {
     return result;
   }
 
+  /**
+   * What the portal shows: `available` (gh installed) and `enabled` (the periodic
+   * sync is running; false with AGENTQ_PR_SYNC=0 even when gh is there). Unless
+   * both are true nothing completes a merged task by itself.
+   */
   state() {
-    return { available: this.available, lastRunAt: this.lastRunAt, errors: this.lastErrors };
+    return { available: this.available, enabled: this.started, lastRunAt: this.lastRunAt, errors: this.lastErrors };
   }
 }

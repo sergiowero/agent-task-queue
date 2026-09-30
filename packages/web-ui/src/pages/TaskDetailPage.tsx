@@ -55,6 +55,7 @@ import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { EditableField, PropertyRow } from "../components/EditableField";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
+import { PrSyncNotice } from "../components/PrSyncNotice";
 import { BlockerPanel } from "../components/BlockerPanel";
 import { DecisionPanel } from "../components/DecisionPanel";
 import { PlanDecisionPanel } from "../components/PlanDecisionPanel";
@@ -551,6 +552,7 @@ export function TaskDetailPage() {
                     </Button>
                   )}
                 </div>
+                {prOpen && <PrSyncNotice task={task} />}
               </section>
             )}
 

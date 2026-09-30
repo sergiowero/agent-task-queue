@@ -418,4 +418,37 @@ describe("gh without blocking the server", () => {
     await sync.runOnce();
     expect(views).toBe(2);
   });
+
+  it("says whether the periodic sync runs: a sync that was never started, or has no gh, is not enabled", async () => {
+    const gh: GhRunner = async () => ok(open({}));
+    // No gh: start() does nothing, and the portal is told the PR sync cannot follow any PR.
+    const without = new PrSync(() => {}, 60_000, gh, false);
+    without.start();
+    expect(without.state()).toEqual({ available: false, enabled: false, lastRunAt: null, errors: [] });
+
+    // With gh but never started (AGENTQ_PR_SYNC=0): available, yet nothing completes a merged task.
+    const sync = new PrSync(() => {}, 60_000, gh, true);
+    expect(sync.state()).toMatchObject({ available: true, enabled: false, lastRunAt: null });
+    sync.start();
+    expect(sync.state()).toMatchObject({ available: true, enabled: true });
+    await sync.runOnce(); // joins the pass start() began, so nothing runs after the test
+    expect(sync.state().lastRunAt).not.toBeNull();
+    sync.stop();
+    expect(sync.state().enabled).toBe(false);
+  });
+
+  it("keeps each task's last error for the portal, and drops it once the pass no longer fails", async () => {
+    const id = prOpenTask(project(), { pr: { url: "https://github.com/org/repo/pull/91", number: 91 } });
+    let logged = false;
+    const gh: GhRunner = async (args) =>
+      args[2] === "https://github.com/org/repo/pull/91" && !logged
+        ? { exitCode: 1, stdout: "", stderr: "To get started with GitHub CLI, please run:  gh auth login\n" }
+        : ok(open({ url: args[2] }));
+    const sync = new PrSync(() => {}, 60_000, gh, true);
+    await sync.runOnce();
+    expect(sync.state().errors).toContainEqual({ taskId: id, error: "To get started with GitHub CLI, please run:  gh auth login" });
+    logged = true;
+    await sync.runOnce();
+    expect(sync.state().errors.find((e) => e.taskId === id)).toBeUndefined();
+  });
 });
