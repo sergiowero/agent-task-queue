@@ -6,7 +6,9 @@ process.env.AGENTQ_DB_PATH = ":memory:";
 import { TaskStatus } from "./catalog.js";
 import { addActivityEvent, createProject, createTask, getTaskById, patchTask } from "./database.js";
 import { computeMetrics } from "./metrics.js";
+import { sweepQueue } from "./sweeper.js";
 import type { StatusHistoryEntry } from "./types.js";
+import { claimNextTask, revertClaim } from "./workflow.js";
 
 const projectId = randomUUID();
 const otherProjectId = randomUUID();
@@ -120,6 +122,24 @@ describe("computeMetrics", () => {
     createProject({ id: pid, displayName: "Metrics legacy", workingDirectory: "/tmp/metrics-legacy" });
     seed("legacy", [["merged" as TaskStatus, 1]], [], 1, pid);
     expect(computeMetrics({ projectId: pid }).reachedPr).toBe(1);
+  });
+
+  it("counts a runner's lost jobs as reverts, not the claims of silent sessions that expired", () => {
+    const pid = randomUUID();
+    createProject({ id: pid, displayName: "Metrics leases", workingDirectory: "/tmp/metrics-leases" });
+    const task = createTask({ title: "expiring", description: "d", projectId: pid });
+    const agent = { toolName: "Coder", version: "1", model: "m", sessionId: "metrics-coder" };
+
+    // A hand-opened session goes silent: the sweeper takes the claim back.
+    claimNextTask({ roles: ["code"], agent, projectId: pid });
+    expect(sweepQueue(new Date(Date.now() + 3 * 60 * 60_000)).expired).toContain(task.id);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.ReadyForCode);
+    expect(computeMetrics({ projectId: pid }).revertsPerTask).toBe(0);
+
+    // A runner's process ends without submitting: that one counts.
+    claimNextTask({ roles: ["code"], agent, projectId: pid, runnerId: "metrics-runner" });
+    revertClaim(task.id, "process exited");
+    expect(computeMetrics({ projectId: pid }).revertsPerTask).toBe(1);
   });
 
   it("filters by creation date and reports zeros for an empty range", () => {

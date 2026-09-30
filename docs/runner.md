@@ -245,9 +245,10 @@ and a claim from the job would not carry the runner's identity.
 
 When the server starts, tasks that a runner job held when the server went down
 go back to the queue (`recoverOrphans`), before any runner claims again. The
-server also sweeps every minute: expired leases of hand-opened sessions, starved
-reviews and code nobody verified (see [policy.md](policy.md)), and records its
-heartbeat.
+server also sweeps every minute: expired leases of hand-opened sessions (a
+`lease_expired` event, not a `task_reverted`: the flow metrics count only runner
+reverts), starved reviews and code nobody verified (see [policy.md](policy.md)), and
+records its heartbeat.
 
 ### Claim tokens
 

@@ -54,7 +54,8 @@ nor a canceled task). The subtasks are held until the parent's plan is approved
 (by a person, by the critic, or by a person resolving the plan's blocker to
 `ready_for_code`); then they run like any task (a blocked one waits for its
 dependencies to be complete) and the parent, in `split`, completes when they are
-all finished. Re-planning drops the held subtasks of the previous plan.
+all finished. Re-planning drops the held subtasks of the previous plan. Every one
+of those approvals logs a `task_split` event that names the subtasks it released.
 
 - **Canceling a task cancels its unfinished subtasks** (their runner jobs are stopped).
 - **A dependency that will never complete** (canceled or deleted) sends each task
@@ -122,7 +123,9 @@ in the task's worktree: the server's built-in verifier (see
 chooses one (below). Red goes back to the coder with the evidence; red `maxVerifyFailures`
 times in a row, or tests weakened twice, goes to a person. A run where no command that
 checks the code ran is "not verified", never green. Touching protected paths or a large
-diff raises the risk to high. Green continues to the review gate of the level.
+diff raises the risk to high. Green continues to the review gate of the level. Code that
+goes on to review without a verification (nobody can verify it, or nobody did in time) is
+marked as not verified and logs a `verification_skipped` event.
 
 ### Who verifies
 
@@ -435,7 +438,17 @@ person also reviews the code after an AI approval.
 Runner claims end with their process. Claims made by hand-opened sessions have
 a lease (`leaseMin`): any AgentQ call from the session extends it, and
 `heartbeat` extends it during long silent work. The web server sweeps every
-minute (and before each MCP claim): expired claims go back to the queue, reviews
-nobody eligible picked up go to a person, and code nobody verified goes on to review,
-marked as not verified (see Who verifies). On start, the server also
-returns tasks held by runner jobs that did not survive the restart.
+minute and records its own heartbeat in the same pass (the MCP server also sweeps
+before each claim):
+
+- Expired claims go back to the queue. The release is logged as `lease_expired` by
+  `system:sweeper`; `task_reverted` (by `runner`) is only a runner's lost job, and it
+  is what the flow metrics count as a runner revert.
+- Plan critiques and code reviews nobody eligible picked up go to a person after
+  `reviewStarvationMin` (`review_starved`).
+- Code nobody verified goes on to the review gate of the level, marked as not verified
+  (`verification_skipped`): the built-in verifier's after 5 minutes without its
+  heartbeat, an agent verifier's after `reviewStarvationMin` (see Who verifies).
+
+On start, the server also returns tasks held by runner jobs that did not survive the
+restart.

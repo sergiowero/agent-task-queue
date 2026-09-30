@@ -351,6 +351,12 @@ function planApprovedTarget(task: Task): TaskStatus {
   return TaskStatus.Split;
 }
 
+/** The subtasks a plan approval released (planApprovedTarget sent the task to `split`): what the task now waits for. */
+function splitDetails(parentId: string): string {
+  const children = getSubtasks(parentId).filter((c) => !c.held && c.status !== TaskStatus.Canceled);
+  return `${children.length} subtask${children.length === 1 ? "" : "s"}: ${children.map((c) => `${c.title} (${c.id})`).join("; ")}`;
+}
+
 function requireTask(taskId: string): Task {
   const task = getTaskById(taskId);
   if (!task) throw new WorkflowError("Task not found.");
@@ -600,6 +606,16 @@ export function maxReverts(): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
 }
 
+export interface RevertOptions {
+  /** Who released the task: "runner" (default), or "system:sweeper" when a claim's lease expired. */
+  actor?: string;
+  /**
+   * Activity event that records the release. `task_reverted` (default) is what the
+   * runner-revert metric counts: a release for another reason has its own event.
+   */
+  event?: string;
+}
+
 /**
  * Releases a task whose agent went away without submitting (e.g. the runner's
  * child process exited). The task returns to the status it was claimed from
@@ -609,7 +625,8 @@ export function maxReverts(): number {
  * Returns null when the task is not in an active status any more, i.e. the
  * agent already submitted or the user intervened.
  */
-export function revertClaim(taskId: string, reason: string): Task | null {
+export function revertClaim(taskId: string, reason: string, opts: RevertOptions = {}): Task | null {
+  const { actor = "runner", event = "task_reverted" } = opts;
   return withTransaction(() => {
     const task = getTaskById(taskId);
     if (!task) return null;
@@ -623,18 +640,18 @@ export function revertClaim(taskId: string, reason: string): Task | null {
         question: "Check the output above, fix the cause (tool setup, task description, repository state), then choose where the task goes next.",
         phase: STATUS_INFO[task.status].phase,
         fromStatus: task.status,
-        raisedBy: "runner",
+        raisedBy: actor,
         at: new Date().toISOString(),
       };
       const blocked = transitionTask(task, TaskStatus.NeedsHuman, {
-        actor: "runner",
+        actor,
         author: "system",
         message: reason,
         messageType: "system",
         release: true,
         patch: { blocker, revertStreak: streak },
       });
-      addActivity(taskId, "task_blocked", "runner", blocker.reason);
+      addActivity(taskId, "task_blocked", actor, blocker.reason);
       return blocked;
     }
 
@@ -646,14 +663,14 @@ export function revertClaim(taskId: string, reason: string): Task | null {
         : fallback;
 
     const reverted = transitionTask(task, target, {
-      actor: "runner",
+      actor,
       author: "system",
       message: reason,
       messageType: "system",
       release: true,
       patch: { revertStreak: streak },
     });
-    addActivity(taskId, "task_reverted", "runner", reason);
+    addActivity(taskId, event, actor, reason);
     return reverted;
   });
 }
@@ -831,6 +848,7 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
       },
     });
     if (approvedPlan) addActivity(taskId, "plan_approved", actor, "Approved by resolving the blocker");
+    if (to === TaskStatus.Split) addActivity(taskId, "task_split", "system", splitDetails(taskId));
     return updated;
   });
 }
@@ -888,13 +906,16 @@ export function approvePlan(taskId: string, input: HumanActionInput = {}): Task 
     }
     const actor = input.actor ?? "user";
     const approved = freezePlan(task, actor);
-    return transitionTask(task, planApprovedTarget(task), {
+    const to = planApprovedTarget(task);
+    const updated = transitionTask(task, to, {
       actor,
       message: input.message?.trim() || "Plan approved.",
       messageType: "user",
       event: "plan_approved",
       patch: { revertStreak: 0, approvedPlan: approved },
     });
+    if (to === TaskStatus.Split) addActivity(taskId, "task_split", "system", splitDetails(taskId));
+    return updated;
   });
 }
 
@@ -1662,6 +1683,7 @@ export function submitPlanReview(taskId: string, input: SubmitPlanReviewInput): 
         message: input.message,
         details: input.verdict,
         note,
+        ...(to === TaskStatus.Split ? { events: [{ event: "task_split", details: splitDetails(taskId) }] } : {}),
         patch: {
           planRound: round,
           risk,
@@ -2119,7 +2141,8 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
       return {
         to: afterCode(task, policy, { verify: verifier !== null }),
         message: input.message,
-        events,
+        // Nobody can verify it (verifierFor found no one): it goes on unverified, logged like the sweeper's skipped checks.
+        events: verifier !== null ? events : [...events, { event: "verification_skipped", details: verification.note ?? "" }],
         ...(raised ? { note: { message: raised } } : {}),
         patch: { ...patch, verification },
       };
