@@ -369,6 +369,14 @@ verdict (the planner or the coder).
 
 ## Settings
 
+Every one is edited on **Projects → Edit**: the **Autonomy** tab has the level, the round and
+failure limits, the spot check, the reviewer wait, the lease, the different-model rule and
+auto-merge (only enabled at L3); the profile's timeout, archive and Definition-of-Ready
+settings are on the **Commands** and **General** tabs, its size limits, protected paths and
+allowlist on **Guardrails**. Numbers are clamped to the range the server accepts
+(`POLICY_RANGES` and `PROFILE_RANGES`), and `PUT /api/projects/:id` merges what it is given
+into the stored policy and profile, so a partial edit keeps the rest.
+
 | Setting | Default | Meaning |
 |---|---|---|
 | `maxPlanRounds` | 2 | Plan critiques that may ask for changes before a person decides |

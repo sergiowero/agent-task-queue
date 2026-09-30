@@ -1118,6 +1118,82 @@ describe("autonomy, risk and findings", () => {
     }
   });
 
+  it("a new project gets the commands detected from its repository, unless the request names its own", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "agentq-api-create-"));
+    const empty = mkdtempSync(join(tmpdir(), "agentq-api-empty-"));
+    try {
+      await Bun.write(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test", lint: "eslint ." } }));
+      await Bun.write(join(repo, "bun.lock"), "");
+      const create = async (body: Record<string, unknown>) => {
+        const res = await json("/api/projects", "POST", { id: randomUUID(), displayName: "Created", ...body });
+        expect(res.status).toBe(201);
+        return (await res.json()) as Project;
+      };
+      // Only what the repository has (no build or typecheck script here).
+      expect((await create({ workingDirectory: repo })).profile.commands).toEqual({
+        install: "bun install",
+        test: "bun run test",
+        lint: "bun run lint",
+      });
+      // Commands the request names are kept as they are, and so is the rest of its profile.
+      const named = await create({ workingDirectory: repo, profile: { commands: { test: "make check" }, maxDiffLines: 200 } });
+      expect(named.profile.commands).toEqual({ test: "make check" });
+      expect(named.profile.maxDiffLines).toBe(200);
+      // Nothing to detect: no commands are stored.
+      expect((await create({ workingDirectory: empty })).profile.commands).toEqual({});
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it("projects take every policy and profile setting; a partial edit keeps the rest", async () => {
+    const projectId = randomUUID();
+    await json("/api/projects", "POST", { id: projectId, displayName: "Settings", workingDirectory: "/tmp/settings", autonomy: 3 });
+    const all = {
+      policy: {
+        maxPlanRounds: 4,
+        maxReviewRounds: 5,
+        maxVerifyFailures: 3,
+        requireDifferentModel: true,
+        humanSampleEvery: 7,
+        reviewStarvationMin: 45,
+        leaseMin: 30,
+        autoMerge: true,
+      },
+      profile: {
+        commands: { test: "make ci" },
+        protectedPaths: ["db/**"],
+        guardrails: ["No new dependencies"],
+        verifyAllowlist: ["make ci"],
+        maxDiffLines: 250,
+        maxPlanFiles: 8,
+        maxCriteria: 9,
+        verifyTimeoutSec: 1800,
+        autoArchive: true,
+        dorMode: "enforce",
+      },
+    };
+    const saved = (await (await json(`/api/projects/${projectId}`, "PUT", all)).json()) as Project;
+    expect(saved.policy).toEqual(all.policy);
+    expect(saved.profile).toEqual(all.profile);
+
+    // A partial edit changes what it names and keeps everything else, and it persists.
+    const partial = (await (
+      await json(`/api/projects/${projectId}`, "PUT", { policy: { autoMerge: false, leaseMin: 60 }, profile: { dorMode: "off" } })
+    ).json()) as Project;
+    expect(partial.policy).toEqual({ ...all.policy, autoMerge: false, leaseMin: 60 });
+    expect(partial.profile).toEqual({ ...all.profile, dorMode: "off" });
+    const listed = ((await (await api("/api/projects")).json()) as Project[]).find((p) => p.id === projectId)!;
+    expect(listed.policy).toEqual(partial.policy);
+
+    // The portal clamps to these ranges: outside them the server refuses.
+    for (const bad of [{ policy: { maxPlanRounds: 11 } }, { policy: { leaseMin: 4 } }, { profile: { verifyTimeoutSec: 5 } }, { profile: { dorMode: "strict" } }]) {
+      expect((await json(`/api/projects/${projectId}`, "PUT", bad)).status).toBe(400);
+    }
+    expect(((await (await api("/api/projects")).json()) as Project[]).find((p) => p.id === projectId)!.policy).toEqual(partial.policy);
+  });
+
   it("PUT edits criteria as one-line strings and keeps the ids of unchanged ones", async () => {
     const task = await createTaskViaApi({ title: "Criteria", acceptanceCriteria: ["one", "two $ bun test two"] });
     expect(task.acceptanceCriteria[1]).toMatchObject({ id: "AC2", verify: { kind: "command", command: "bun test two" } });

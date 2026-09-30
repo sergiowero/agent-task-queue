@@ -167,6 +167,7 @@ export * from "./catalog.js";
 
 export {
   DEFAULT_POLICY,
+  POLICY_RANGES,
   LEVEL_GATES,
   resolvePolicy,
   reviewRoundsUsed,
@@ -240,6 +241,7 @@ export {
 
 export {
   DEFAULT_PROFILE,
+  PROFILE_RANGES,
   DEFAULT_VERIFY_ALLOWLIST,
   resolveProfile,
   profileCommands,

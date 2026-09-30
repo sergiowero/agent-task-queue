@@ -34,6 +34,16 @@ export interface PolicySettings {
   autoMerge: boolean;
 }
 
+/** The range each numeric setting accepts: the server refuses others, and the portal clamps to them. */
+export const POLICY_RANGES = {
+  maxPlanRounds: { min: 1, max: 10 },
+  maxReviewRounds: { min: 1, max: 10 },
+  maxVerifyFailures: { min: 1, max: 10 },
+  humanSampleEvery: { min: 0, max: 1000 },
+  reviewStarvationMin: { min: 0, max: 24 * 60 },
+  leaseMin: { min: 5, max: 24 * 60 },
+} as const satisfies Partial<Record<keyof PolicySettings, { min: number; max: number }>>;
+
 export const DEFAULT_POLICY: PolicySettings = {
   maxPlanRounds: 2,
   maxReviewRounds: 3,

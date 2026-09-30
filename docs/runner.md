@@ -223,8 +223,11 @@ task's `claimToken`, and a job's output (log file, live output, the revert note)
 ## Verification
 
 The web server also runs a **built-in verifier** (no LLM; `packages/web/src/runner/verify.ts`).
-When a coder submits and the project has commands (**Projects → Edit → Commands**, or
-**Detect from the repository**), the task goes to `verify_requested`; the verifier claims
+When a coder submits and the project has commands (**Projects → Edit → Commands**, where
+**Detect from the repository** also fills them, and where the per-command timeout is set;
+a new project gets them detected when it is created, unless the request names its own,
+and the portal then opens the Commands tab for you to check them), the task goes to
+`verify_requested`; the verifier claims
 it, runs the commands in the task's worktree and routes it:
 
 - **Clean worktree first**: the verifier refuses a worktree with uncommitted or untracked

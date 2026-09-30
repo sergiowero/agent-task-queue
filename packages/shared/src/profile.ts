@@ -37,6 +37,14 @@ export interface ProjectProfile {
   dorMode: "warn" | "enforce" | "off";
 }
 
+/** The range each numeric setting accepts: the server refuses others, and the portal clamps to them. */
+export const PROFILE_RANGES = {
+  maxDiffLines: { min: 10, max: 100_000 },
+  maxPlanFiles: { min: 1, max: 1000 },
+  maxCriteria: { min: 1, max: 100 },
+  verifyTimeoutSec: { min: 10, max: 7200 },
+} as const satisfies Partial<Record<keyof ProjectProfile, { min: number; max: number }>>;
+
 export const DEFAULT_PROFILE: ProjectProfile = {
   commands: {},
   protectedPaths: [],

@@ -541,10 +541,15 @@ const handleProjects = wrapHandler(async (req, url) => {
     if (!parsed.success) {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
+    // Commands the request does not name are read from the repository, so the verifier has
+    // something to run from the first task (a project with none never verifies anything).
+    const named = Object.values(parsed.data.profile?.commands ?? {}).some((c) => c?.trim());
+    const detected = named ? {} : Object.fromEntries(Object.entries(detectProjectCommands(parsed.data.workingDirectory)).filter(([, c]) => c));
     const project = createProject({
       ...parsed.data,
       defaultMergeBranch:
         parsed.data.defaultMergeBranch || detectDefaultBranch(parsed.data.workingDirectory),
+      profile: Object.keys(detected).length ? { ...parsed.data.profile, commands: detected } : parsed.data.profile,
     });
     return jsonResponse(project, 201);
   }

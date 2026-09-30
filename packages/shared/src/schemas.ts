@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ROLES, TaskStatus, normalizeRoles } from "./catalog.js";
 import { parseCriterionLine } from "./criteria.js";
+import { POLICY_RANGES } from "./policy.js";
+import { PROFILE_RANGES } from "./profile.js";
 
 export const riskSchema = z.enum(["low", "medium", "high"]);
 export const taskTypeSchema = z.enum(["feature", "bug", "refactor", "docs", "chore"]);
@@ -43,6 +45,9 @@ export const referenceSchema = z.object({
 
 const listOfLines = z.array(z.string().max(2000)).max(50);
 
+/** An integer in the range the settings catalog names (POLICY_RANGES, PROFILE_RANGES). */
+const ranged = ({ min, max }: { min: number; max: number }) => z.number().int().min(min).max(max);
+
 export const projectProfileSchema = z
   .object({
     commands: z
@@ -56,10 +61,10 @@ export const projectProfileSchema = z
       .partial(),
     protectedPaths: z.array(z.string().max(300)).max(100),
     guardrails: z.array(z.string().max(1000)).max(50),
-    maxDiffLines: z.number().int().min(10).max(100_000),
-    maxPlanFiles: z.number().int().min(1).max(1000),
-    maxCriteria: z.number().int().min(1).max(100),
-    verifyTimeoutSec: z.number().int().min(10).max(7200),
+    maxDiffLines: ranged(PROFILE_RANGES.maxDiffLines),
+    maxPlanFiles: ranged(PROFILE_RANGES.maxPlanFiles),
+    maxCriteria: ranged(PROFILE_RANGES.maxCriteria),
+    verifyTimeoutSec: ranged(PROFILE_RANGES.verifyTimeoutSec),
     verifyAllowlist: z.array(z.string().max(300)).max(100),
     autoArchive: z.boolean(),
     dorMode: z.enum(["warn", "enforce", "off"]),
@@ -70,13 +75,13 @@ export const projectProfileSchema = z
 /** Project overrides of the default policy (every key optional). */
 export const policySettingsSchema = z
   .object({
-    maxPlanRounds: z.number().int().min(1).max(10),
-    maxReviewRounds: z.number().int().min(1).max(10),
-    maxVerifyFailures: z.number().int().min(1).max(10),
+    maxPlanRounds: ranged(POLICY_RANGES.maxPlanRounds),
+    maxReviewRounds: ranged(POLICY_RANGES.maxReviewRounds),
+    maxVerifyFailures: ranged(POLICY_RANGES.maxVerifyFailures),
     requireDifferentModel: z.boolean(),
-    humanSampleEvery: z.number().int().min(0).max(1000),
-    reviewStarvationMin: z.number().int().min(0).max(24 * 60),
-    leaseMin: z.number().int().min(5).max(24 * 60),
+    humanSampleEvery: ranged(POLICY_RANGES.humanSampleEvery),
+    reviewStarvationMin: ranged(POLICY_RANGES.reviewStarvationMin),
+    leaseMin: ranged(POLICY_RANGES.leaseMin),
     autoMerge: z.boolean(),
   })
   .partial()

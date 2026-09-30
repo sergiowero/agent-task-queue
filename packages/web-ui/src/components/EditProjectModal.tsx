@@ -2,11 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { AUTONOMY_LEVELS, type AutonomyLevel } from "@agentq/shared/catalog";
+import { DEFAULT_POLICY, POLICY_RANGES } from "@agentq/shared/policy";
+import { DEFAULT_PROFILE, PROFILE_RANGES } from "@agentq/shared/profile";
 import { api } from "../lib/api";
 import type { PolicySettings, ProjectProfile } from "../lib/api";
 import { Tabs } from "./Tabs";
 import { Textarea } from "./Textarea";
 import { DeleteIcon, EditIcon, FolderIcon, MergeIcon, SaveIcon } from "../lib/icons";
+import { Alert } from "./Alert";
 import { Button } from "./Button";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Field } from "./Field";
@@ -32,10 +35,25 @@ const lines = (v: string) =>
     .split("\n")
     .map((x) => x.trim())
     .filter(Boolean);
+/** A number typed into a field, clamped to the range the server accepts (blank or junk: the default). */
+const clamped = (value: string, { min, max }: { min: number; max: number }, fallback: number) => {
+  const n = parseInt(value, 10);
+  return Number.isNaN(n) ? fallback : Math.min(max, Math.max(min, n));
+};
+
+const DOR_HINTS = {
+  warn: "A task that is not ready is created with its problems listed.",
+  enforce: "A task that is not ready is refused until the problems are fixed.",
+  off: "New tasks are not checked.",
+} as const;
 
 interface EditProjectModalProps {
   project: ProjectRef;
   onClose: () => void;
+  /** Open on this tab (default: General). */
+  initialTab?: ProjectTab;
+  /** The commands on the Commands tab were just detected from the repository: ask the person to check them. */
+  detected?: boolean;
 }
 
 /** Delete confirmation for a project; shared by the projects grid and the edit modal. */
@@ -81,24 +99,30 @@ export function DeleteProjectDialog({
   );
 }
 
-export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
+export function EditProjectModal({ project, onClose, initialTab = "general", detected = false }: EditProjectModalProps) {
   const queryClient = useQueryClient();
   const modal = useModal(onClose);
   const [displayName, setDisplayName] = useState(project.displayName);
   const [workingDirectory, setWorkingDirectory] = useState(project.workingDirectory);
   const [defaultMergeBranch, setDefaultMergeBranch] = useState(project.defaultMergeBranch ?? "");
   const [autonomy, setAutonomy] = useState<AutonomyLevel>(project.autonomy ?? 2);
-  const [maxReviewRounds, setMaxReviewRounds] = useState(
-    String(project.policy?.maxReviewRounds ?? 3),
+  const policy = project.policy;
+  const [maxReviewRounds, setMaxReviewRounds] = useState(String(policy?.maxReviewRounds ?? DEFAULT_POLICY.maxReviewRounds));
+  const [maxPlanRounds, setMaxPlanRounds] = useState(String(policy?.maxPlanRounds ?? DEFAULT_POLICY.maxPlanRounds));
+  const [maxVerifyFailures, setMaxVerifyFailures] = useState(
+    String(policy?.maxVerifyFailures ?? DEFAULT_POLICY.maxVerifyFailures),
   );
-  const [humanSampleEvery, setHumanSampleEvery] = useState(
-    String(project.policy?.humanSampleEvery ?? 0),
+  const [humanSampleEvery, setHumanSampleEvery] = useState(String(policy?.humanSampleEvery ?? DEFAULT_POLICY.humanSampleEvery));
+  const [reviewStarvationMin, setReviewStarvationMin] = useState(
+    String(policy?.reviewStarvationMin ?? DEFAULT_POLICY.reviewStarvationMin),
   );
+  const [leaseMin, setLeaseMin] = useState(String(policy?.leaseMin ?? DEFAULT_POLICY.leaseMin));
   const [requireDifferentModel, setRequireDifferentModel] = useState(
-    project.policy?.requireDifferentModel ?? false,
+    policy?.requireDifferentModel ?? DEFAULT_POLICY.requireDifferentModel,
   );
+  const [autoMerge, setAutoMerge] = useState(policy?.autoMerge ?? DEFAULT_POLICY.autoMerge);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [tab, setTab] = useState<ProjectTab>("general");
+  const [tab, setTab] = useState<ProjectTab>(initialTab);
   const profile = project.profile;
   const [commands, setCommands] = useState<Record<string, string>>({
     ...(profile?.commands ?? {}),
@@ -108,9 +132,14 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
   const [verifyAllowlist, setVerifyAllowlist] = useState(
     (profile?.verifyAllowlist ?? []).join("\n"),
   );
-  const [maxDiffLines, setMaxDiffLines] = useState(String(profile?.maxDiffLines ?? 400));
-  const [maxPlanFiles, setMaxPlanFiles] = useState(String(profile?.maxPlanFiles ?? 10));
-  const [maxCriteria, setMaxCriteria] = useState(String(profile?.maxCriteria ?? 6));
+  const [maxDiffLines, setMaxDiffLines] = useState(String(profile?.maxDiffLines ?? DEFAULT_PROFILE.maxDiffLines));
+  const [maxPlanFiles, setMaxPlanFiles] = useState(String(profile?.maxPlanFiles ?? DEFAULT_PROFILE.maxPlanFiles));
+  const [maxCriteria, setMaxCriteria] = useState(String(profile?.maxCriteria ?? DEFAULT_PROFILE.maxCriteria));
+  const [verifyTimeoutSec, setVerifyTimeoutSec] = useState(
+    String(profile?.verifyTimeoutSec ?? DEFAULT_PROFILE.verifyTimeoutSec),
+  );
+  const [autoArchive, setAutoArchive] = useState(profile?.autoArchive ?? DEFAULT_PROFILE.autoArchive);
+  const [dorMode, setDorMode] = useState<ProjectProfile["dorMode"]>(profile?.dorMode ?? DEFAULT_PROFILE.dorMode);
   const [detecting, setDetecting] = useState(false);
 
   async function detect() {
@@ -138,18 +167,26 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
         defaultMergeBranch: defaultMergeBranch.trim() || null,
         autonomy,
         policy: {
-          maxReviewRounds: Math.max(1, parseInt(maxReviewRounds, 10) || 3),
-          humanSampleEvery: Math.max(0, parseInt(humanSampleEvery, 10) || 0),
+          maxPlanRounds: clamped(maxPlanRounds, POLICY_RANGES.maxPlanRounds, DEFAULT_POLICY.maxPlanRounds),
+          maxReviewRounds: clamped(maxReviewRounds, POLICY_RANGES.maxReviewRounds, DEFAULT_POLICY.maxReviewRounds),
+          maxVerifyFailures: clamped(maxVerifyFailures, POLICY_RANGES.maxVerifyFailures, DEFAULT_POLICY.maxVerifyFailures),
+          humanSampleEvery: clamped(humanSampleEvery, POLICY_RANGES.humanSampleEvery, DEFAULT_POLICY.humanSampleEvery),
+          reviewStarvationMin: clamped(reviewStarvationMin, POLICY_RANGES.reviewStarvationMin, DEFAULT_POLICY.reviewStarvationMin),
+          leaseMin: clamped(leaseMin, POLICY_RANGES.leaseMin, DEFAULT_POLICY.leaseMin),
           requireDifferentModel,
+          autoMerge,
         },
         profile: {
           commands: Object.fromEntries(COMMANDS.map((k) => [k, commands[k]?.trim() ?? ""])),
           protectedPaths: lines(protectedPaths),
           guardrails: lines(sharedGuardrails),
           verifyAllowlist: lines(verifyAllowlist),
-          maxDiffLines: Math.max(10, parseInt(maxDiffLines, 10) || 400),
-          maxPlanFiles: Math.max(1, parseInt(maxPlanFiles, 10) || 10),
-          maxCriteria: Math.max(1, parseInt(maxCriteria, 10) || 6),
+          maxDiffLines: clamped(maxDiffLines, PROFILE_RANGES.maxDiffLines, DEFAULT_PROFILE.maxDiffLines),
+          maxPlanFiles: clamped(maxPlanFiles, PROFILE_RANGES.maxPlanFiles, DEFAULT_PROFILE.maxPlanFiles),
+          maxCriteria: clamped(maxCriteria, PROFILE_RANGES.maxCriteria, DEFAULT_PROFILE.maxCriteria),
+          verifyTimeoutSec: clamped(verifyTimeoutSec, PROFILE_RANGES.verifyTimeoutSec, DEFAULT_PROFILE.verifyTimeoutSec),
+          autoArchive,
+          dorMode,
         },
       }),
     onSuccess: () => {
@@ -242,6 +279,19 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
                 spellCheck={false}
               />
             </Field>
+            <Toggle
+              checked={autoArchive}
+              onChange={setAutoArchive}
+              label="Archive a task when its pull request is merged"
+              description="Saves its summary and full record in the project's archive folder and clears it from the board."
+            />
+            <Field label="Definition of Ready" hint={DOR_HINTS[dorMode]}>
+              <Select value={dorMode} onChange={(e) => setDorMode(e.target.value as ProjectProfile["dorMode"])}>
+                <option value="warn">Warn</option>
+                <option value="enforce">Enforce</option>
+                <option value="off">Off</option>
+              </Select>
+            </Field>
           </div>
         )}
         {tab === "autonomy" && (
@@ -262,10 +312,25 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               <Field label="AI review rounds" hint="Change requests before a person decides.">
                 <Input
                   type="number"
-                  min={1}
-                  max={10}
+                  {...POLICY_RANGES.maxReviewRounds}
                   value={maxReviewRounds}
                   onChange={(e) => setMaxReviewRounds(e.target.value)}
+                />
+              </Field>
+              <Field label="Plan critique rounds" hint="Critiques asking for changes before a person decides.">
+                <Input
+                  type="number"
+                  {...POLICY_RANGES.maxPlanRounds}
+                  value={maxPlanRounds}
+                  onChange={(e) => setMaxPlanRounds(e.target.value)}
+                />
+              </Field>
+              <Field label="Failed verifications" hint="Red verifications in a row before a person decides.">
+                <Input
+                  type="number"
+                  {...POLICY_RANGES.maxVerifyFailures}
+                  value={maxVerifyFailures}
+                  onChange={(e) => setMaxVerifyFailures(e.target.value)}
                 />
               </Field>
               <Field
@@ -274,9 +339,31 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               >
                 <Input
                   type="number"
-                  min={0}
+                  {...POLICY_RANGES.humanSampleEvery}
                   value={humanSampleEvery}
                   onChange={(e) => setHumanSampleEvery(e.target.value)}
+                />
+              </Field>
+              <Field
+                label="Wait for a reviewer (min)"
+                hint="A review or plan critique no eligible agent picked up goes to you after this (0 = never)."
+              >
+                <Input
+                  type="number"
+                  {...POLICY_RANGES.reviewStarvationMin}
+                  value={reviewStarvationMin}
+                  onChange={(e) => setReviewStarvationMin(e.target.value)}
+                />
+              </Field>
+              <Field
+                label="Session lease (min)"
+                hint="A hand-opened agent session silent this long loses its task."
+              >
+                <Input
+                  type="number"
+                  {...POLICY_RANGES.leaseMin}
+                  value={leaseMin}
+                  onChange={(e) => setLeaseMin(e.target.value)}
                 />
               </Field>
             </div>
@@ -286,10 +373,26 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
               label="Reviewer uses a different model"
               description="A plan critique, verification or AI review is never claimed by an agent on the model of anyone who wrote the plan or code. A blank model counts as the tool's own default."
             />
+            <Toggle
+              checked={autoMerge}
+              onChange={setAutoMerge}
+              disabled={autonomy !== 3}
+              label="Auto-merge green, low-risk pull requests"
+              description={
+                autonomy === 3
+                  ? "AgentQ merges a PR by itself when its task is low risk, every check is green, no reviewer asks for changes and its head is the approved commit. Anything else waits for you."
+                  : "Only at level 3 (Autonomous): choose that level to turn it on."
+              }
+            />
           </div>
         )}
         {tab === "commands" && (
           <div className="space-y-4">
+            {detected && (
+              <Alert tone="info" title="Commands found in the repository">
+                Check them: the verifier runs every one after each code submission. Clear the ones you do not want.
+              </Alert>
+            )}
             <p className="text-sm text-text-secondary">
               The verifier runs these in the task's worktree after every code submission (install
               first), and agents read them in their brief. Leave a command empty to skip it.
@@ -308,6 +411,14 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
                 />
               </Field>
             ))}
+            <Field label="Verify timeout (seconds)" hint="Each command may run this long before the verifier stops it.">
+              <Input
+                type="number"
+                {...PROFILE_RANGES.verifyTimeoutSec}
+                value={verifyTimeoutSec}
+                onChange={(e) => setVerifyTimeoutSec(e.target.value)}
+              />
+            </Field>
           </div>
         )}
         {tab === "guardrails" && (
@@ -337,17 +448,17 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
             <Field label="Largest diff before high risk" hint="Added plus deleted lines.">
               <Input
                 type="number"
-                min={10}
+                {...PROFILE_RANGES.maxDiffLines}
                 value={maxDiffLines}
                 onChange={(e) => setMaxDiffLines(e.target.value)}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Most files per plan" hint="Planners split bigger plans into subtasks.">
-                <Input type="number" min={1} value={maxPlanFiles} onChange={(e) => setMaxPlanFiles(e.target.value)} />
+                <Input type="number" {...PROFILE_RANGES.maxPlanFiles} value={maxPlanFiles} onChange={(e) => setMaxPlanFiles(e.target.value)} />
               </Field>
               <Field label="Most criteria per task" hint="More criteria: split into subtasks.">
-                <Input type="number" min={1} value={maxCriteria} onChange={(e) => setMaxCriteria(e.target.value)} />
+                <Input type="number" {...PROFILE_RANGES.maxCriteria} value={maxCriteria} onChange={(e) => setMaxCriteria(e.target.value)} />
               </Field>
             </div>
             <Field

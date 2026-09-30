@@ -95,7 +95,7 @@ function DirectoryInput({
   );
 }
 
-function CreateProjectModal({ onClose }: { onClose: () => void }) {
+function CreateProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (project: Project) => void }) {
   const queryClient = useQueryClient();
   const modal = useModal(onClose);
   const [id, setId] = useState(newProjectId);
@@ -104,10 +104,11 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
   const mutation = useMutation({
     mutationFn: () => api.createProject({ id, displayName, workingDirectory }),
-    onSuccess: () => {
+    onSuccess: (project) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project created");
       modal.close();
+      onCreated(project);
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -267,6 +268,8 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
+  /** The project just created, whose detected commands the person checks. */
+  const [checkingCommands, setCheckingCommands] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   const { data: projects = [], isLoading } = useQuery({
@@ -324,7 +327,19 @@ export function ProjectsPage() {
         )}
       </PageBody>
 
-      {showCreateModal && <CreateProjectModal onClose={() => setShowCreateModal(false)} />}
+      {showCreateModal && (
+        <CreateProjectModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={(project) => {
+            // The server read the commands from the repository: show them for confirmation.
+            if (Object.values(project.profile?.commands ?? {}).some(Boolean)) setCheckingCommands(project);
+            else toast("No commands found in the repository: add them under Edit → Commands, or the verifier has nothing to run.");
+          }}
+        />
+      )}
+      {checkingCommands && (
+        <EditProjectModal project={checkingCommands} initialTab="commands" detected onClose={() => setCheckingCommands(null)} />
+      )}
       {editingProject && (
         <EditProjectModal project={editingProject} onClose={() => setEditingProject(null)} />
       )}
