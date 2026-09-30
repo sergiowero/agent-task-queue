@@ -5,6 +5,7 @@ import type {
 } from "@agentq/shared";
 import {
   archiveTask,
+  TaskStatus,
   archiveIfAuto,
   WorkflowError,
   getTasks,
@@ -44,6 +45,8 @@ import {
   requestCodeChanges,
   requestPrChanges,
   requestPlanChanges,
+  requestReplan,
+  dependencyDeleted,
   resolveBlocker,
   skillsBundleVersion,
   submitCode,
@@ -883,6 +886,7 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
         findingIds: Array.isArray(body?.findingIds) ? body.findingIds : undefined,
       }),
     request_ai_review: () => requestAiReview(taskId),
+    request_replan: () => requestReplan(taskId, { message: data.message }),
     // "Mark merged" (when the PR sync cannot see GitHub) archives like a merge the sync saw.
     complete: () => {
       const completed = completeTask(taskId);
@@ -926,6 +930,10 @@ const handleTaskSubActions = wrapHandler(async (req, url) => {
   if (["cancel", "unblock", "resolve_blocker"].includes(action)) {
     runnerEngine.abandonTask(taskId, `task ${action.replace("_", " ")} from the portal`);
   }
+  // Canceling a task cancels its subtasks: stop their jobs too.
+  if (result.status === TaskStatus.Canceled) {
+    for (const child of getSubtasks(taskId)) runnerEngine.abandonTask(child.id, "the parent task was canceled from the portal");
+  }
   broadcastSSE("task_updated", result);
   return jsonResponse(result);
 });
@@ -961,7 +969,14 @@ const handleTaskById = wrapHandler(async (req, url) => {
       return errorResponse(parsed.error.issues.map((i) => i.message).join("; "));
     }
     if (!getTaskById(taskId)) return errorResponse("not found", 404);
-    const task = editTask(taskId, parsed.data);
+    let task: Task;
+    try {
+      task = editTask(taskId, parsed.data);
+    } catch (e) {
+      // Not editable in its status (an agent holds it, or the criteria are frozen with the plan).
+      if (e instanceof WorkflowError) return errorResponse(e.message, 409);
+      throw e;
+    }
     broadcastSSE("task_updated", task);
     return jsonResponse(task);
   }
@@ -974,10 +989,12 @@ const handleTaskById = wrapHandler(async (req, url) => {
     if (hard) {
       const deleted = deleteTask(taskId);
       if (!deleted) return errorResponse("not found", 404);
+      dependencyDeleted(task);
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
     const ok = softDeleteTask(taskId);
     if (!ok) return errorResponse("not found", 404);
+    dependencyDeleted(task);
     broadcastSSE("task_updated", { id: taskId, deletedAt: new Date().toISOString() });
     return new Response(null, { status: 204, headers: corsHeaders() });
   }

@@ -9,7 +9,7 @@
  * code review) get an independent brief instead: the task and what to check,
  * never the notes, messages or evidence of the agent whose work they check.
  */
-import { getProjectById, getTaskById } from "./database.js";
+import { getProjectById, getSubtasks, getTaskById } from "./database.js";
 import { BLOCKING_SEVERITIES, STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
 import { getEvidence, getFindings, getHandoffs, latestHandoffs } from "./records.js";
 import { resolveProfile, type ProjectCommands } from "./profile.js";
@@ -51,7 +51,14 @@ export interface TaskBrief {
   /** The project's shared guardrails first, then the task's. */
   guardrails: string[];
   commands: ProjectCommands;
+  /** How big one task (one reviewable PR) may be: split bigger work into subtasks. */
+  sizeLimits: SizeLimits;
   criteria: AcceptanceCriterion[];
+  /**
+   * The tasks this one starts after (blockedBy): their work must be in this
+   * task's branch, which starts from the up-to-date merge branch.
+   */
+  dependencies: Dependency[];
   approvedPlan: ApprovedPlan | null;
   /** The latest plan while no plan is approved yet (planner revisions, plan reviews). */
   latestPlan: string | null;
@@ -79,6 +86,34 @@ export interface TaskBrief {
   pr: { body: string; url: string | null; commit: string | null } | null;
   /** Where the full history is. */
   more: string;
+}
+
+/** A task this one starts after, and where its work went. */
+export interface Dependency {
+  id: string;
+  title: string;
+  status: Task["status"] | "missing";
+  /** The branch its pull request went into. */
+  mergeBranch: string | null;
+  /** Head commit of its pull request. */
+  headSha: string | null;
+  pullRequest: string | null;
+}
+
+function dependenciesOf(task: Task): Dependency[] {
+  return task.blockedBy.map((id) => {
+    const dep = getTaskById(id);
+    return dep
+      ? { id, title: dep.title, status: dep.status, mergeBranch: dep.mergeBranch, headSha: dep.headSha, pullRequest: dep.pullRequest?.url ?? null }
+      : { id, title: "", status: "missing" as const, mergeBranch: null, headSha: null, pullRequest: null };
+  });
+}
+
+/** The project's size limits for one task (see ProjectProfile). */
+export interface SizeLimits {
+  maxDiffLines: number;
+  maxPlanFiles: number;
+  maxCriteria: number;
 }
 
 const SUBMISSIONS = new Set<ConversationEntry["messageType"]>(["plan", "code", "review", "merge", "verify"]);
@@ -119,6 +154,7 @@ function briefBasics(task: Task) {
     typeGuidance: TASK_TYPES[task.type]?.guidance ?? "",
     guardrails: [...new Set([...profile.guardrails, ...task.guardrails].map((g) => g.trim()).filter(Boolean))],
     commands: profile.commands,
+    sizeLimits: { maxDiffLines: profile.maxDiffLines, maxPlanFiles: profile.maxPlanFiles, maxCriteria: profile.maxCriteria },
     humanNotes,
     round: {
       planRound: task.planRound,
@@ -160,6 +196,7 @@ export function buildTaskBrief(taskOrId: Task | string): TaskBrief | null {
   return {
     ...basics,
     criteria: task.acceptanceCriteria,
+    dependencies: dependenciesOf(task),
     approvedPlan: task.approvedPlan,
     latestPlan: task.approvedPlan ? null : latestPlanOf(task),
     openFindings: getFindings(task.id).filter((f) => f.status !== "verified"),
@@ -218,6 +255,7 @@ export interface IndependentBrief {
   typeGuidance: string;
   guardrails: string[];
   commands: ProjectCommands;
+  sizeLimits: SizeLimits;
   /** What must hold and how each one is checked, without anyone's claim that it does. */
   criteria: Pick<AcceptanceCriterion, "id" | "text" | "verify">[];
   /** The plan the code must follow (review and verify). */
@@ -226,8 +264,10 @@ export interface IndependentBrief {
   latestPlan: string | null;
   /** How the plan under critique verifies each criterion (plan review only). */
   validationPlan: ValidationPlan | null;
-  /** What the planner declared with the plan: open questions, risk, subtasks, paths (plan review only). */
+  /** What the planner declared with the plan: open questions, risk, subtasks, paths, size warnings (plan review only). */
   planSubmission: PlanSubmission | null;
+  /** The subtasks the plan created, held until it is approved (plan review only). */
+  subtasks: Pick<Task, "id" | "title" | "risk" | "requiresPlan" | "blockedBy">[] | null;
   /** Earlier findings of this phase not yet verified (plan review and review). */
   openFindings: FindingToVerify[];
   /** What people decided along the way (answers to blockers, change requests), oldest first. */
@@ -282,6 +322,11 @@ export function buildIndependentBrief(taskOrId: Task | string, phase: Independen
     latestPlan: critique ? latestPlanOf(task) : null,
     validationPlan: critique ? task.validationPlan : null,
     planSubmission: critique ? task.planSubmission : null,
+    subtasks: critique
+      ? getSubtasks(task.id)
+          .filter((c) => c.held && c.status !== TaskStatus.Canceled)
+          .map(({ id, title, risk, requiresPlan, blockedBy }) => ({ id, title, risk, requiresPlan, blockedBy }))
+      : null,
     openFindings,
     humanDecisions: getHandoffs(task.id)
       .filter((h) => h.phase === "human")

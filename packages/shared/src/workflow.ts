@@ -7,6 +7,7 @@ import {
   getAppState,
   getClaimableTasks,
   getDbHandle,
+  getDependents,
   getSubtasks,
   getProjectById,
   getTaskById,
@@ -39,7 +40,7 @@ import {
 } from "./records.js";
 import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
-import { checkDefinitionOfReady } from "./dor.js";
+import { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 import { analyzeDiff, diffRiskReasons, mergeDiffReasons, protectedFiles } from "./diff.js";
 
 /** A pull request URL on GitHub, GitLab or Bitbucket. */
@@ -49,12 +50,14 @@ import {
   BLOCKING_SEVERITIES,
   CLAIM_RULES,
   CLAIMABLE_FROM,
+  REQUIRES_PLAN_EDITABLE,
   REVERT_FALLBACK,
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
   canTransition,
   claimRuleFor,
+  criteriaEditable,
   isRole,
   modelKey,
   resolveTargets,
@@ -212,17 +215,118 @@ export function transitionTask(task: Task, to: TaskStatus, opts: TransitionOptio
   const context = opts.context?.trim();
   if (context) appendJson(task.id, "contexts", context);
   if (opts.event) addActivityEvent({ eventType: opts.event, taskId: task.id, actor: author, details: opts.details });
+  if (to === TaskStatus.Canceled) {
+    cancelSubtasks(task.id);
+    surfaceDependents(task, "was canceled");
+  }
   if (task.parentId && (to === TaskStatus.Complete || to === TaskStatus.Canceled)) completeParentIfDone(task.parentId);
   return getTaskById(task.id)!;
 }
 
-/** A split task completes once every subtask is finished (and at least one completed). */
+/** Canceling a task cancels its unfinished subtasks: the work they were split from is dropped. */
+function cancelSubtasks(parentId: string): void {
+  for (const { id } of getSubtasks(parentId)) {
+    const child = getTaskById(id)!;
+    if (!STATUS_INFO[child.status].cancelable) continue;
+    transitionTask(child, TaskStatus.Canceled, {
+      actor: "system",
+      author: "system",
+      message: "The parent task was canceled.",
+      messageType: "system",
+      event: "task_canceled",
+      release: true,
+      patch: { blocker: null },
+    });
+  }
+}
+
+/**
+ * A task that will never complete (canceled or deleted) keeps the tasks that
+ * start after it out of the queue for good. Each one waiting in the queue goes
+ * to a person instead, who drops the dependency (resolving the blocker) or
+ * cancels it. Held subtasks are left alone (a re-plan drops them), and so are
+ * the subtasks of a canceled parent (they are canceled with it).
+ */
+function surfaceDependents(dependency: Pick<Task, "id" | "title">, what: string): void {
+  for (const dependent of getDependents(dependency.id)) {
+    if (dependent.held) continue;
+    if (dependent.parentId && getTaskById(dependent.parentId)?.status === TaskStatus.Canceled) continue;
+    blockOnDependency(dependent, `"${dependency.title}" (${dependency.id}), which ${what}`);
+  }
+}
+
+/** Sends a queued task to a person because a task it starts after (`which`) will never complete. */
+function blockOnDependency(dependent: Task, which: string): void {
+  if (!canTransition(dependent.status, TaskStatus.NeedsHuman)) return;
+  const blocker: Blocker = {
+    reason: `It starts after ${which}: it will never complete.`,
+    question: "Send the task on without that dependency (it is dropped when you resolve), or cancel it.",
+    phase: STATUS_INFO[dependent.status].phase,
+    fromStatus: dependent.status,
+    raisedBy: "system",
+    at: new Date().toISOString(),
+  };
+  transitionTask(dependent, TaskStatus.NeedsHuman, {
+    actor: "system",
+    author: "system",
+    message: `**Blocked:** ${blocker.reason}`,
+    messageType: "system",
+    event: "task_blocked",
+    details: blocker.reason,
+    patch: { blocker },
+  });
+}
+
+/** A released subtask whose dependency was canceled or deleted while it was held goes to a person. */
+function blockOnDeadDependency(child: Task): void {
+  const dead = child.blockedBy.find((id) => !dependencyAlive(id));
+  if (!dead) return;
+  const dep = getTaskById(dead);
+  blockOnDependency(child, dep ? `"${dep.title}" (${dead}), which was ${dep.deletedAt ? "deleted" : "canceled"}` : `${dead}, which was deleted`);
+}
+
+/** A person deleted a task: the tasks that start after it go to a person (see surfaceDependents). */
+export function dependencyDeleted(task: Task): void {
+  withTransaction(() => surfaceDependents(task, "was deleted"));
+}
+
+/** Whether a dependency can still complete (it exists, is not deleted and not canceled). */
+function dependencyAlive(id: string): boolean {
+  const dep = getTaskById(id);
+  return !!dep && !dep.deletedAt && dep.status !== TaskStatus.Canceled;
+}
+
+/**
+ * A split task completes once every subtask is finished and at least one
+ * completed. When every one was canceled, a person decides: re-plan it, code it
+ * as one task, or cancel it.
+ */
 function completeParentIfDone(parentId: string): void {
   const parent = getTaskById(parentId);
   if (!parent || parent.status !== TaskStatus.Split) return;
   const children = getSubtasks(parentId);
   const finished = children.every((c) => c.status === TaskStatus.Complete || c.status === TaskStatus.Canceled);
-  if (!finished || !children.some((c) => c.status === TaskStatus.Complete)) return;
+  if (!finished) return;
+  if (!children.some((c) => c.status === TaskStatus.Complete)) {
+    const blocker: Blocker = {
+      reason: `All ${children.length} subtasks were canceled; nothing of this task was done.`,
+      question: "Send it back to planning (Plan changes requested), code it as one task (Ready for code), or cancel it.",
+      phase: "plan",
+      fromStatus: parent.status,
+      raisedBy: "system",
+      at: new Date().toISOString(),
+    };
+    transitionTask(parent, TaskStatus.NeedsHuman, {
+      actor: "system",
+      author: "system",
+      message: `**Blocked:** ${blocker.reason}`,
+      messageType: "system",
+      event: "task_blocked",
+      details: blocker.reason,
+      patch: { blocker },
+    });
+    return;
+  }
   transitionTask(parent, TaskStatus.Complete, {
     actor: "system",
     author: "system",
@@ -237,9 +341,11 @@ function completeParentIfDone(parentId: string): void {
  * released and the parent waits for them; otherwise the task goes to coding.
  */
 function planApprovedTarget(task: Task): TaskStatus {
-  const held = getSubtasks(task.id).filter((c) => c.held);
+  // Subtasks of an earlier plan (dropped by the re-plan) or canceled by a person stay out.
+  const held = getSubtasks(task.id).filter((c) => c.held && c.status !== TaskStatus.Canceled);
   if (!held.length) return TaskStatus.ReadyForCode;
   for (const child of held) patchTask(child.id, { held: false });
+  for (const child of held) blockOnDeadDependency(getTaskById(child.id)!);
   return TaskStatus.Split;
 }
 
@@ -252,6 +358,12 @@ function requireTask(taskId: string): Task {
 /** The autonomy policy that applies to a task (its override, else its project's level). */
 export function policyFor(task: Task): GatePolicy {
   return resolvePolicy(task.projectId ? getProjectById(task.projectId) : null, task);
+}
+
+/** The Definition of Ready of a task in its project, whose commands can verify it too. */
+function readinessIssues(input: ReadinessInput, projectId: string | null | undefined): string[] {
+  const profile = resolveProfile(projectId ? getProjectById(projectId)?.profile : null);
+  return checkDefinitionOfReady({ ...input, hasProjectCommands: profileCommands(profile).length > 0 });
 }
 
 function minutesFromNow(minutes: number): string {
@@ -574,7 +686,13 @@ export interface ResolveBlockerInput {
   actor?: string;
 }
 
-/** A person answers a blocked task and sends it on (the answer stays in the conversation). */
+/**
+ * A person answers a blocked task and sends it on (the answer stays in the
+ * conversation). Sending a plan or plan-critique blocker on to coding approves
+ * the plan, as approvePlan does: it is frozen and the subtasks it created are
+ * released (the task then waits in `split`). Dependencies that will never
+ * complete (canceled or deleted) are dropped, so the task can be claimed again.
+ */
 export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task {
   const head = input.targetStatus === TaskStatus.Approved ? reviewedHead(getTaskById(taskId)) : null;
   return withTransaction(() => {
@@ -609,11 +727,17 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
         summary: `Answer to "${task.blocker?.question ?? "the blocker"}": ${answer}`,
       });
     }
-    return transitionTask(task, input.targetStatus, {
+    let to = input.targetStatus;
+    let approvedPlan: ApprovedPlan | undefined;
+    const planBlocker = task.blocker?.phase === "plan" || task.blocker?.phase === "plan_review";
+    if (planBlocker && to === TaskStatus.ReadyForCode) {
+      if (task.planSubmission) approvedPlan = freezePlan(task, actor);
+      to = planApprovedTarget(task);
+    }
+    const blockedBy = task.blockedBy.filter(dependencyAlive);
+    const updated = transitionTask(task, to, {
       actor,
-      message: answer
-        ? `**Blocker resolved** → ${statusLabel(input.targetStatus)}\n\n${answer}`
-        : `Blocker resolved → ${statusLabel(input.targetStatus)}.`,
+      message: answer ? `**Blocker resolved** → ${statusLabel(to)}\n\n${answer}` : `Blocker resolved → ${statusLabel(to)}.`,
       messageType: "user",
       event: "blocker_resolved",
       details: answer || undefined,
@@ -633,8 +757,12 @@ export function resolveBlocker(taskId: string, input: ResolveBlockerInput): Task
               },
             }
           : {}),
+        ...(approvedPlan ? { approvedPlan } : {}),
+        ...(blockedBy.length !== task.blockedBy.length ? { blockedBy } : {}),
       },
     });
+    if (approvedPlan) addActivity(taskId, "plan_approved", actor, "Approved by resolving the blocker");
+    return updated;
   });
 }
 
@@ -653,6 +781,7 @@ function humanTransition(
   message: string,
   input: HumanActionInput = {},
   details?: string,
+  patch: TaskPatch = {},
 ): Task {
   return withTransaction(() => {
     const task = requireTask(taskId);
@@ -665,7 +794,7 @@ function humanTransition(
       messageType: "user",
       event,
       details,
-      patch: { revertStreak: 0 },
+      patch: { ...patch, revertStreak: 0 },
     });
   });
 }
@@ -821,6 +950,27 @@ function sendBackToCoder(task: Task, input: RequestCodeChangesInput, event: stri
   });
 }
 
+/**
+ * A person reviewing the code sends the task back to planning (the plan itself
+ * is wrong). The approved plan stays until the planner's next one is approved;
+ * the new plan gets fresh rounds and verifications.
+ */
+export function requestReplan(taskId: string, input: HumanActionInput = {}): Task {
+  const message = input.message?.trim();
+  const task = requireTask(taskId);
+  humanHandoff(taskId, message, input.actor);
+  return humanTransition(
+    taskId,
+    TaskStatus.WaitingCodeReview,
+    TaskStatus.PlanChangesRequested,
+    "plan_changes_requested",
+    message || "Sent back to planning.",
+    input,
+    message,
+    { verifyFailures: 0, roundBaseline: { plan: task.planRound, code: task.codeRound } },
+  );
+}
+
 export function requestAiReview(taskId: string, input: HumanActionInput = {}): Task {
   return humanTransition(taskId, TaskStatus.WaitingCodeReview, TaskStatus.CodeReviewRequested, "ai_review_requested", "AI code review requested.", input);
 }
@@ -930,18 +1080,57 @@ export function unblockTask(taskId: string, input: HumanActionInput = {}): Task 
 
 export type TaskEdit = Omit<TaskPatch, "acceptanceCriteria"> & { acceptanceCriteria?: CriterionInput[] };
 
-/** A person edits a task's fields (never its status, claim or history). */
+/**
+ * A person edits a task's fields (never its claim or history), only in the
+ * statuses STATUS_INFO marks editable: never while an agent holds it. The
+ * criteria are frozen with an approved plan (see criteriaEditable). Changing
+ * requiresPlan before work starts routes the task (see REQUIRES_PLAN_EDITABLE).
+ */
 export function editTask(taskId: string, edit: TaskEdit): Task {
+  return withTransaction(() => editTaskFields(taskId, edit));
+}
+
+function editTaskFields(taskId: string, edit: TaskEdit): Task {
   const task = requireTask(taskId);
+  if (!STATUS_INFO[task.status].editable) {
+    throw new WorkflowError(
+      STATUS_INFO[task.status].kind === "active"
+        ? `An agent is working on this task (${statusLabel(task.status)}): unblock it before editing it.`
+        : `A task in ${statusLabel(task.status)} cannot be edited.`,
+    );
+  }
   const { acceptanceCriteria, ...rest } = edit;
+  if (acceptanceCriteria && !criteriaEditable(task)) {
+    throw new WorkflowError(
+      "The acceptance criteria are frozen with the approved plan: send the task back to planning to change them.",
+    );
+  }
+  const planChanged = rest.requiresPlan !== undefined && rest.requiresPlan !== task.requiresPlan;
+  if (planChanged && !REQUIRES_PLAN_EDITABLE.includes(task.status)) {
+    throw new WorkflowError(
+      `Whether a task requires a plan can change only before work starts (${REQUIRES_PLAN_EDITABLE.map(statusLabel).join(", ")}).`,
+    );
+  }
   const patch: TaskPatch = { ...rest };
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
   const project = task.projectId ? getProjectById(task.projectId) : null;
   if (resolveProfile(project?.profile).dorMode !== "off") {
     const next = { ...task, ...patch };
-    patch.dorIssues = checkDefinitionOfReady({ ...next, acceptanceCriteria: next.acceptanceCriteria });
+    patch.dorIssues = readinessIssues({ ...next, acceptanceCriteria: next.acceptanceCriteria }, next.projectId);
   }
-  return patchTask(taskId, patch)!;
+  const updated = patchTask(taskId, patch)!;
+  const to =
+    planChanged && updated.requiresPlan && task.status === TaskStatus.ReadyForCode && !task.approvedPlan
+      ? TaskStatus.PlanRequested
+      : planChanged && !updated.requiresPlan && task.status === TaskStatus.PlanRequested
+        ? TaskStatus.ReadyForCode
+        : null;
+  if (!to) return updated;
+  return transitionTask(updated, to, {
+    actor: "user",
+    message: updated.requiresPlan ? "Requires a plan now: a planner writes one first." : "No longer requires a plan: ready for code.",
+    messageType: "user",
+  });
 }
 
 export function addUserComment(taskId: string, input: { message: string; author?: string }): Task {
@@ -971,7 +1160,7 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
     updateProject(project.id, { defaultMergeBranch: mergeBranch });
   }
   const mode = resolveProfile(project.profile).dorMode;
-  const issues = mode === "off" ? [] : checkDefinitionOfReady(input);
+  const issues = mode === "off" ? [] : readinessIssues(input, project.id);
   if (mode === "enforce" && issues.length && !input.draft) {
     throw new WorkflowError(`The task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
   }
@@ -1155,6 +1344,28 @@ function checkValidationPlan(task: Task, plan: ValidationPlan | undefined): Vali
   };
 }
 
+/**
+ * Where a plan is bigger than one reviewable PR (the project's maxPlanFiles and
+ * maxCriteria) without splitting the work, or proposes subtasks it did not
+ * create. Warnings for the critic and the person approving, never a refusal.
+ */
+function planSizeWarnings(task: Task, touched: string[], proposed: string[]): string[] {
+  const profile = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null);
+  const created = getSubtasks(task.id).filter((c) => c.held && c.status !== TaskStatus.Canceled).length;
+  const warnings: string[] = [];
+  if (!created && touched.length > profile.maxPlanFiles) {
+    warnings.push(`The plan touches ${touched.length} files (the project's limit is ${profile.maxPlanFiles}) and creates no subtasks.`);
+  }
+  const criteria = task.acceptanceCriteria.filter((c) => c.status !== "waived").length;
+  if (!created && criteria > profile.maxCriteria) {
+    warnings.push(`The task has ${criteria} acceptance criteria (the project's limit is ${profile.maxCriteria}) and the plan creates no subtasks.`);
+  }
+  if (proposed.length && !created) {
+    warnings.push(`The plan proposes ${proposed.length} subtasks but created none with create_subtask.`);
+  }
+  return warnings;
+}
+
 export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitResult {
   return submit(
     taskId,
@@ -1166,11 +1377,14 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
       const protectedPaths = resolveProfile(project?.profile).protectedPaths;
       const questions = (input.openQuestions ?? []).map((q) => ({ text: q.text.trim(), blocking: !!q.blocking })).filter((q) => q.text);
       const touched = (input.touchedPaths ?? []).map((p) => p.trim()).filter(Boolean);
+      const proposed = (input.proposedSubtasks ?? []).map((x) => x.trim()).filter(Boolean);
+      const sizeWarnings = planSizeWarnings(task, touched, proposed);
       const submission: PlanSubmission = {
         openQuestions: questions,
         suggestedRisk: input.suggestedRisk ?? null,
-        proposedSubtasks: (input.proposedSubtasks ?? []).map((x) => x.trim()).filter(Boolean),
+        proposedSubtasks: proposed,
         touchedPaths: touched,
+        sizeWarnings,
       };
       // Risk only goes up: the planner's estimate, or protected paths the plan touches.
       const reasons: string[] = [];
@@ -1200,8 +1414,10 @@ export function submitPlan(taskId: string, input: SubmitPlanInput = {}): SubmitR
         to: afterPlan({ ...task, risk }, policy, { blockingQuestions: blocking.length > 0 }),
         message: input.message,
         events: newReasons.length ? [{ event: "risk_raised", details: newReasons.join("; ") }] : [],
+        ...(sizeWarnings.length ? { note: { message: ["**Plan size:**", ...sizeWarnings.map((w) => `- ${w}`)].join("\n") } } : {}),
         patch: {
-          ...(validationPlan ? { validationPlan } : {}),
+          // A revision without a validation plan clears the previous one: approval freezes only this plan's.
+          validationPlan: validationPlan ?? null,
           planSubmission: submission,
           risk,
           riskReasons: [...task.riskReasons, ...newReasons],
@@ -1306,7 +1522,7 @@ export interface CreateSubtaskInput extends ClaimAuth {
   type?: Task["type"];
   risk?: Risk;
   requiresPlan?: boolean;
-  /** Tasks (usually earlier subtasks) that must be complete first. */
+  /** Tasks (usually earlier subtasks) that must be complete first; never the parent or a canceled task. */
   blockedBy?: string[];
   author?: string;
 }
@@ -1319,10 +1535,23 @@ export function createSubtask(parentId: string, input: CreateSubtaskInput): Task
   return withTransaction(() => {
     const parent = requireClaim(parentId, TaskStatus.Planning, input);
     const siblings = new Set(getSubtasks(parentId).map((c) => c.id));
+    // The parent (and its own parents) wait for this subtask: depending on them would deadlock.
+    const ancestors = new Set<string>();
+    for (let t: Task | null = parent; t && !ancestors.has(t.id); t = t.parentId ? getTaskById(t.parentId) : null) {
+      ancestors.add(t.id);
+    }
     for (const dep of input.blockedBy ?? []) {
       const other = getTaskById(dep);
-      if (!other || (other.projectId !== parent.projectId && !siblings.has(dep))) {
+      if (!other || other.deletedAt || (other.projectId !== parent.projectId && !siblings.has(dep))) {
         throw new WorkflowError(`blockedBy: unknown task ${dep} (use ids of this project's tasks, e.g. earlier subtasks).`);
+      }
+      if (ancestors.has(dep)) {
+        throw new WorkflowError(
+          `blockedBy: ${dep} is the task being split (or its parent): it waits for its subtasks, so this one would never start. Use ids of earlier subtasks.`,
+        );
+      }
+      if (other.status === TaskStatus.Canceled) {
+        throw new WorkflowError(`blockedBy: ${dep} is canceled and will never complete.`);
       }
     }
     const author = input.author ?? parent.assignedAgent?.agentId ?? "planner";
@@ -1341,7 +1570,15 @@ export function createSubtask(parentId: string, input: CreateSubtaskInput): Task
       blockedBy: input.blockedBy ?? [],
       held: true,
     });
+    // Subtasks meet the project's Definition of Ready too (enforce: the insert is rolled back).
+    const mode = resolveProfile(getProjectById(parent.projectId!)?.profile).dorMode;
+    const issues = mode === "off" ? [] : readinessIssues(child, child.projectId);
+    if (mode === "enforce" && issues.length) {
+      throw new WorkflowError(`The subtask is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
+    }
+    if (issues.length) patchTask(child.id, { dorIssues: issues });
     addActivity(child.id, "task_created", author, `Subtask of ${parentId}`);
+    if (issues.length) addActivity(child.id, "dor_warning", author, issues.join("\n"));
     addActivity(parentId, "subtask_created", author, `${child.title} (${child.id})`);
     touchTask(parentId);
     return getTaskById(child.id)!;
@@ -1376,8 +1613,15 @@ export function submitRefinement(taskId: string, input: SubmitRefinementInput): 
         risk: refinedRisk(task, input.type ?? task.type, input.risk),
         requiresPlan: input.requiresPlan ?? task.requiresPlan,
       };
-      const issues = checkDefinitionOfReady(next);
+      const mode = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null).dorMode;
+      const issues = mode === "off" ? [] : readinessIssues(next, task.projectId);
       const blocking = (input.openQuestions ?? []).filter((q) => q.blocking && q.text.trim());
+      // Under enforce the refiner fixes what is missing, or asks a person (a blocking question).
+      if (mode === "enforce" && issues.length && !blocking.length) {
+        throw new WorkflowError(
+          `The refined task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}\nFix these, or ask a blocking question.`,
+        );
+      }
       const blocker: Blocker | null = blocking.length
         ? {
             reason: "The draft has questions only a person can answer.",
@@ -1396,6 +1640,7 @@ export function submitRefinement(taskId: string, input: SubmitRefinementInput): 
           acceptanceCriteria: criteria,
           type: next.type,
           risk: next.risk,
+          requiresPlan: next.requiresPlan,
           nonGoals: input.nonGoals ?? task.nonGoals,
           dorIssues: issues,
           ...(blocker ? { blocker } : {}),
@@ -1417,12 +1662,13 @@ export function promoteDraft(taskId: string, input: HumanActionInput = {}): Task
     const task = requireTask(taskId);
     if (task.status !== TaskStatus.Draft) throw new WorkflowError("Only a draft can be promoted.");
     const to = task.requiresPlan ? TaskStatus.PlanRequested : TaskStatus.ReadyForCode;
+    const mode = resolveProfile(task.projectId ? getProjectById(task.projectId)?.profile : null).dorMode;
     return transitionTask(task, to, {
       actor: input.actor ?? "user",
       message: input.message?.trim() || `Draft promoted to ${statusLabel(to)}.`,
       messageType: "user",
       event: "draft_promoted",
-      patch: { dorIssues: checkDefinitionOfReady(task) },
+      patch: { dorIssues: mode === "off" ? [] : readinessIssues(task, task.projectId) },
     });
   });
 }

@@ -291,6 +291,31 @@ export function isActiveStatus(status: string): boolean {
   return STATUS_INFO[status as TaskStatus]?.kind === "active";
 }
 
+/**
+ * Whether a person may change a task's acceptance criteria: only where the task
+ * is editable, and once a plan is approved the criteria are frozen with it until
+ * the task goes back to planning (the next approval freezes the new ones).
+ */
+export function criteriaEditable(task: {
+  status: string;
+  approvedPlan?: unknown;
+  blocker?: { phase: Phase | null } | null;
+}): boolean {
+  const info = STATUS_INFO[task.status as TaskStatus];
+  if (!info?.editable) return false;
+  if (!task.approvedPlan) return true;
+  const phase = task.status === TaskStatus.NeedsHuman ? task.blocker?.phase : info.phase;
+  return phase === "refine" || phase === "plan" || phase === "plan_review";
+}
+
+/**
+ * Where a person may change whether a task requires a plan: before any agent
+ * started it. Turning it on sends a ready-for-code task to planning (unless it
+ * already has an approved plan); turning it off sends a task still waiting for
+ * its first plan to coding.
+ */
+export const REQUIRES_PLAN_EDITABLE: readonly TaskStatus[] = [TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode];
+
 // ─── Roles and claims ─────────────────────────────────────────────────
 
 /**
@@ -393,7 +418,12 @@ export const UNBLOCK_TARGET: Partial<Record<TaskStatus, TaskStatus>> = {
   [TaskStatus.Refining]: TaskStatus.Draft,
 };
 
-/** Statuses a person may send a `needs_human` task to, by the phase it was blocked in. */
+/**
+ * Statuses a person may send a `needs_human` task to, by the phase it was
+ * blocked in. From coding, verification and review, "Plan changes requested"
+ * sends the task back to planning (a wrong approved plan); the approved plan
+ * stays until a new one is approved.
+ */
 export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
   refine: [TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode, TaskStatus.Canceled],
   plan_review: [
@@ -414,6 +444,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.ChangesRequested,
     TaskStatus.ReadyForCode,
     TaskStatus.WaitingCodeReview,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   verify: [
@@ -421,6 +452,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.ChangesRequested,
     TaskStatus.WaitingCodeReview,
     TaskStatus.CodeReviewRequested,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   review: [
@@ -428,6 +460,7 @@ export const RESOLVE_TARGETS: Record<Phase, TaskStatus[]> = {
     TaskStatus.WaitingCodeReview,
     TaskStatus.ChangesRequested,
     TaskStatus.Approved,
+    TaskStatus.PlanChangesRequested,
     TaskStatus.Canceled,
   ],
   merge: [TaskStatus.Approved, TaskStatus.PrOpen, TaskStatus.ChangesRequested, TaskStatus.Complete, TaskStatus.Canceled],
@@ -462,7 +495,8 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
   add(TaskStatus.Refining, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
   add(TaskStatus.Draft, TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
   add(TaskStatus.PlanReviewRequested, TaskStatus.WaitingPlanReview);
-  add(TaskStatus.Split, TaskStatus.Complete);
+  // Every subtask finished; if none completed, a person decides what happens to the task.
+  add(TaskStatus.Split, TaskStatus.Complete, TaskStatus.NeedsHuman);
   add(
     TaskStatus.Coding,
     TaskStatus.WaitingCodeReview,
@@ -493,11 +527,20 @@ export const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = (() => {
     TaskStatus.Approved,
     TaskStatus.ChangesRequested,
     TaskStatus.CodeReviewRequested,
+    TaskStatus.PlanChangesRequested,
   );
+  // A person changed requiresPlan before any agent started the task.
+  add(TaskStatus.ReadyForCode, TaskStatus.PlanRequested);
+  add(TaskStatus.PlanRequested, TaskStatus.ReadyForCode);
+  // A task it starts after was canceled or deleted: a person decides (drop it, or cancel).
+  add(TaskStatus.ReadyForCode, TaskStatus.NeedsHuman);
+  add(TaskStatus.PlanRequested, TaskStatus.NeedsHuman);
   // The PR was merged (sync or a person), closed without merging (a person decides),
   // or a person asked for changes on it (back to the coder, same branch and PR).
   add(TaskStatus.PrOpen, TaskStatus.Complete, TaskStatus.NeedsHuman, TaskStatus.ChangesRequested);
   add(TaskStatus.NeedsHuman, ...resolveTargets(null));
+  // A plan blocker sent on to coding approves the plan: its subtasks start and the task waits for them.
+  add(TaskStatus.NeedsHuman, TaskStatus.Split);
   // Escalation and cancellation.
   for (const s of ALL_STATUSES) {
     if (STATUS_INFO[s].kind === "active") add(s, TaskStatus.NeedsHuman);

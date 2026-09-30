@@ -26,6 +26,15 @@ describe("skills bundle", () => {
     expect(compareVersions(skillsBundleVersion()!, MIN_COMPATIBLE_SKILLS_VERSION)).toBeGreaterThanOrEqual(0);
   });
 
+  it("the coder branches from the fetched merge branch, where its dependencies' work is", () => {
+    const body = readSkill("agentq-code")!.body;
+    const fetch = body.indexOf("git fetch origin {task.mergeBranch}");
+    const create = body.indexOf("git worktree add -b {task.recommendedBranch} {project}/.agentq/worktrees/{task.id} origin/{task.mergeBranch}");
+    expect(fetch).toBeGreaterThan(-1);
+    expect(create).toBeGreaterThan(fetch);
+    expect(body).toContain("brief.dependencies");
+  });
+
   it("reads a skill body without its frontmatter", () => {
     const skill = readSkill("agentq-claim")!;
     expect(skill.body.startsWith("---")).toBe(false);

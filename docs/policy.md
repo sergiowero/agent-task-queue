@@ -34,19 +34,65 @@ acceptance criteria needs a `validationPlan` with at least one item per criterio
 (waived ones excepted; an item with only `how` is a manual check); the portal shows it
 while the plan waits for a person, and flags criteria without a check.
 
+**Size.** One task is one reviewable PR. The project's `maxDiffLines` (400),
+`maxPlanFiles` (10) and `maxCriteria` (6) reach the planner and the critic as
+`brief.sizeLimits`. A plan that touches more files, or a task with more criteria,
+without creating subtasks (or a plan that proposes subtasks it did not create) is
+submitted with `planSubmission.sizeWarnings`: the critic sees them next to the
+subtasks the plan created, and the task page shows them. They are warnings, not
+refusals.
+
 ## Subtasks and drafts
 
-A planner can split a task with `create_subtask` (with `blockedBy` for order). The
-subtasks are held until the parent's plan is approved; then they run like any
-task (a blocked one waits for its dependencies to be complete) and the parent,
-in `split`, completes when they are all finished. Re-planning drops the held
-subtasks of the previous plan.
+A planner can split a task with `create_subtask` (with `blockedBy` naming earlier
+subtasks for order; never the task being split, whose completion waits for them,
+nor a canceled task). The subtasks are held until the parent's plan is approved
+(by a person, by the critic, or by a person resolving the plan's blocker to
+`ready_for_code`); then they run like any task (a blocked one waits for its
+dependencies to be complete) and the parent, in `split`, completes when they are
+all finished. Re-planning drops the held subtasks of the previous plan.
+
+- **Canceling a task cancels its unfinished subtasks** (their runner jobs are stopped).
+- **A dependency that will never complete** (canceled or deleted) sends each task
+  queued after it to `needs_human`. Resolving that blocker drops the dead
+  dependency, so the task can be claimed again; or cancel it.
+- **A split task whose subtasks were all canceled** goes to `needs_human`: send it
+  back to planning, code it as one task, or cancel it.
 
 A task created as a **draft** waits for an agent with the `refine` role to make it ready
 (criteria, type, risk, scope) or for a person to promote it.
 
+**Requires plan.** A person can change `requiresPlan` while nothing has started the
+task (`draft`, `plan_requested`, `ready_for_code`): turning it on sends a
+ready-for-code task without an approved plan to `plan_requested`, turning it off
+sends a task still waiting for its first plan to `ready_for_code`. The refiner's
+choice is stored the same way.
+
 L0 reproduces the original behaviour exactly: the reviewer's verdict is advice
 and a person approves or requests changes.
+
+## Definition of Ready
+
+Each project checks new tasks against a Definition of Ready (`dorMode`: `warn`
+stores the problems on the task, `enforce` refuses the task, `off` skips it):
+a real description, acceptance criteria and at least one that says how it is
+verified, a plan for high-risk work, reproduction steps for a bug, and something
+that can verify the task (the project's commands or a criterion's command; with
+neither, it would reach review not verified). The same check runs on every
+edit, on the refiner's `submit_refinement` (under `enforce` it is refused while
+problems are left, unless the refiner asks a blocking question), on a person's
+**Promote** (kept as warnings) and on each `create_subtask` (under `enforce` an
+unready subtask is refused). Drafts are exempt until they are promoted or refined.
+
+## Editing a task
+
+A person edits a task's fields from the portal (`PUT /api/tasks/:id`) only while no
+agent holds it: in planning, coding, verifying, reviewing or merging, with a PR open,
+or once it is complete or canceled, the server answers `409` (unblock the task first).
+The acceptance criteria are frozen with the approved plan: changing them needs the
+task back in planning (the next approval freezes the new ones). A criterion reworded
+in place keeps its id, so the validation plan and the evidence still point at it (its
+status starts over).
 
 ## Code review routing (L1–L3)
 
@@ -104,12 +150,24 @@ findings already verified cannot be answered again.
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
 | Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
 | The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR or to the coder, or cancel) |
+| A task it starts after is canceled or deleted | `needs_human` (drop the dependency, or cancel) |
+| Every subtask of a split task was canceled | `needs_human` (re-plan, code it as one task, or cancel) |
 
 Answering a `needs_human` task (task page → answer + next status) records the
 answer in the conversation and resets the round limits, the consecutive verification
 failures and the tamper strikes, so the agents get a fresh set of rounds. Sending a
 tampering blocker on (to verification or review) accepts those test changes: they are
-not flagged again on later rounds.
+not flagged again on later rounds. The statuses offered depend on the phase it was
+blocked in:
+
+- A blocker in **planning or plan critique** sent to `ready_for_code` approves the
+  plan, like **Approve plan**: the plan and its validation are frozen, and the
+  subtasks it created start (the task waits in `split`).
+- A blocker in **coding, verification or review** can go back to
+  `plan_changes_requested` when the approved plan itself is wrong (a test it names
+  cannot exist, a criterion cannot be checked as planned). The approved plan stays
+  until the planner's next one is approved. From a code review, **Re-plan** does the
+  same.
 
 ## Pull requests
 

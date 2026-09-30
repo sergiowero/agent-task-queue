@@ -20,6 +20,10 @@ export interface ProjectProfile {
   guardrails: string[];
   /** A diff larger than this (added + deleted lines) raises the task's risk to high. */
   maxDiffLines: number;
+  /** A plan touching more files than this should be split into subtasks (a warning, not a refusal). */
+  maxPlanFiles: number;
+  /** A task with more acceptance criteria than this should be split into subtasks (a warning, not a refusal). */
+  maxCriteria: number;
   /** Per-command time limit for the verifier. */
   verifyTimeoutSec: number;
   /**
@@ -38,6 +42,8 @@ export const DEFAULT_PROFILE: ProjectProfile = {
   protectedPaths: [],
   guardrails: [],
   maxDiffLines: 400,
+  maxPlanFiles: 10,
+  maxCriteria: 6,
   verifyTimeoutSec: 600,
   verifyAllowlist: [],
   autoArchive: false,

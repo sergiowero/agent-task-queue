@@ -40,9 +40,18 @@ export function formatCriterionLine(c: Pick<AcceptanceCriterion, "text" | "verif
     : c.text;
 }
 
+/** Whether the one-line format shows a criterion's check (see formatCriterionLine). */
+function shownInLine(verify: AcceptanceCriterion["verify"]): boolean {
+  return !!verify.command && (verify.kind === "command" || verify.kind === "test");
+}
+
 /**
  * Turns inputs into criteria with ids. Criteria that keep their id (or their
  * exact text) keep their status and evidence; new ones get the next free id.
+ * With as many inputs as criteria, one reworded in place keeps the id of the
+ * criterion at its position, so the validation plan and the evidence still
+ * point at it; its status and evidence start over. A line without " $ command" drops
+ * the command it had; a check the line cannot show (manual, review) is kept.
  */
 export function normalizeCriteria(
   inputs: CriterionInput[],
@@ -51,36 +60,66 @@ export function normalizeCriteria(
   const byId = new Map(existing.map((c) => [c.id, c]));
   const byText = new Map(existing.map((c) => [c.text, c]));
   let next = Math.max(0, ...existing.map((c) => Number(c.id.replace(/^AC/, "")) || 0)) + 1;
+  const parsed = inputs
+    .map((input) => {
+      const raw = typeof input === "string" ? parseCriterionLine(input) : input;
+      const verify =
+        typeof input !== "string" && input.verify
+          ? input.verify
+          : "command" in raw && raw.command
+            ? { kind: "command" as const, command: raw.command }
+            : undefined;
+      return {
+        text: raw.text.trim(),
+        id: typeof input !== "string" ? input.id : undefined,
+        status: typeof input !== "string" ? input.status : undefined,
+        verify,
+      };
+    })
+    .filter((p) => p.text);
+
+  // By id, then by exact text; then a reworded one takes the criterion at its place, if still free.
   const used = new Set<string>();
-  const out: AcceptanceCriterion[] = [];
-  for (const input of inputs) {
-    const raw = typeof input === "string" ? parseCriterionLine(input) : input;
-    const text = raw.text.trim();
-    if (!text) continue;
-    const verify =
-      typeof input !== "string" && input.verify
-        ? input.verify
-        : "command" in raw && raw.command
-          ? { kind: "command" as const, command: raw.command }
-          : undefined;
-    const previous =
-      (typeof input !== "string" && input.id ? byId.get(input.id) : undefined) ?? byText.get(text);
-    let id = previous && !used.has(previous.id) ? previous.id : undefined;
+  const previous = parsed.map((p) => {
+    const match = (p.id ? byId.get(p.id) : undefined) ?? byText.get(p.text);
+    if (!match || used.has(match.id)) return undefined;
+    used.add(match.id);
+    return match;
+  });
+  if (parsed.length === existing.length) {
+    previous.forEach((match, i) => {
+      if (match || used.has(existing[i].id)) return;
+      previous[i] = existing[i];
+      used.add(existing[i].id);
+    });
+  }
+
+  return parsed.map((p, i) => {
+    const prev = previous[i];
+    let id = prev?.id;
     if (!id) {
       while (used.has(`AC${next}`) || byId.has(`AC${next}`)) next++;
       id = `AC${next++}`;
+      used.add(id);
     }
-    used.add(id);
-    const sameCheck = previous && previous.text === text && !verify;
-    out.push({
+    const same = !!prev && prev.text === p.text;
+    let verify: AcceptanceCriterion["verify"];
+    if (p.verify) {
+      // The same command keeps its kind (test) and notes through the one-line editor.
+      verify = prev && shownInLine(prev.verify) && prev.verify.command === p.verify.command && p.verify.kind === "command" ? prev.verify : p.verify;
+    } else if (prev && (p.id || !shownInLine(prev.verify))) {
+      verify = prev.verify;
+    } else {
+      verify = { kind: "review" };
+    }
+    return {
       id,
-      text,
-      verify: verify ?? (sameCheck ? previous!.verify : undefined) ?? { kind: "review" },
-      status: (typeof input !== "string" && input.status) || (previous && previous.text === text ? previous.status : "pending"),
-      evidenceIds: previous && previous.text === text ? previous.evidenceIds : [],
-    });
-  }
-  return out;
+      text: p.text,
+      verify,
+      status: p.status || (same ? prev!.status : "pending"),
+      evidenceIds: same ? prev!.evidenceIds : [],
+    };
+  });
 }
 
 /** Old rows stored criteria as plain strings. */

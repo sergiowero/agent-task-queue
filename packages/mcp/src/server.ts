@@ -622,7 +622,7 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
     {
       title: "Create subtask",
       description:
-        "With the `plan` role, while you hold the parent in `planning`: split the work into a subtask (one reviewable PR, under ~400 changed lines). Subtasks are held until the parent's plan is approved; then they run (in blockedBy order) and the parent completes when they all do.",
+        "With the `plan` role, while you hold the parent in `planning`: split the work into a subtask (one reviewable PR, within the brief's sizeLimits). Subtasks are held until the parent's plan is approved; then they run (in blockedBy order) and the parent completes when they all do. The project's Definition of Ready applies to each subtask.",
       inputSchema: {
         taskId: taskIdSchema.describe("The parent task you are planning"),
         title: z.string().min(1),
@@ -631,7 +631,10 @@ export function createAgentQMcpServer(opts: AgentQMcpServerOptions = {}): McpSer
         type: taskTypeSchema.optional(),
         risk: riskSchema.optional(),
         requiresPlan: z.boolean().optional(),
-        blockedBy: z.array(z.string()).optional().describe("Ids of subtasks that must be complete first"),
+        blockedBy: z
+          .array(z.string())
+          .optional()
+          .describe("Ids of earlier subtasks that must be complete first (never the task being split, never a canceled task)"),
         author: authorSchema,
         claimToken: claimTokenSchema,
         agentId: agentIdSchema,

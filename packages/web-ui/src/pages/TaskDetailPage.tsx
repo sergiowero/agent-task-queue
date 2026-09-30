@@ -60,9 +60,11 @@ import { DecisionPanel } from "../components/DecisionPanel";
 import {
   AUTONOMY_LEVELS,
   RISKS,
+  REQUIRES_PLAN_EDITABLE,
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
+  criteriaEditable,
   type AutonomyLevel,
   type Risk,
   type TaskStatus,
@@ -90,6 +92,7 @@ type TaskAction =
   | "requestCodeChanges"
   | "requestPrChanges"
   | "requestAiReview"
+  | "requestReplan"
   | "confirmCompletion"
   | "unblock"
   | "resolveBlocker"
@@ -103,6 +106,7 @@ const ACTION_DONE: Record<TaskAction, string> = {
   requestCodeChanges: "Code changes requested",
   requestPrChanges: "Sent back to the coder",
   requestAiReview: "AI review requested",
+  requestReplan: "Sent back to planning",
   confirmCompletion: "Marked merged",
   unblock: "Task unblocked",
   resolveBlocker: "Answer sent",
@@ -404,6 +408,15 @@ export function TaskDetailPage() {
                       >
                         AI review
                       </Button>
+                      <Button
+                        variant="secondary"
+                        icon={PlanIcon}
+                        {...busy("requestReplan")}
+                        title="The plan itself is wrong: a planner revises it (write why in the feedback box)"
+                        onClick={() => doAction("requestReplan", { message: feedback || undefined })}
+                      >
+                        Re-plan
+                      </Button>
                     </>
                   )}
                   {prOpen && (
@@ -644,7 +657,8 @@ export function TaskDetailPage() {
                 label="Acceptance criteria"
                 value={task.acceptanceCriteria?.map(formatCriterionLine).join("\n") ?? ""}
                 placeholder="One criterion per line; end with “$ command” to verify it by running a command"
-                editable={canEdit}
+                // Frozen with an approved plan until the task goes back to planning.
+                editable={criteriaEditable(task)}
                 display={
                   task.acceptanceCriteria?.length > 0 ? (
                     <CriteriaList criteria={task.acceptanceCriteria} evidence={evidence} />
@@ -814,9 +828,29 @@ export function TaskDetailPage() {
                   </PropertyRow>
                 )}
                 <PropertyRow icon={PlanIcon} label="Requires plan">
-                  <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
-                    {task.requiresPlan ? "Yes" : "No"}
-                  </Badge>
+                  {REQUIRES_PLAN_EDITABLE.includes(task.status as TaskStatus) ? (
+                    // Before work starts; changing it moves the task between planning and coding.
+                    <Select
+                      selectSize="sm"
+                      aria-label="Requires plan"
+                      wrapperClassName="w-32"
+                      value={task.requiresPlan ? "yes" : "no"}
+                      disabled={updateMutation.isPending}
+                      onChange={(e) =>
+                        updateMutation.mutate(
+                          { requiresPlan: e.target.value === "yes" },
+                          { onError: (err) => toast.error(err.message) },
+                        )
+                      }
+                    >
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </Select>
+                  ) : (
+                    <Badge tone={task.requiresPlan ? "accent" : "neutral"}>
+                      {task.requiresPlan ? "Yes" : "No"}
+                    </Badge>
+                  )}
                 </PropertyRow>
                 <PropertyRow icon={WorktreeIcon} label="Worktree">
                   {task.worktreePath ? (
@@ -870,6 +904,15 @@ export function TaskDetailPage() {
                       {q.text}
                       {q.blocking && <Badge tone="danger" className="ml-1.5">blocking</Badge>}
                     </li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            {task.planSubmission?.sizeWarnings && task.planSubmission.sizeWarnings.length > 0 && (
+              <Alert tone="warning" title="The plan is bigger than this project's size limits" className="mb-4">
+                <ul className="list-disc pl-4">
+                  {task.planSubmission.sizeWarnings.map((w) => (
+                    <li key={w}>{w}</li>
                   ))}
                 </ul>
               </Alert>

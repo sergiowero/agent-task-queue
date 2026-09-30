@@ -109,6 +109,8 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
     (profile?.verifyAllowlist ?? []).join("\n"),
   );
   const [maxDiffLines, setMaxDiffLines] = useState(String(profile?.maxDiffLines ?? 400));
+  const [maxPlanFiles, setMaxPlanFiles] = useState(String(profile?.maxPlanFiles ?? 10));
+  const [maxCriteria, setMaxCriteria] = useState(String(profile?.maxCriteria ?? 6));
   const [detecting, setDetecting] = useState(false);
 
   async function detect() {
@@ -146,6 +148,8 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
           guardrails: lines(sharedGuardrails),
           verifyAllowlist: lines(verifyAllowlist),
           maxDiffLines: Math.max(10, parseInt(maxDiffLines, 10) || 400),
+          maxPlanFiles: Math.max(1, parseInt(maxPlanFiles, 10) || 10),
+          maxCriteria: Math.max(1, parseInt(maxCriteria, 10) || 6),
         },
       }),
     onSuccess: () => {
@@ -338,6 +342,14 @@ export function EditProjectModal({ project, onClose }: EditProjectModalProps) {
                 onChange={(e) => setMaxDiffLines(e.target.value)}
               />
             </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Most files per plan" hint="Planners split bigger plans into subtasks.">
+                <Input type="number" min={1} value={maxPlanFiles} onChange={(e) => setMaxPlanFiles(e.target.value)} />
+              </Field>
+              <Field label="Most criteria per task" hint="More criteria: split into subtasks.">
+                <Input type="number" min={1} value={maxCriteria} onChange={(e) => setMaxCriteria(e.target.value)} />
+              </Field>
+            </div>
             <Field
               label="Verify allowlist"
               hint="Command prefixes the verifier may run from an agent's plan without a person approving it. One per line."

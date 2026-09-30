@@ -193,6 +193,8 @@ export interface PlanSubmission {
   proposedSubtasks: string[];
   /** Paths the plan expects to touch (protected ones raise the risk). */
   touchedPaths: string[];
+  /** Where the plan is bigger than the project's size limits without being split (warnings; absent on older plans). */
+  sizeWarnings?: string[];
 }
 
 /** The pull request the agent with the `pr` role opened, kept in sync with GitHub. */

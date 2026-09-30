@@ -480,6 +480,28 @@ describe("GET/PUT /api/tasks/:id", () => {
     const missing = await json(`/api/tasks/${randomUUID()}`, "PUT", { title: "x" });
     expect(missing.status).toBe(404);
   });
+
+  it("PUT requiresPlan before work starts moves the task to planning", async () => {
+    const created = await createTaskViaApi({ title: "Plan it later" });
+    expect(created.status).toBe(TaskStatus.ReadyForCode);
+    const res = await json(`/api/tasks/${created.id}`, "PUT", { requiresPlan: true });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as Task).toMatchObject({ requiresPlan: true, status: TaskStatus.PlanRequested });
+  });
+
+  it("PUT refuses edits while an agent holds the task (409) and allows them once it is back in the queue", async () => {
+    const created = await createTaskViaApi({ title: "Held", risk: "high" });
+    await setStatus(created.id, TaskStatus.Reviewing);
+    const res = await json(`/api/tasks/${created.id}`, "PUT", { title: "x", risk: "low" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("unblock it before editing");
+    expect(await getTask(created.id)).toMatchObject({ title: "Held", risk: "high" });
+
+    await setStatus(created.id, TaskStatus.ReadyForCode);
+    const ok = await json(`/api/tasks/${created.id}`, "PUT", { title: "Edited" });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as Task).title).toBe("Edited");
+  });
 });
 
 describe("workflow sub-actions (requiresPlan task)", () => {
@@ -579,6 +601,14 @@ describe("workflow sub-actions (requiresPlan task)", () => {
     expect(last.messageType).toBe("code");
 
     await expectTransition(taskId, "request-ai-review", TaskStatus.CodeReviewRequested);
+  });
+
+  it("request-replan sends a task in code review back to planning", async () => {
+    const task = await createTaskViaApi({ title: "Replan", requiresPlan: true });
+    await setStatus(task.id, TaskStatus.WaitingCodeReview);
+    const back = await expectTransition(task.id, "request-replan", TaskStatus.PlanChangesRequested, { message: "wrong approach" });
+    expect(back.conversation.at(-1)?.message).toBe("wrong approach");
+    expect((await subAction(task.id, "request-replan")).status).toBe(400);
   });
 
   it("submit-review requires Reviewing and returns to waiting_code_review", async () => {
@@ -1050,6 +1080,15 @@ describe("DELETE /api/tasks/:id", () => {
     expect(again.status).toBe(404);
   });
 
+  it("sends the tasks that start after a deleted one to a person", async () => {
+    const dep = await createTaskViaApi({ title: "Dependency" });
+    const dependent = createTask({ title: "Dependent", description: "", projectId: testProjectId, blockedBy: [dep.id] });
+    expect((await api(`/api/tasks/${dep.id}`, { method: "DELETE" })).status).toBe(204);
+    const blocked = await getTask(dependent.id);
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker?.reason).toContain("was deleted");
+  });
+
   it("hard-deletes an API-created task together with its activity rows", async () => {
     const task = await createTaskViaApi({ title: "Hard delete (with activity)" });
     const res = await api(`/api/tasks/${task.id}?hard=true`, { method: "DELETE" });
@@ -1155,19 +1194,22 @@ describe("claim tokens stay private", () => {
       const token = claimTokens.get(task.id)!;
       expect(getTaskById(task.id)!.claimToken).toBe(token);
 
+      // The edit is refused while the agent holds the task (409), and its answer carries no token either.
+      const edit = await json(`/api/tasks/${task.id}`, "PUT", { title: "Private claim (edited)" });
+      expect(edit.status).toBe(409);
       const outputs = [
         await (await api(`/api/tasks/${task.id}`)).text(),
         await (await api(`/api/tasks?projectId=${projectId}`)).text(),
-        await (await json(`/api/tasks/${task.id}`, "PUT", { title: "Private claim (edited)" })).text(),
+        await edit.text(),
         await (await subAction(task.id, "add-comment", { message: "still yours" })).text(),
       ];
       expect(outputs[1]).toContain(task.id);
 
-      // Two direct broadcasts (PUT, comment) plus at least one from the database watcher.
+      // One direct broadcast (the comment) plus at least one from the database watcher.
       const frames = () => events.text().split("\n\n").filter((f) => f.startsWith("event: task_updated") && f.includes(task.id));
       const deadline = Date.now() + 5_000;
-      while (frames().length < 3 && Date.now() < deadline) await Bun.sleep(50);
-      expect(frames().length).toBeGreaterThanOrEqual(3);
+      while (frames().length < 2 && Date.now() < deadline) await Bun.sleep(50);
+      expect(frames().length).toBeGreaterThanOrEqual(2);
       expect(frames().some((f) => f.includes(`"status":"${TaskStatus.Coding}"`))).toBe(true);
 
       for (const text of [...outputs, events.text()]) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "bun:test";
-import { createProject, getTaskById, setAppState } from "./database.js";
+import { createProject, createTask, getTaskById, patchTask, setAppState } from "./database.js";
 import { buildAgentBrief, buildTaskBrief, type IndependentBrief } from "./brief.js";
 import { checkDefinitionOfReady } from "./dor.js";
 import { getHandoffs } from "./records.js";
@@ -9,6 +9,7 @@ import {
   approveCode,
   approvePlan,
   claimNextTask,
+  createSubtask,
   createTaskForProject,
   postComment,
   reportBlocker,
@@ -226,6 +227,23 @@ describe("pull request body", () => {
   });
 });
 
+describe("dependencies", () => {
+  it("the coder's brief lists the tasks it starts after, with their pull request and head commit", () => {
+    const projectId = project();
+    const dep = createTaskForProject({ title: "Backend", description: "The export endpoint returns CSV rows.", projectId });
+    patchTask(dep.id, {
+      status: TaskStatus.Complete,
+      headSha: "abc123",
+      pullRequest: { url: "https://github.com/o/r/pull/7", number: 7, state: "merged", branch: "b", mergedAt: null, mergedBy: null, changesRequestedBy: [], checks: null, checkedAt: null },
+    });
+    const task = createTask({ title: "UI", description: "d", projectId, blockedBy: [dep.id, "gone"] });
+    expect(buildTaskBrief(task.id)!.dependencies).toEqual([
+      { id: dep.id, title: "Backend", status: TaskStatus.Complete, mergeBranch: dep.mergeBranch, headSha: "abc123", pullRequest: "https://github.com/o/r/pull/7" },
+      { id: "gone", title: "", status: "missing", mergeBranch: null, headSha: null, pullRequest: null },
+    ]);
+  });
+});
+
 describe("Definition of Ready", () => {
   it("flags short descriptions, missing or unverifiable criteria, unplanned high risk and bugs without steps", () => {
     expect(checkDefinitionOfReady({ description: "fix", type: "bug", risk: "high" })).toEqual([
@@ -244,6 +262,20 @@ describe("Definition of Ready", () => {
     expect(checkDefinitionOfReady({ description: "x".repeat(40), acceptanceCriteria: ["looks right"] })).toEqual([
       'No criterion says how it is verified: add a command ("text $ command") or a test for at least one.',
     ]);
+  });
+
+  it("flags a task nothing can verify: no project commands and no criterion command", () => {
+    const manualOnly = { description: "x".repeat(40), acceptanceCriteria: [{ text: "looks right", verify: { kind: "manual" as const } }] };
+    const nothing =
+      'Nothing can verify this task: the project has no commands and no criterion has one (Projects → Edit → Commands, or "text $ command").';
+    expect(checkDefinitionOfReady({ ...manualOnly, hasProjectCommands: false })).toEqual([nothing]);
+    expect(checkDefinitionOfReady({ ...manualOnly, hasProjectCommands: true })).toEqual([]);
+    expect(checkDefinitionOfReady({ ...manualOnly, acceptanceCriteria: ["works $ bun test"], hasProjectCommands: false })).toEqual([]);
+    // Through the workflow, the project's commands decide it.
+    const bare = project({ commands: {} });
+    const task = createTaskForProject({ title: "m", description: "x".repeat(40), projectId: bare, acceptanceCriteria: manualOnly.acceptanceCriteria });
+    expect(task.dorIssues).toEqual([nothing]);
+    expect(createTaskForProject({ title: "m", description: "x".repeat(40), projectId: project(), acceptanceCriteria: manualOnly.acceptanceCriteria }).dorIssues).toEqual([]);
   });
 
   it("warn stores the issues; enforce refuses the task; off skips the check", () => {
@@ -424,6 +456,30 @@ describe("independent checks", () => {
     expect(brief.verification).toBeNull();
     expect(brief.isolation).toContain("Independent critique");
     expect(leaks(brief)).toEqual([]);
+  });
+
+  it("the plan critic sees the project's size limits and the subtasks the plan created", () => {
+    const projectId = project({ maxDiffLines: 200, maxPlanFiles: 3 });
+    const task = createTaskForProject({
+      title: "split critique",
+      description: "Users can export their data as CSV from the settings page.",
+      projectId,
+      requiresPlan: true,
+      autonomy: 2,
+    });
+    const c = claimNextTask({ roles: ["plan"], agent: coder, projectId })!;
+    const first = createSubtask(task.id, { title: "Backend", description: "The export endpoint returns CSV rows.", claimToken: c.claimToken });
+    createSubtask(task.id, { title: "UI", description: "The settings page offers a download button.", claimToken: c.claimToken, blockedBy: [first.id] });
+    submitPlan(task.id, { message: "## Split", claimToken: c.claimToken, proposedSubtasks: ["Backend", "UI"] });
+    const critic = claimNextTask({ roles: ["plan_review"], agent: reviewer, projectId })!;
+    const brief = buildAgentBrief(critic.task) as IndependentBrief;
+    expect(brief.sizeLimits).toEqual({ maxDiffLines: 200, maxPlanFiles: 3, maxCriteria: 6 });
+    expect(brief.subtasks!.map((s) => [s.title, s.blockedBy])).toEqual([
+      ["Backend", []],
+      ["UI", [first.id]],
+    ]);
+    expect(brief.planSubmission!.sizeWarnings).toEqual([]);
+    expect(buildTaskBrief(task.id)!.sizeLimits.maxDiffLines).toBe(200);
   });
 
   it("the verifier gets the criteria, the plan and the commands, never the coder's evidence", () => {
