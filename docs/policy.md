@@ -263,7 +263,26 @@ is not ready. On a code review the task page shows the AI verdict (marked "befor
 last change" when the code was submitted again since), the verification, the diff size,
 the risk and the criteria in one panel; answered findings can be ticked to
 reopen them with the change request, which becomes a finding (`H<round>-<n>`) the coder
-must answer by id.
+must answer by id. Under L0 an AI review is advice, so a reviewer that cannot decide
+(verdict `needs_human`) cannot raise a blocker: the task returns to the person's review with
+the question in the panel, in the conversation and as a `review_escalated` event.
+
+A plan waiting for a person, and a blocked plan, have a panel of their own: the plan itself,
+the AI critic's review of it and the critique count (`P1/2`), the risk, the plan findings (tick
+one to have the planner answer it again) and **the commands an approval lets the verifier
+run**: each validation item's command and new tests, the regression commands, and the commands
+of the acceptance criteria. A command that is not one of the project's and not on the verify
+allowlist is flagged ("not allowlisted": it runs only because a person approved the plan), and
+so is one that chains commands (`;`, `&&`, `||`, `|`, backticks, `$( )`). A plan without a
+validation plan says so. **Request changes** needs something to say, feedback or findings to
+reopen: an empty request is not sent.
+
+**The board** lists every task of the selected project, not just the first 50. Its cards show
+`R2/3` (AI reviews used against `maxReviewRounds`) and, while a plan is written, critiqued or
+decided, `P1/2` (plan critiques against `maxPlanRounds`), both counted from the person's last
+answer as the routing counts them, and say why a queued task is not picked up: **held: plan
+pending** (a subtask whose parent's plan is not approved) or **waits for N tasks**. A split
+parent can be canceled from its page, which cancels its unfinished subtasks too.
 
 ## Metrics
 

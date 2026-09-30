@@ -243,8 +243,10 @@ export {
   DEFAULT_VERIFY_ALLOWLIST,
   resolveProfile,
   profileCommands,
+  checkVerifyCommand,
   globToRegExp,
   matchesAny,
+  type CommandCheck,
 } from "./profile.js";
 
 export {
