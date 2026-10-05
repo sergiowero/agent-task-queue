@@ -1028,6 +1028,34 @@ describe("the sweeper's routing", () => {
     expect(swept.verification!.note).toContain("verifier is not running");
     expect(getActivityEvents({ taskId: task.id }).filter((e) => e.eventType === "verification_skipped")).toHaveLength(1);
   });
+
+  it.each([
+    [0, TaskStatus.WaitingCodeReview],
+    [2, TaskStatus.CodeReviewRequested],
+  ] as const)("at L%d code no verifier agent took goes to review, unverified, after reviewStarvationMin and not five minutes", (autonomy, gate) => {
+    const pid = fresh(autonomy, { verifier: "agent" });
+    const task = createTask({ title: "verify me", description: "d", projectId: pid });
+    created.push(task.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(task.id);
+    // The project chose an agent: the code waits for one, with no commands and whatever the built-in verifier does.
+    expect(submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken }).newStatus).toBe(TaskStatus.VerifyRequested);
+    // Waiting for a verifier is not skipping the verification: that is only logged once the code goes on without one.
+    expect(getActivityEvents({ taskId: task.id }).map((e) => e.eventType)).not.toContain("verification_skipped");
+
+    expect(sweepQueue(minutes(6)).unverified).not.toContain(task.id);
+    expect(sweepQueue(minutes(19)).unverified).not.toContain(task.id);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.VerifyRequested);
+    expect(sweepQueue(minutes(21)).unverified).toContain(task.id);
+
+    const swept = getTaskById(task.id)!;
+    expect(swept.status).toBe(gate);
+    expect(swept.history.at(-1)).toMatchObject({ pre_status: TaskStatus.VerifyRequested, actor: "system:sweeper" });
+    expect(swept.verification).toMatchObject({ skipped: true, passed: false });
+    expect(swept.verification!.note).toContain("no verifier agent took it in 20 min");
+    expect(swept.conversation.at(-1)!.message).toContain("`verify` role");
+    expect(getActivityEvents({ taskId: task.id }).filter((e) => e.eventType === "verification_skipped")).toHaveLength(1);
+  });
 });
 
 describe("evidence, validation plans and findings by id", () => {
