@@ -235,7 +235,8 @@ the artifact, and a claim never returns the plan critique, verification or revie
 of a plan or code the same runner wrote in any round. On an L1+ project a runner
 with both `code` and `review` therefore needs a second runner with `review` (on
 another model when the project sets `requireDifferentModel`; a runner with no
-model runs its tool's default, which differs from another tool's). The Runners page
+model runs its tool's default, which differs from another tool's). The same holds for
+the `verify` role in a project set to agent verification. The Runners page
 warns, per project, when no enabled runner may take such a check. Reviews nobody
 eligible picks up go to a person after the project's `reviewStarvationMin`.
 
@@ -244,8 +245,9 @@ and a claim from the job would not carry the runner's identity.
 
 When the server starts, tasks that a runner job held when the server went down
 go back to the queue (`recoverOrphans`), before any runner claims again. The
-server also sweeps every minute: expired leases of hand-opened sessions and
-starved reviews (see [policy.md](policy.md)).
+server also sweeps every minute: expired leases of hand-opened sessions, starved
+reviews and code nobody verified (see [policy.md](policy.md)), and records its
+heartbeat.
 
 ### Claim tokens
 
@@ -314,11 +316,42 @@ it, runs the commands in the task's worktree and routes it:
   failure count and the tamper strikes. A missing worktree goes to `needs_human` without
   counting a failure.
 
-Until the verifier reports, the task shows "Waiting for the verifier", never the previous
-submission's result. Without commands, or when the verifier is not running (it writes a
-heartbeat every 30 s, also while a long verification runs; MCP-only setups have no web
-server), the code goes straight to review and the task notes that it was not verified.
+Until the verifier reports, the task shows "Waiting for the verifier" (or "Waiting for a
+verifier agent"), never the previous submission's result. Without commands the code goes
+straight to review and the task notes that it was not verified; so it does when the
+verifier is not running (it writes a heartbeat every 30 s, also while a long verification
+runs; MCP-only setups have no web server), unless a runner can take over (next section).
 `AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
+Code that waits for the built-in verifier after its heartbeat stopped goes on to review,
+not verified, after 5 minutes (the sweeper).
+
+### Verification by an agent
+
+A project can hand verification to an agent: **Projects → Edit → Autonomy → Who verifies
+code** (the policy's `verifier: "agent"`, see [policy.md](policy.md#who-verifies)). Its
+code always goes to `verify_requested`, with or without commands, and the built-in
+verifier's claim skips it, so the agent with the `verify` role gets it: a runner with that
+role (its job starts in the task's worktree with the `agentq-verify` skill, and may run
+the same commands the built-in verifier would; see [Permission modes](#permission-modes)),
+or a session someone opens. The agent runs the commands its brief names and reports
+`evidence` with `submit_verification`. The server does not take its word for the rest:
+it reads the worktree's diff itself (weakened tests are red even if the report has none,
+protected paths and a large diff raise the risk, `diffStats` is recorded), and it
+attributes the evidence to the agent's own id from its claim, not to `runner:verify`.
+
+The agent is never the one that wrote the code, nor, under `requireDifferentModel`, on
+its model: the claim refuses it, so a runner with both `code` and `verify` never verifies
+its own code and the Runners page warns when no other runner may. Code nobody takes
+within the project's `reviewStarvationMin` goes on to review, marked as not verified
+(0 = keep waiting).
+
+A runner with the `verify` role also takes over in a project that uses the built-in
+verifier, while that verifier is off (`AGENTQ_VERIFY_WORKER=0`): a submit then sends the
+code to `verify_requested` when an enabled runner with the role may take it and the web
+server is up. The server says it is up with a `server_heartbeat` its sweep writes every
+minute (three missed beats, or a clean shutdown, count as down), so a runner left
+enabled in a stopped server is never counted on. The heartbeat is the server's; MCP
+processes only read it.
 
 ## Environment variables
 
@@ -327,7 +360,7 @@ server), the code goes straight to review and the task notes that it was not ver
 | `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
 | `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
-| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off |
+| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off: a runner with the `verify` role takes over when one can, else code goes to review not verified (projects set to agent verification are unaffected) |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 | `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
 

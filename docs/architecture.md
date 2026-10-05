@@ -24,7 +24,7 @@ Each project runs at a level from L0 (every gate human) to L3 (AI-reviewed plans
 The web server can claim tasks itself: a runner has a coding tool, roles, an optional project, a model and a permission mode, and launches the tool headless in the project directory with the task and the phase skill as the prompt. See [runner.md](runner.md).
 
 ### Built-In Verification and Diff Guards
-The server runs each project's commands on submitted code in the task's worktree, before any review, and reads the diff itself: weakened tests go back to the coder, and protected paths or an oversized diff raise the risk to high.
+The server runs each project's commands on submitted code in the task's worktree, before any review, and reads the diff itself: weakened tests go back to the coder, and protected paths or an oversized diff raise the risk to high. A project can hand verification to an agent with the `verify` role instead (**Projects → Edit → Autonomy**); the server still reads the diff, and the agent never verifies its own code. See [policy.md](policy.md#who-verifies).
 
 ### Pull Request Follow-Up
 With the `gh` CLI, the server follows every open pull request: a merged one completes the task (archiving it when the project asks), a closed one goes to a person, a change request on GitHub sends the task back to the coder, and under L3 with `autoMerge` a green low-risk one merges itself. The portal says when this sync is off or failing.
@@ -35,7 +35,7 @@ A role is a phase an agent works; an agent or runner has one or more (an agent t
 - **plan** — Writes implementation plans with a validation plan
 - **plan_review** — Critiques plans
 - **code** — Writes the code and tests
-- **verify** — Runs the verification commands (the server has a built-in verifier)
+- **verify** — Runs the verification commands (the server has a built-in verifier; a project can choose an agent instead)
 - **review** — Reviews code with a verdict
 - **pr** — Pushes the branch and opens the pull request
 
