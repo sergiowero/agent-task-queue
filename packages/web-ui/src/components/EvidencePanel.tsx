@@ -1,3 +1,4 @@
+import { BUILTIN_VERIFIER_AUTHOR } from "@agentq/shared/catalog";
 import { checkVerifyCommand } from "@agentq/shared/profile";
 import type { AcceptanceCriterion, Evidence, ProjectProfile, Task, ValidationPlan } from "../lib/api";
 import type { Tone } from "../lib/status";
@@ -61,12 +62,12 @@ export function CriteriaList({ criteria, evidence }: { criteria: AcceptanceCrite
   );
 }
 
-/** The evidence of the task's latest verification (older records: the verifier's rows of its round). */
+/** The evidence of the task's latest verification, by the built-in verifier or an agent (older records: the built-in verifier's rows of its round). */
 export function verificationEvidence(task: Task, evidence: Evidence[]): Evidence[] {
   const v = task.verification;
   if (!v) return [];
   const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
-  return evidence.filter((e) => (ids ? ids.has(e.id) : e.round === v.round && e.producedBy === "runner:verify"));
+  return evidence.filter((e) => (ids ? ids.has(e.id) : e.round === v.round && e.producedBy === BUILTIN_VERIFIER_AUTHOR));
 }
 
 /** The latest verification: result, tampering, diff size, risk changes and each command's output. */

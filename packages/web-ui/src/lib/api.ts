@@ -9,6 +9,7 @@ import type {
   Verdict,
 } from "@agentq/shared/catalog";
 import type { AcceptanceCriterion } from "@agentq/shared/criteria";
+import type { VerifierMode } from "@agentq/shared/policy";
 import type { ProjectProfile } from "@agentq/shared/profile";
 
 export type { AcceptanceCriterion, ProjectProfile };
@@ -155,6 +156,7 @@ export interface PolicySettings {
   reviewStarvationMin: number;
   leaseMin: number;
   autoMerge: boolean;
+  verifier: VerifierMode;
 }
 
 export interface Finding {
