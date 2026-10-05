@@ -7,7 +7,19 @@ import { join } from "path";
 process.env.AGENTQ_DB_PATH = ":memory:";
 
 import type { AutonomyLevel, PolicySettings, ProjectProfile, PullRequest, Risk } from "@agentq/shared";
-import { TaskStatus, cancelTask, createProject, createTask, getActivityEvents, getFindings, getTaskById, patchTask } from "@agentq/shared";
+import {
+  TaskStatus,
+  cancelTask,
+  claimNextTask,
+  createProject,
+  createTask,
+  getActivityEvents,
+  getFindings,
+  getTaskById,
+  patchTask,
+  resolveBlocker,
+  submitPr,
+} from "@agentq/shared";
 import { forceStatus } from "@agentq/shared/testing";
 import type { GhResult, GhRunner } from "./pr-sync";
 import { PrSync, ghRunner, newChangeRequests, parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
@@ -188,6 +200,54 @@ describe("syncPullRequests", () => {
     expect(task.status).toBe(TaskStatus.NeedsHuman);
     expect(task.blocker).toMatchObject({ phase: "merge", fromStatus: TaskStatus.PrOpen, raisedBy: "github" });
     expect(task.blocker!.reason).toContain("closed without merging");
+  });
+
+  describe("after a PR was closed without merging", () => {
+    const opener = { toolName: "Opener", version: "1", model: "o", sessionId: "pr-sync-opener" };
+
+    /** A PR-open task whose PR GitHub reports closed: the sync leaves it with a person. */
+    async function closedPr(projectId: string, number: number) {
+      const url = `https://github.com/org/repo/pull/${number}`;
+      const id = prOpenTask(projectId, { pr: { url, number, changesEverRequestedBy: ["alice"] } });
+      await syncPullRequests({ gh: fakeGh({ [url]: open({ state: "CLOSED", url, number }) }).gh });
+      expect(getTaskById(id)!.status).toBe(TaskStatus.NeedsHuman);
+      return { id, url };
+    }
+
+    it("a person sends it back to Approved, and an agent with the pr role opens a new PR for the approved commit", async () => {
+      const pid = project();
+      const { id } = await closedPr(pid, 76);
+      const approved = resolveBlocker(id, { answer: "Open a new one", targetStatus: TaskStatus.Approved });
+      expect(approved.status).toBe(TaskStatus.Approved);
+      // The code did not change: the AI approval it had stands, and nobody approved it again.
+      expect(approved.approval).toMatchObject({ sha: APPROVED, by: "reviewer@1|m", human: false });
+
+      const claim = claimNextTask({ roles: ["pr"], agent: opener, projectId: pid })!;
+      expect(claim.task.id).toBe(id);
+      const url = "https://github.com/org/repo/pull/77";
+      const opened = submitPr(id, { prUrl: url, branch: "main", commit: APPROVED, authors: "a", claimToken: claim.claimToken });
+      expect(opened.newStatus).toBe(TaskStatus.PrOpen);
+      // The new PR replaces the closed one, and who asked for changes on the first is remembered.
+      expect(getTaskById(id)!.pullRequest).toMatchObject({ url, number: 77, state: "open", changesEverRequestedBy: ["alice"] });
+
+      const { gh, calls } = fakeGh({ [url]: open({ url, number: 77 }) });
+      const result = await syncPullRequests({ gh });
+      expect(calls.some((c) => c[2] === url)).toBe(true);
+      expect(result.checked).toContain(id);
+      expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
+    });
+
+    it("or back to PR open when it was reopened on GitHub, and the sync follows it again", async () => {
+      const pid = project();
+      const { id, url } = await closedPr(pid, 78);
+      expect(getTaskById(id)!.pullRequest!.state).toBe("closed");
+      expect(resolveBlocker(id, { answer: "Reopened it", targetStatus: TaskStatus.PrOpen }).status).toBe(TaskStatus.PrOpen);
+
+      const result = await syncPullRequests({ gh: fakeGh({ [url]: open({ url, number: 78 }) }).gh });
+      expect(result.checked).toContain(id);
+      expect(getTaskById(id)!.status).toBe(TaskStatus.PrOpen);
+      expect(getTaskById(id)!.pullRequest).toMatchObject({ url, state: "open" });
+    });
   });
 
   it("sends the task back to the coder when a reviewer asks for changes after the PR was recorded", async () => {
