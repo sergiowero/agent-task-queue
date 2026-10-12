@@ -1,6 +1,6 @@
 /**
  * Test helpers: put a task in any status without walking the workflow, the way
- * an agent's claim would leave it. Exported as `@agentq/shared/testing`.
+ * an agent's claim would leave it. Exported as `@mtq/shared/testing`.
  */
 import { randomUUID } from "crypto";
 import { getTaskById, patchTask } from "./database.js";

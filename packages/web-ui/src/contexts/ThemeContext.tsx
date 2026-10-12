@@ -20,7 +20,7 @@ interface ThemeContextType {
   setTheme: (theme: Theme, origin?: RevealOrigin) => void;
 }
 
-const STORAGE_KEY = "agentq-theme";
+const STORAGE_KEY = "mtq-theme";
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 function systemTheme(): Theme {

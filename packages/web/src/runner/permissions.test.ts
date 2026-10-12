@@ -3,16 +3,16 @@ import { randomUUID } from "crypto";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { McpServerLaunch } from "@agentq/mcp";
-import { RUNNER_MCP_TOOLS } from "@agentq/mcp";
-import type { Agent, Project, Role, Task } from "@agentq/shared";
-import { CLAIM_RULES, ROLES, STATUS_INFO, createProject, createTask } from "@agentq/shared";
+import type { McpServerLaunch } from "@mtq/mcp";
+import { RUNNER_MCP_TOOLS } from "@mtq/mcp";
+import type { Agent, Project, Role, Task } from "@mtq/shared";
+import { CLAIM_RULES, ROLES, STATUS_INFO, createProject, createTask } from "@mtq/shared";
 import {
   ROLE_ACCESS,
   ROLE_MCP_TOOLS,
   accessOf,
   buildCommand,
-  claudeAgentqTools,
+  claudeMtqTools,
   claudeSafeProfile,
   codexSandboxArgs,
   exactBashRules,
@@ -25,9 +25,9 @@ import { jobCommands, jobCwd } from "./runner.js";
 // What each role's job may do in safe mode, per tool. The runner never asks a model to
 // stay read-only: the tool is started without the tools that would let it write.
 
-process.env.AGENTQ_DB_PATH ||= ":memory:";
+process.env.MTQ_DB_PATH ||= ":memory:";
 
-const mcp: McpServerLaunch = { command: "/bin/bun", args: ["run", "/agentq/packages/mcp/src/index.ts"], env: { AGENTQ_DB_PATH: "/data/agentq.db" } };
+const mcp: McpServerLaunch = { command: "/bin/bun", args: ["run", "/mtq/packages/mcp/src/index.ts"], env: { MTQ_DB_PATH: "/data/mtq.db" } };
 const ctx: CommandContext = {
   cwd: "/repo",
   prompt: "PROMPT",
@@ -122,7 +122,7 @@ describe("claude in safe mode", () => {
       expect(p.permissionMode).toBeUndefined();
       expect(p.denied).toEqual(["Edit", "Write", "NotebookEdit"]);
       for (const tool of ["Edit", "Write", "NotebookEdit"]) expect(p.allowed).not.toContain(tool);
-      expect(p.allowed).toEqual(expect.arrayContaining(["Read", "Glob", "Grep", ...claudeAgentqTools(role)]));
+      expect(p.allowed).toEqual(expect.arrayContaining(["Read", "Glob", "Grep", ...claudeMtqTools(role)]));
       expect(bashRules(p.allowed)).toEqual([
         "Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)", "Bash(git status:*)", "Bash(git rev-parse:*)",
         "Bash(git rev-list:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git blame:*)",
@@ -198,7 +198,7 @@ describe("claude in safe mode", () => {
       "Bash(git:*)", "Bash(gh:*)", "Bash(bun:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(grep:*)", "Bash(find:*)",
       "Edit", "Write", "Read", "Glob", "Grep",
     ]);
-    expect(p.allowed.filter((t) => t.startsWith("mcp__"))).toEqual(claudeAgentqTools("code"));
+    expect(p.allowed.filter((t) => t.startsWith("mcp__"))).toEqual(claudeMtqTools("code"));
   });
 
   it("only the coder is allowed to write files, and only the coder gets acceptEdits", () => {
@@ -222,7 +222,7 @@ describe("claude in safe mode", () => {
       expect(built.cmd.includes("--permission-mode")).toBe(role === "code");
       if (role === "code") expect(built.cmd[built.cmd.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
       expect(built.cmd).not.toContain("--dangerously-skip-permissions");
-      expect(built.env?.AGENTQ_ROLE).toBe(role);
+      expect(built.env?.MTQ_ROLE).toBe(role);
       // A model and extra args still come after the tool lists.
       const more = buildCommand("claude", { ...ctx, role, commands: COMMANDS, model: "sonnet", extraArgs: ["--verbose"] });
       expect(more.cmd.slice(-3)).toEqual(["--model", "sonnet", "--verbose"]);
@@ -331,10 +331,10 @@ describe("codex in safe mode", () => {
   });
 
   it("the sandbox flags come before the prompt and the extra args, in the job's directory", () => {
-    const built = buildCommand("codex", { ...ctx, role: "review", cwd: "/repo/.agentq/worktrees/t1", extraArgs: ["--json"] });
-    expect(built.cwd).toBe("/repo/.agentq/worktrees/t1");
+    const built = buildCommand("codex", { ...ctx, role: "review", cwd: "/repo/.mtq/worktrees/t1", extraArgs: ["--json"] });
+    expect(built.cwd).toBe("/repo/.mtq/worktrees/t1");
     expect(built.cmd.slice(0, 4)).toEqual(["codex", "exec", "--sandbox", "workspace-write"]);
-    expect(built.cmd[built.cmd.indexOf("-C") + 1]).toBe("/repo/.agentq/worktrees/t1");
+    expect(built.cmd[built.cmd.indexOf("-C") + 1]).toBe("/repo/.mtq/worktrees/t1");
     expect(built.cmd.slice(-2)).toEqual(["--json", "PROMPT"]);
   });
 });
@@ -342,7 +342,7 @@ describe("codex in safe mode", () => {
 describe("tools without per-role flags", () => {
   it("opencode, gemini and custom get the same command whatever the role (prompt-only limits)", () => {
     const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
-    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), "agentq-no-gemini-system-settings.json");
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), "mtq-no-gemini-system-settings.json");
     try {
       for (const tool of ["opencode", "gemini", "custom"] as const) {
         const extraArgs = tool === "custom" ? ["agent"] : null;
@@ -364,9 +364,9 @@ describe("where a job starts, and what it may run", () => {
   let worktree: string;
 
   beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), "agentq-perm-"));
+    root = mkdtempSync(join(tmpdir(), "mtq-perm-"));
     project = join(root, "project");
-    worktree = join(project, ".agentq", "worktrees", "t1");
+    worktree = join(project, ".mtq", "worktrees", "t1");
     mkdirSync(worktree, { recursive: true });
     mkdirSync(join(root, "elsewhere"), { recursive: true });
   });
@@ -388,7 +388,7 @@ describe("where a job starts, and what it may run", () => {
   it("stays in the project without a worktree, or when the worktree is gone", () => {
     for (const role of RUN_ROLES) {
       expect(jobCwd(role, { worktreePath: null }, project)).toBe(project);
-      expect(jobCwd(role, { worktreePath: join(project, ".agentq", "worktrees", "gone") }, project)).toBe(project);
+      expect(jobCwd(role, { worktreePath: join(project, ".mtq", "worktrees", "gone") }, project)).toBe(project);
     }
   });
 
@@ -404,7 +404,7 @@ describe("where a job starts, and what it may run", () => {
   });
 
   it("does not follow a link out of the project either", () => {
-    const link = join(project, ".agentq", "worktrees", "link");
+    const link = join(project, ".mtq", "worktrees", "link");
     try {
       symlinkSync(join(root, "elsewhere"), link, process.platform === "win32" ? "junction" : "dir");
     } catch {
@@ -474,8 +474,8 @@ describe("the prompt says where the job runs", () => {
     const task = createTask({ title: "T", description: "D", projectId });
     const agent = { id: "a@1|m", toolName: "claude", model: "m" } as unknown as Agent;
 
-    const inWorktree = buildPrompt({ task, project, agent, role: "code", phaseSkill: "skill", worktree: "/repo/.agentq/worktrees/t1" });
-    expect(inWorktree).toContain("You are running inside the task's worktree `/repo/.agentq/worktrees/t1` (project working directory: `/repo`).");
+    const inWorktree = buildPrompt({ task, project, agent, role: "code", phaseSkill: "skill", worktree: "/repo/.mtq/worktrees/t1" });
+    expect(inWorktree).toContain("You are running inside the task's worktree `/repo/.mtq/worktrees/t1` (project working directory: `/repo`).");
     expect(inWorktree).not.toContain("you are running inside it");
     const inProject = buildPrompt({ task, project, agent, role: "code", phaseSkill: "skill" });
     expect(inProject).toContain("Project working directory: `/repo` (you are running inside it).");

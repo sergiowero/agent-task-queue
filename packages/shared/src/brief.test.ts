@@ -25,7 +25,7 @@ import {
 } from "./workflow.js";
 import { forceStatus } from "./testing.js";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 const coder = { toolName: "Coder", version: "1", model: "c", sessionId: "brief-coder" };
 const reviewer = { toolName: "Reviewer", version: "1", model: "r", sessionId: "brief-reviewer" };
@@ -315,7 +315,7 @@ describe("pull request body", () => {
     expect(pr.body).toContain("Still open (non-blocking):\n- R1-1 (nit) rename x");
     expect(pr.body).toContain("## Risk\n\n**medium**");
     expect(pr.body).toContain("Out of scope: PDF export");
-    expect(pr.body).toContain(`AgentQ task \`${task.id}\``);
+    expect(pr.body).toContain(`Moonlight Task Queue task \`${task.id}\``);
   });
 
   it("a person's approval over open blocker findings says so, and labels them as blocking", () => {

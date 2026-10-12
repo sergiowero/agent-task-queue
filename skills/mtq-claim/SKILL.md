@@ -1,37 +1,37 @@
 ---
-name: agentq-claim
-description: Entry point for working as an AgentQ agent through the AgentQ MCP server. Use when asked to work the AgentQ queue, claim or pick up tasks, act as an AgentQ agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (agentq-refine, agentq-plan, agentq-plan-review, agentq-code, agentq-verify, agentq-review, agentq-pr) that matches the task status.
-allowed-tools: mcp__agentq__claim_task, mcp__agentq__get_task, mcp__agentq__get_task_brief, mcp__agentq__get_skill, mcp__agentq__post_comment, mcp__agentq__report_blocker, mcp__agentq__heartbeat
+name: mtq-claim
+description: Entry point for working as a Moonlight Task Queue agent through the Moonlight Task Queue MCP server. Use when asked to work the Moonlight Task Queue, claim or pick up tasks, act as a Moonlight Task Queue agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (mtq-refine, mtq-plan, mtq-plan-review, mtq-code, mtq-verify, mtq-review, mtq-pr) that matches the task status.
+allowed-tools: mcp__mtq__claim_task, mcp__mtq__get_task, mcp__mtq__get_task_brief, mcp__mtq__get_skill, mcp__mtq__post_comment, mcp__mtq__report_blocker, mcp__mtq__heartbeat
 metadata:
   version: "6.5.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# AgentQ Claim Skill
+# Moonlight Task Queue Claim Skill
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit tool) live in the phase skills.
 
-**MCP conventions**: all queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__agentq__claim_task`). Use `claim_task`, the `submit_*` tools and `report_blocker`; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tools reject a submit without it; only `submit_verification` accepts one without, for the built-in verifier) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
+**MCP conventions**: all queue work goes through the tools of the `mtq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__mtq__claim_task`). Use `claim_task`, the `submit_*` tools and `report_blocker`; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tools reject a submit without it; only `submit_verification` accepts one without, for the built-in verifier) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
 
-If the `agentq` tools are missing, the server is not registered: tell the user to run `bun run install:mcp` from the AgentQ checkout, then restart the tool. Do not work around it.
+If the `mtq` tools are missing, the server is not registered: tell the user to run `bun run install:mcp` from the Moonlight Task Queue checkout, then restart the tool. Do not work around it.
 
 ## Identity
 
 - **toolName**: name of the invoking tool (e.g. `opencode`, `claude`, `codex`, `kimi`, `junie`)
 - **version**: Current tool version from configuration
 - **model**: Current model from configuration
-- **sessionId**: Current session (conversation) ID from the invoking tool (do not generate, and pass the same one on every claim: it is how AgentQ knows your earlier work, also after its MCP server restarts)
+- **sessionId**: Current session (conversation) ID from the invoking tool (do not generate, and pass the same one on every claim: it is how Moonlight Task Queue knows your earlier work, also after its MCP server restarts)
 - **roles**: the phases you work, one or more, as the user asks at skill invocation (e.g. "work as plan and review" → `["plan", "review"]`). When the user names none, **omit `roles`**: the server gives you every role but `verify` (it has a built-in verifier; a project can hand verification to an agent instead, and then the user asks you for `verify`).
 
 | Role | Claims | Phase skill |
 |------|--------|-------------|
-| `refine` | `draft` | `agentq-refine` |
-| `plan` | `plan_requested`, `plan_changes_requested` | `agentq-plan` |
-| `plan_review` | `plan_review_requested` | `agentq-plan-review` |
-| `code` | `ready_for_code`, `changes_requested` | `agentq-code` |
-| `verify` | `verify_requested` | `agentq-verify` |
-| `review` | `code_review_requested` | `agentq-review` |
-| `pr` | `approved` (push the branch, open the PR) | `agentq-pr` |
+| `refine` | `draft` | `mtq-refine` |
+| `plan` | `plan_requested`, `plan_changes_requested` | `mtq-plan` |
+| `plan_review` | `plan_review_requested` | `mtq-plan-review` |
+| `code` | `ready_for_code`, `changes_requested` | `mtq-code` |
+| `verify` | `verify_requested` | `mtq-verify` |
+| `review` | `code_review_requested` | `mtq-review` |
+| `pr` | `approved` (push the branch, open the PR) | `mtq-pr` |
 
 ## Claim a Task
 
@@ -50,7 +50,7 @@ Call `claim_task`:
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."], "status": "coding",
     "acceptanceCriteria": [{ "id": "AC1", "text": "...", "verify": { "kind": "command", "command": "bun test x" }, "status": "pending" }],
-    "recommendedBranch": "feat/...", "mergeBranch": "main", "worktreePath": null | "{project}/.agentq/worktrees/{taskId}",
+    "recommendedBranch": "feat/...", "mergeBranch": "main", "worktreePath": null | "{project}/.mtq/worktrees/{taskId}",
     "approvedPlan": { "markdown": "...", "validation": { "items": [...], "regressionCommands": ["bun test"] } } | null,
     "project": { "id": "...", "displayName": "...", "workingDirectory": "/path/to/project" } },
   "brief": { "task": { "id": "...", "description": "...", "dorIssues": [] }, "guardrails": ["..."], "criteria": [...], "approvedPlan": { ... } | null,
@@ -59,9 +59,9 @@ Call `claim_task`:
     "humanNotes": [{ "author": "user", "at": "...", "message": "..." }],
     "verification": { "passed": false, "failing": [{ "command": "bun test", "exitCode": 1, "summary": "..." }] } | null,
     "round": { "codeRound": 1, "remainingReviewRounds": 2, "remainingPlanRounds": 2, "remainingVerifyFailures": 1 } },
-  "phaseSkill": { "name": "agentq-code", "version": "6.5.0" }, "autonomy": 2, "round": { "...": "same as brief.round" },
+  "phaseSkill": { "name": "mtq-code", "version": "6.5.0" }, "autonomy": 2, "round": { "...": "same as brief.round" },
   "agent": { "id": "opencode@1.0|model", "role": "code" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "6.5.0", "skills": { "agentq-code": "6.5.0" } }
+  "claimToken": "<secret for this claim>", "skillsVersion": "6.5.0", "skills": { "mtq-code": "6.5.0" } }
 ```
 
 The conversation, history, contexts, every finding and every piece of evidence are in `get_task`; the brief holds what you need of them.
@@ -74,13 +74,13 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your roles." }`
 
-**Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", "skillsVersion": "...", "message": "..." }` — stop and tell the user to run `bun run install:all` in the AgentQ checkout (it installs the current skills and the MCP registration for every tool), then restart the tool. That is the only reason to stop: when a claim succeeds but `phaseSkill.version` or the result's `skillsVersion` is newer than your copy of the skills, read the phase skill with `get_skill`, finish the task with it, and then tell the user to run `bun run install:all`.
+**Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", "skillsVersion": "...", "message": "..." }` — stop and tell the user to run `bun run install:all` in the Moonlight Task Queue checkout (it installs the current skills and the MCP registration for every tool), then restart the tool. That is the only reason to stop: when a claim succeeds but `phaseSkill.version` or the result's `skillsVersion` is newer than your copy of the skills, read the phase skill with `get_skill`, finish the task with it, and then tell the user to run `bun run install:all`.
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
 **Separation of duties**: you never get the plan critique, verification or review of a plan or code your own conversation (`toolName` + `sessionId`) or this MCP server wrote, in any round (and, when the project requires it, not with the model of anyone who wrote it either). If your roles include both `code` and `review`, you may therefore find no tasks while your code waits for another agent's review: that is expected. This relies on your real `sessionId`: a placeholder such as `unknown` only keeps you off work done through this same server.
 
-**Lease**: a claim from a hand-opened session expires after the project's lease (90 min by default) without any AgentQ call, and the task goes back to the queue. Every AgentQ tool call keeps it alive; during a long silent stretch (a long build or test run), call `heartbeat` with the `taskId`.
+**Lease**: a claim from a hand-opened session expires after the project's lease (90 min by default) without any Moonlight Task Queue call, and the task goes back to the queue. Every Moonlight Task Queue tool call keeps it alive; during a long silent stretch (a long build or test run), call `heartbeat` with the `taskId`.
 
 ## Protocol
 
@@ -91,7 +91,7 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 5. **Submit** with the `submit_*` tool given by the phase skill — or, if something outside your control blocks the phase, call `report_blocker` (see Blocked)
 6. **Repeat** until no tasks available
 
-If an AgentQ runner started you, the task was **already claimed by the runner**: skip steps 1–2 and 6, do not call `claim_task`, work on the task you were given and submit once.
+If a Moonlight Task Queue runner started you, the task was **already claimed by the runner**: skip steps 1–2 and 6, do not call `claim_task`, work on the task you were given and submit once.
 
 ## Phase Routing
 
@@ -99,15 +99,15 @@ The claim moves the task to its in-progress status; route on that status (`task.
 
 | Claimed from | In progress | Role | Phase | Skill to read next |
 |--------------|-------------|------|-------|--------------------|
-| `draft` | `refining` | `refine` | Refining | `agentq-refine` |
-| `plan_requested` | `planning` | `plan` | Planning | `agentq-plan` |
-| `plan_changes_requested` | `planning` | `plan` | Planning | `agentq-plan` |
-| `plan_review_requested` | `plan_reviewing` | `plan_review` | Plan critique | `agentq-plan-review` |
-| `ready_for_code` | `coding` | `code` | Coding | `agentq-code` |
-| `changes_requested` | `coding` | `code` | Coding | `agentq-code` |
-| `verify_requested` | `verifying` | `verify` | Verifying | `agentq-verify` |
-| `code_review_requested` | `reviewing` | `review` | Reviewing | `agentq-review` |
-| `approved` | `merging` | `pr` | Pull request | `agentq-pr` |
+| `draft` | `refining` | `refine` | Refining | `mtq-refine` |
+| `plan_requested` | `planning` | `plan` | Planning | `mtq-plan` |
+| `plan_changes_requested` | `planning` | `plan` | Planning | `mtq-plan` |
+| `plan_review_requested` | `plan_reviewing` | `plan_review` | Plan critique | `mtq-plan-review` |
+| `ready_for_code` | `coding` | `code` | Coding | `mtq-code` |
+| `changes_requested` | `coding` | `code` | Coding | `mtq-code` |
+| `verify_requested` | `verifying` | `verify` | Verifying | `mtq-verify` |
+| `code_review_requested` | `reviewing` | `review` | Reviewing | `mtq-review` |
+| `approved` | `merging` | `pr` | Pull request | `mtq-pr` |
 
 `claim_task` also returns `phaseSkill` with the name to follow.
 
@@ -155,11 +155,11 @@ The task moves to `needs_human`, your claim is released and no agent retries it 
 
 ## Autonomy
 
-Agents MUST NOT ask the user for permission or confirmation during task execution — no "should I start working on this task?", no "is this plan correct?" before submitting, no "should I proceed?" / "do you want me to continue?", no asking for approval before implementing changes. The workflow is: claim → work → submit → repeat. The agent decides based on the task description and acceptance criteria. If the task is unclear, use reasonable judgment and submit with notes explaining assumptions; only when no reasonable reading exists, use `report_blocker`. The user reviews the result via AgentQ's review flow, not during execution.
+Agents MUST NOT ask the user for permission or confirmation during task execution — no "should I start working on this task?", no "is this plan correct?" before submitting, no "should I proceed?" / "do you want me to continue?", no asking for approval before implementing changes. The workflow is: claim → work → submit → repeat. The agent decides based on the task description and acceptance criteria. If the task is unclear, use reasonable judgment and submit with notes explaining assumptions; only when no reasonable reading exists, use `report_blocker`. The user reviews the result via Moonlight Task Queue's review flow, not during execution.
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`claim_task`, `submit_*`, `report_blocker`)
+- **NEVER** use API calls (HTTP/curl/fetch) — use the Moonlight Task Queue MCP tools only (`claim_task`, `submit_*`, `report_blocker`)
 - **DO NOT** use `list_tasks`, `create_task` or `archive_task` in this loop — agents claim, work on the claimed task and submit
 - **DO NOT** manage state or generate session IDs
 - **DO NOT** retry indefinitely on empty queue — **STOP** and inform user when no tasks available

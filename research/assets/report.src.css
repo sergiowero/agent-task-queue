@@ -1,11 +1,11 @@
 /*
- * AgentQ research reports: source stylesheet.
+ * Moonlight Task Queue research reports: source stylesheet.
  *
  * Build (from the repo root):  bun run research:build
  * Output: research/assets/report.css, then inlined into every report so each
  * HTML file opens on its own (research/build.ts).
  *
- * Tokens mirror the AgentQ portal (packages/web-ui/src/index.css) so reports
+ * Tokens mirror the Moonlight Task Queue portal (packages/web-ui/src/index.css) so reports
  * look like the product. Components are plain classes prefixed `r-` and live
  * OUTSIDE @layer, so they are always emitted: a new report built only from
  * `r-*` classes plus the safelisted utilities works without a rebuild.

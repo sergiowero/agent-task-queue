@@ -4,7 +4,7 @@ build
 coverage
 *.db*
 *.sqlite
-agentq.db
+mtq.db
 bun.lock
 *.tsbuildinfo
 design-system/components/bundle.js

@@ -5,7 +5,7 @@ import pluginReactHooks from "eslint-plugin-react-hooks";
 
 export default [
   {
-    ignores: ["node_modules", "dist", "build", "coverage", "*.db*", "agentq.db", "bun.lock", ".agentq"],
+    ignores: ["node_modules", "dist", "build", "coverage", "*.db*", "mtq.db", "bun.lock", ".mtq"],
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

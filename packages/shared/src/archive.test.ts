@@ -53,7 +53,7 @@ import {
 } from "./workflow.js";
 
 // Set test DB before any DB access (the path is resolved lazily in getDb()).
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 function entry(
   message: string,
@@ -223,7 +223,7 @@ describe("extractAgentSessions", () => {
 });
 
 describe("archiveTask", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentq-archive-test-"));
+  const root = mkdtempSync(join(tmpdir(), "mtq-archive-test-"));
   const projectDir = join(root, "project");
   const projectId = randomUUID();
   // Tasks that must never be claimed by completeTask() live in a second project.
@@ -422,7 +422,7 @@ describe("archiveTask", () => {
     expect(docs.summary).toContain("_No agent claimed this task._");
     expect(docs.summary).toContain("[a.detailed.md](./a.detailed.md)");
     expect(docs.detailed).toContain("[a.summary.md](./a.summary.md)");
-    expect(docs.detailed).toContain("Archived from AgentQ on 2026-01-02 03:04:05 UTC");
+    expect(docs.detailed).toContain("Archived from Moonlight Task Queue on 2026-01-02 03:04:05 UTC");
     expect(docs.detailed).toContain("_No messages._");
     // A task that left no records shows none of their sections, and names nobody who approved it.
     for (const section of ["Review findings", "Blockers and answers", "Verification", "Pull request", "Commits", "Handoffs", "Subtasks"]) {
@@ -660,7 +660,7 @@ describe("what each agent session did", () => {
 });
 
 describe("the records of the flow in the documents", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentq-archive-records-"));
+  const root = mkdtempSync(join(tmpdir(), "mtq-archive-records-"));
   const projectId = randomUUID();
   const at = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s)).toISOString();
   let bare: Task;
@@ -748,7 +748,7 @@ describe("the records of the flow in the documents", () => {
     const { detailed } = documentsOf(complete(), { evidence, handoffs });
 
     // Nothing says the task was verified, but the commands that ran are listed.
-    expect(detailed).toContain("## Verification\n\n_Not verified by AgentQ._");
+    expect(detailed).toContain("## Verification\n\n_Not verified by Moonlight Task Queue._");
     expect(detailed).toContain("| Id | Round | Criterion | Kind | Command | Exit code | Produced by | Notes | Output |");
     expect(detailed).toContain("| `E1` | 1 | AC1 | command | `bun test \\| tee out.txt` | 1 | `coder@1\\|m` | flaky, log `/tmp/verify.log` | 2 fail<br>expected 1 \\| got 2 |");
     expect(detailed).toContain("| `E2` | 2 | — | manual | — | — | `reviewer@1\\|r` | — | Opened the page on a phone |");
@@ -793,7 +793,7 @@ describe("the records of the flow in the documents", () => {
 });
 
 describe("archiving a task that took the L2 path", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentq-archive-l2-"));
+  const root = mkdtempSync(join(tmpdir(), "mtq-archive-l2-"));
   const projectDir = join(root, "project");
   const projectId = randomUUID();
   const who = (name: string, model: string) => ({ toolName: name, version: "1", model, sessionId: `l2-${name}` });
@@ -803,7 +803,7 @@ describe("archiving a task that took the L2 path", () => {
   const coder = who("coder", "sonnet");
   const reviewer = who("reviewer", "gemini");
   const opener = who("opener", "haiku");
-  const verifier = { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
+  const verifier = { toolName: "mtq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
   const DESCRIPTION = "Users can export their data as CSV from the settings page.";
 
   let taskId: string;

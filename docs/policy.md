@@ -1,6 +1,6 @@
 # Autonomy and routing
 
-AgentQ decides where a task goes after each submission from a small policy:
+Moonlight Task Queue decides where a task goes after each submission from a small policy:
 the project's **autonomy level**, the task's **risk**, the **round** it is in,
 and the reviewer's **verdict**. People decide intent and accept risk; agents
 produce evidence and review each other. A task moves on by itself while the
@@ -134,7 +134,7 @@ decides:
 
 - **`builtin`** (default): the built-in verifier, when the project has commands to run and
   it is running (a runner with the `verify` role may still pick up code it has not claimed
-  yet). While it is not running (`AGENTQ_VERIFY_WORKER=0`), an enabled runner with the
+  yet). While it is not running (`MTQ_VERIFY_WORKER=0`), an enabled runner with the
   `verify` role takes over if the web server is up and the runner may take the task
   (separation of duties, below). Without a runner to take over, or without a web server at
   all, and for a project with no commands, the code goes straight to review, marked as not
@@ -179,7 +179,7 @@ findings already verified cannot be answered again.
 | An agent calls `report_blocker` | `needs_human` with its reason and question |
 | Verification red `maxVerifyFailures` (2) times, or tests weakened twice | `needs_human` |
 | The reviewer reopens a finding the coder answered, twice | `needs_human` to arbitrate |
-| A runner job ends `AGENTQ_MAX_REVERTS` (3) times without submitting | `needs_human` with the last output |
+| A runner job ends `MTQ_MAX_REVERTS` (3) times without submitting | `needs_human` with the last output |
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
 | No agent takes the verification of a project set to agent verification within `reviewStarvationMin` | The review, marked as not verified |
@@ -227,7 +227,7 @@ a person takes `findingIds` too, to reopen plan findings the planner must answer
 ## Pull requests
 
 The task ends on GitHub. After the review the agent with the `pr` role pushes the branch and opens
-the PR with the body AgentQ writes (`brief.pr.body`: summary, each acceptance criterion
+the PR with the body Moonlight Task Queue writes (`brief.pr.body`: summary, each acceptance criterion
 with its evidence, the verification, the review, the risk), then calls `submit_pr`: the
 task waits in `pr_open`. The review section gives the latest AI verdict with the commit it
 saw (or says it was about an earlier submission, when the code changed since and no AI
@@ -237,8 +237,8 @@ since only a person can approve code with those open, then the non-blocking ones
 the PR, where the diff and CI are.
 
 With the `gh` CLI installed and logged in, the web server checks every open PR each
-`AGENTQ_PR_SYNC_SEC` (180 s; `AGENTQ_PR_SYNC=0` turns it off). Its `gh` calls run in the
-background, one at a time, and each is killed after `AGENTQ_PR_SYNC_TIMEOUT_SEC` (30 s),
+`MTQ_PR_SYNC_SEC` (180 s; `MTQ_PR_SYNC=0` turns it off). Its `gh` calls run in the
+background, one at a time, and each is killed after `MTQ_PR_SYNC_TIMEOUT_SEC` (30 s),
 so a slow or stuck GitHub never holds up the server:
 
 | On GitHub | Task |
@@ -248,7 +248,7 @@ so a slow or stuck GitHub never holds up the server:
 | A reviewer asks for changes (their latest review, submitted since the task entered `pr_open`) | `changes_requested`: the review becomes a finding the coder answers by id |
 | Open | Stays in `pr_open`; the task page shows its checks and who asked for changes |
 
-Without `gh`, or with `AGENTQ_PR_SYNC=0`, nothing changes by itself: a person clicks **Mark
+Without `gh`, or with `MTQ_PR_SYNC=0`, nothing changes by itself: a person clicks **Mark
 merged** on the task page. `/api/meta` says so (`prSync.available` is `gh`, `prSync.enabled`
 the running sync, and `prSync.errors` the last error of each task, such as `gh` not logged in),
 and the portal shows it: a warning on the task page and above the pull requests in **Needs you**
@@ -329,7 +329,7 @@ parent can be canceled from its page, which cancels its unfinished subtasks too.
 | Tasks that reached the PR with no human decision on the way | > 70% |
 | AI review rounds per task that reached a PR | ≤ 1.5 |
 | Tasks that went through `needs_human` | 10–20% |
-| AI-approved tasks a person still sent back (in AgentQ or on GitHub) | < 10% |
+| AI-approved tasks a person still sent back (in Moonlight Task Queue or on GitHub) | < 10% |
 | Runner reverts per task | falling |
 | Lead time from creation to completion | — |
 
@@ -398,7 +398,7 @@ an **independent brief** (`buildIndependentBrief` in
 
 The MCP server enforces it for the session that holds the claim (a runner job's
 server holds its job's claim): `claim_task`, `get_task_brief`, `get_task` and
-`agentq://task/{taskId}` all return the independent view, and `list_tasks` (task
+`mtq://task/{taskId}` all return the independent view, and `list_tasks` (task
 summaries) and `post_comment` (the entry it added) return nothing of the task's
 context to anyone. Anyone else, a person's session included, still reads the
 whole task with `get_task`. The checkers' own handoffs still reach the agent that acts on their
@@ -436,7 +436,7 @@ person also reviews the code after an AI approval.
 ## Leases and the sweeper
 
 Runner claims end with their process. Claims made by hand-opened sessions have
-a lease (`leaseMin`): any AgentQ call from the session extends it, and
+a lease (`leaseMin`): any Moonlight Task Queue call from the session extends it, and
 `heartbeat` extends it during long silent work. The web server sweeps every
 minute and records its own heartbeat in the same pass (the MCP server also sweeps
 before each claim):

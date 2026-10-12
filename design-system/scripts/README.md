@@ -1,11 +1,11 @@
 # Design system build
 
-`design-system/` is AgentQ's design system, extracted from `packages/web-ui`:
+`design-system/` is Moonlight Task Queue's design system, extracted from `packages/web-ui`:
 
 - `README.md` is the brand book: voice, color, type, layout, motion, states, icons, logo.
 - `tokens.json` holds the tokens: colors per theme, type, spacing, radii, shadows, sizes and z-layers.
 - `components/<Name>/` has a `README.md` (guidelines) and a `preview.html` (a live card) per component, plus the cover in `components/Cover/`.
-- `components/bundle.js` is the portal's components as one classic script that assigns `window.AgentQ`. It reads React 18 from `window.React` and `window.ReactDOM`.
+- `components/bundle.js` is the portal's components as one classic script that assigns `window.MTQ`. It reads React 18 from `window.React` and `window.ReactDOM`.
 - `components/bundle.css` is the portal's compiled Tailwind. Its color reads are rewritten to use the full colors that `tokens.css` declares.
 - `components/index.d.ts` holds the component props, for reference.
 - `assets/Logos/` holds the app mark and the favicon.

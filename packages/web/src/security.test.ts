@@ -19,13 +19,13 @@ describe("isAllowedHost", () => {
     }
   });
 
-  it("accepts the names AGENTQ_ALLOWED_HOSTS lists and AGENTQ_HOST when it is a name", () => {
-    const extra = extraAllowedHosts({ AGENTQ_ALLOWED_HOSTS: " My-Mac.local , agentq.lan,", AGENTQ_HOST: "devbox" });
-    expect(extra).toEqual(["my-mac.local", "agentq.lan", "devbox"]);
+  it("accepts the names MTQ_ALLOWED_HOSTS lists and MTQ_HOST when it is a name", () => {
+    const extra = extraAllowedHosts({ MTQ_ALLOWED_HOSTS: " My-Mac.local , mtq.lan,", MTQ_HOST: "devbox" });
+    expect(extra).toEqual(["my-mac.local", "mtq.lan", "devbox"]);
     expect(isAllowedHost("my-mac.local:3000", extra)).toBe(true);
     expect(isAllowedHost("DEVBOX:3000", extra)).toBe(true);
     expect(isAllowedHost("other.lan:3000", extra)).toBe(false);
-    expect(extraAllowedHosts({ AGENTQ_HOST: "0.0.0.0" })).toEqual([]);
+    expect(extraAllowedHosts({ MTQ_HOST: "0.0.0.0" })).toEqual([]);
   });
 });
 

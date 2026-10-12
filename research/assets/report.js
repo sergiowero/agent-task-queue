@@ -1,7 +1,7 @@
-// AgentQ research reports: theme toggle + table-of-contents highlight.
+// Moonlight Task Queue research reports: theme toggle + table-of-contents highlight.
 // Plain script (no modules) so reports work from file:// with no server.
 (function () {
-  var KEY = "agentq-report-theme";
+  var KEY = "mtq-report-theme";
   var root = document.documentElement;
 
   function readTheme() {

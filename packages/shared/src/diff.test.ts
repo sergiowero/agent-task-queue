@@ -6,7 +6,7 @@ import { analyzeDiff, diffRiskReasons, mergeDiffReasons, protectedFiles } from "
 import { resolveProfile } from "./profile.js";
 
 const hasGit = !!Bun.which("git");
-const root = mkdtempSync(join(tmpdir(), "agentq-diff-"));
+const root = mkdtempSync(join(tmpdir(), "mtq-diff-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 let n = 0;

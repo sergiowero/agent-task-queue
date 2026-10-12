@@ -52,7 +52,7 @@ import {
 } from "./workflow.js";
 
 // Set test DB before any imports
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 const SHARED_INDEX = join(import.meta.dir, "index.ts");
 
@@ -287,7 +287,7 @@ describe("concurrent claims from separate processes", () => {
   const dbPaths: string[] = [];
 
   function tempDbPath(): string {
-    const p = join(tmpdir(), `agentq-claim-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const p = join(tmpdir(), `mtq-claim-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
     dbPaths.push(p);
     return p;
   }
@@ -303,7 +303,7 @@ describe("concurrent claims from separate processes", () => {
   async function run(args: string[], dbPath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const proc = Bun.spawn(["bun", ...args], {
       cwd: join(import.meta.dir, "../../.."),
-      env: { ...process.env, AGENTQ_DB_PATH: dbPath },
+      env: { ...process.env, MTQ_DB_PATH: dbPath },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -590,7 +590,7 @@ describe("workflow actions", () => {
     expect(() => resolveBlocker(task.id, { answer: "", targetStatus: TaskStatus.PlanRequested })).toThrow("Needs human");
   });
 
-  it("stops retrying after AGENTQ_MAX_REVERTS runs without a submit", () => {
+  it("stops retrying after MTQ_MAX_REVERTS runs without a submit", () => {
     const task = newTask();
     for (let i = 1; i <= 2; i++) {
       claimNextTask({ roles: ["plan"], agent: planner, projectId });
@@ -852,7 +852,7 @@ describe("autonomy L2: reviews that decide", () => {
       }
       return task.id;
     };
-    const builtin = { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
+    const builtin = { toolName: "mtq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
 
     const first = verifiable();
     // Code the verifier will check is not "skipped".
@@ -1301,7 +1301,7 @@ function gitWorktree(parent: string) {
 }
 
 describe("commits recorded per round", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentq-commits-"));
+  const root = mkdtempSync(join(tmpdir(), "mtq-commits-"));
   const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "c-coder" };
 
   afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -1375,7 +1375,7 @@ describe("commits recorded per round", () => {
 });
 
 describe("the approved commit is the one that ships", () => {
-  const root = mkdtempSync(join(tmpdir(), "agentq-approval-"));
+  const root = mkdtempSync(join(tmpdir(), "mtq-approval-"));
   const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "a-coder" };
   const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "a-reviewer" };
 

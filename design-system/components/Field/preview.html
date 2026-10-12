@@ -5,7 +5,7 @@
 <body>
 <div id="root" class="grid max-w-lg gap-5 p-6"></div>
 <script>
-var A = window.AgentQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
+var A = window.MTQ, I = A.Icons, h = React.createElement, F = React.Fragment, useState = React.useState;
 function Preview() {
   var s = useState('full'); var mode = s[0], setMode = s[1];
   return h(F, null,
@@ -17,7 +17,7 @@ function Preview() {
     h(A.Field, { label: 'Permission mode', hintTone: mode === 'full' ? 'warning' : 'muted',
       hint: mode === 'full'
         ? 'Full skips every permission prompt and sandbox: the tool can run any command in the project directory.'
-        : 'Safe auto-accepts edits and allows agentq, git, gh, bun/npm and read-only shell commands.' },
+        : 'Safe auto-accepts edits and allows mtq, git, gh, bun/npm and read-only shell commands.' },
       h(A.SegmentedControl, { label: 'Permission mode', value: mode, onChange: setMode,
         options: [{ value: 'safe', label: 'Safe', icon: I.SafeModeIcon }, { value: 'full', label: 'Full access', icon: I.FullAccessIcon }] })));
 }

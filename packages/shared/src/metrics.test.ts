@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { randomUUID } from "crypto";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 import { TaskStatus } from "./catalog.js";
 import { addActivityEvent, createProject, createTask, getTaskById, patchTask } from "./database.js";

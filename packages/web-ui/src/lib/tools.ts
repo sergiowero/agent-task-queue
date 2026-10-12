@@ -9,8 +9,8 @@ export interface Tool {
 export const TOOLS: Tool[] = [
   {
     id: "install",
-    name: "Install AgentQ",
-    description: "Connect your coding agents to AgentQ: the MCP server and the workflow skills.",
+    name: "Install Moonlight Task Queue",
+    description: "Connect your coding agents to Moonlight Task Queue: the MCP server and the workflow skills.",
     icon: "download",
     badge: "Experimental",
   },

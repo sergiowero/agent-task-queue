@@ -1,10 +1,10 @@
 # Runners
 
-A **runner** is the piece of AgentQ that removes the "open Claude / Codex / OpenCode by
+A **runner** is the piece of Moonlight Task Queue that removes the "open Claude / Codex / OpenCode by
 hand" step. It lives inside the web server, polls the queue with its roles, and every time
 it claims a task it launches the configured coding tool **headless** in the project's
 working directory with a prompt that contains the task and the matching phase skill.
-Every job gets the AgentQ MCP server, bound to the web server's database, with no setup
+Every job gets the Moonlight Task Queue MCP server, bound to the web server's database, with no setup
 on your side. The tool does the work and finishes by calling the phase's `submit_*` MCP
 tool; the runner only watches the process.
 
@@ -44,25 +44,25 @@ without duplicates, in that order.
 **Custom argv runners need an opt-in.** Tool `custom`, or a non-empty `extraArgs` on any
 tool (an inline `--mcp-config` or a Codex `-c` override can start any command), runs
 whatever command the runner was given. The server creates, starts or enables such a
-runner only when it was started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`; otherwise the API
+runner only when it was started with `MTQ_ALLOW_CUSTOM_RUNNERS=1`; otherwise the API
 answers 400, and a custom runner persisted as enabled does not start (its `lastError`
 says why). Renaming, stopping or deleting one, or clearing its `extraArgs`, stays possible.
 
 ## Tools and the commands they run
 
-The runner writes the prompt to `~/.agentq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
+The runner writes the prompt to `~/.mtq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
 config to `<jobId>.mcp.json` next to it, and runs:
 
 | Tool | Command |
 |------|---------|
 | `claude` | `claude -p <prompt> --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
-| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
+| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.mtq.command=… -c mcp_servers.mtq.args=… -c mcp_servers.mtq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
 | `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
 | `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
-| `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$AGENTQ_PROMPT` |
+| `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$MTQ_PROMPT` |
 
-Every child gets `AGENTQ_TASK_ID`, `AGENTQ_ROLE`, `AGENTQ_PROMPT_FILE`,
-`AGENTQ_MCP_CONFIG` (the job's MCP config file) and `AGENTQ_DB_PATH` (the web server's
+Every child gets `MTQ_TASK_ID`, `MTQ_ROLE`, `MTQ_PROMPT_FILE`,
+`MTQ_MCP_CONFIG` (the job's MCP config file) and `MTQ_DB_PATH` (the web server's
 database) in its environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner started
 from inside a Claude Code session does not trip the nested-session guard. The working
 directory is the project's `workingDirectory` (with `~` expanded); if it does not exist
@@ -72,26 +72,26 @@ runs and writes stays out of the main checkout; the runner only does so when tha
 exists and lies inside the project's working directory (the path is the coder's word), and
 the prompt says where the job is.
 
-### The AgentQ MCP server in every job
+### The Moonlight Task Queue MCP server in every job
 
 Before starting the tool, the runner writes `<jobId>.mcp.json`:
 
 ```json
-{ "mcpServers": { "agentq": { "command": "<bun>", "args": ["run", "<checkout>/packages/mcp/src/index.ts"],
-                              "env": { "AGENTQ_DB_PATH": "<the web server's database>" } } } }
+{ "mcpServers": { "mtq": { "command": "<bun>", "args": ["run", "<checkout>/packages/mcp/src/index.ts"],
+                              "env": { "MTQ_DB_PATH": "<the web server's database>" } } } }
 ```
 
 and hands the same server to the tool the way that tool reads MCP config for a single run,
 so nothing has to be registered beforehand (`bun run install:mcp` is only needed to use
-AgentQ from a tool you open yourself):
+Moonlight Task Queue from a tool you open yourself):
 
 | Tool | How the job gets the server |
 |------|-----------------------------|
 | `claude` | `--mcp-config <jobId>.mcp.json`. It is added to the servers you configured, and a server passed this way takes precedence over one with the same name. |
-| `codex` | `-c mcp_servers.agentq.command=…`, `…args=…` and `…env={ "AGENTQ_DB_PATH" = … }` overrides (TOML values). |
-| `opencode` | `OPENCODE_CONFIG_CONTENT` (inline config, highest precedence) with an `mcp.agentq` local server, merged into any content the variable already holds. |
-| `gemini` | Gemini CLI has no per-run MCP flag, so the job writes `<jobId>.gemini-settings.json`: a copy of the system settings file (`$GEMINI_CLI_SYSTEM_SETTINGS_PATH`, else `/etc/gemini-cli/settings.json`, `/Library/Application Support/GeminiCli/settings.json` or `C:\ProgramData\gemini-cli\settings.json`) with `mcpServers.agentq` added, and points `GEMINI_CLI_SYSTEM_SETTINGS_PATH` at it. Admin settings are kept. If the system settings file exists but is not valid JSON, the job fails before the tool starts, the task is released and the error names the file to fix. |
-| `custom` | Your argv decides. Read `$AGENTQ_MCP_CONFIG` (the `mcpServers` document above, usable as-is with `claude --mcp-config`), or start `bun run packages/mcp/src/index.ts` with `AGENTQ_DB_PATH=$AGENTQ_DB_PATH`. A custom tool that never submits has its task released when it exits. |
+| `codex` | `-c mcp_servers.mtq.command=…`, `…args=…` and `…env={ "MTQ_DB_PATH" = … }` overrides (TOML values). |
+| `opencode` | `OPENCODE_CONFIG_CONTENT` (inline config, highest precedence) with an `mcp.mtq` local server, merged into any content the variable already holds. |
+| `gemini` | Gemini CLI has no per-run MCP flag, so the job writes `<jobId>.gemini-settings.json`: a copy of the system settings file (`$GEMINI_CLI_SYSTEM_SETTINGS_PATH`, else `/etc/gemini-cli/settings.json`, `/Library/Application Support/GeminiCli/settings.json` or `C:\ProgramData\gemini-cli\settings.json`) with `mcpServers.mtq` added, and points `GEMINI_CLI_SYSTEM_SETTINGS_PATH` at it. Admin settings are kept. If the system settings file exists but is not valid JSON, the job fails before the tool starts, the task is released and the error names the file to fix. |
+| `custom` | Your argv decides. Read `$MTQ_MCP_CONFIG` (the `mcpServers` document above, usable as-is with `claude --mcp-config`), or start `bun run packages/mcp/src/index.ts` with `MTQ_DB_PATH=$MTQ_DB_PATH`. A custom tool that never submits has its task released when it exits. |
 
 The job log starts with the path of the MCP config the job received.
 
@@ -100,7 +100,7 @@ The job log starts with the path of the MCP config the job received.
 The model is a free-text field: whatever you type is passed to the tool as-is
 (`--model` for `claude`, `-m` for `codex`, `opencode` and `gemini`). Leave it empty and
 no model flag is passed at all, so the tool uses its own default (its config file or
-built-in choice). AgentQ does not list or validate models.
+built-in choice). Moonlight Task Queue does not list or validate models.
 
 The effort is a select with a fixed list per tool, stored on the runner (`effort`,
 nullable) and only handed to tools that understand it:
@@ -126,14 +126,14 @@ Empty means the tool's default effort.
   | `pr` | no | `git`, `gh`, `ls`, `cd`. Denied: `git commit`, `add`, `rm`, `mv`, `reset`, `checkout`, `switch`, `restore`, `clean`, `stash`, `merge`, `rebase`, `cherry-pick`, `apply`, `am` and `gh pr merge` | `--sandbox workspace-write` with network (push, `gh`) |
   | `code` | yes | `Edit Write Read Glob Grep`, `git`, `gh`, `bun`, `npm`, `npx`, `ls`, `cat`, `grep`, `find`, and the program of each of the project's commands (`pytest`, `make`, `cargo`...) | `--sandbox workspace-write` with network (dependency installs) |
 
-  For Claude Code every role gets `--allowedTools` with only the AgentQ tools of its
+  For Claude Code every role gets `--allowedTools` with only the Moonlight Task Queue tools of its
   phase (`get_task`, `get_task_brief`, `get_skill`, `post_comment`, `report_blocker`
   and its own `submit_*`; the planner also `create_subtask`): `claim_task`, `create_task`,
   `list_tasks` and `archive_task` are never allowed, since the runner already claimed
   the task. The roles that do not edit also get `--disallowedTools Edit Write
   NotebookEdit`, which wins over any allow rule or permission mode in your own Claude
   settings, and only the coder is started with `--permission-mode acceptEdits`. Codex
-  MCP servers run outside its sandbox, so the AgentQ server can write the database in
+  MCP servers run outside its sandbox, so the Moonlight Task Queue server can write the database in
   every role. A role this file does not know gets the read-only profile.
 
   **What a review or verification may run.** The project's commands (**Projects → Edit →
@@ -169,16 +169,16 @@ Empty means the tool's default effort.
 ### The prompt
 
 `buildPrompt()` tells the tool which of the runner's roles the claim acts as (also in
-`$AGENTQ_ROLE`), that task `<id>` was
+`$MTQ_ROLE`), that task `<id>` was
 **already claimed for it** (so it must not call `claim_task`), the current status, the
-AgentQ MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
+Moonlight Task Queue MCP tools it can use (`get_task_brief`, `get_task`, `post_comment`, the phase's
 `submit_*` and `report_blocker`), the task **brief** (see [mcp.md](mcp.md): plan,
 criteria, open findings, latest handoffs, human notes; not the whole conversation, so
 the prompt does not grow round after round; for a plan critique, verification or review
 job, the **independent brief**, without the author's conversation, handoffs, messages
 or evidence, see [policy.md](policy.md#independent-checks)), the
 body of
-`skills/agentq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
+`skills/mtq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the `context` handoff notes and the
 optional `decisions`, `risks` and `next` lists, with a per-phase hint of what they should
 contain: required everywhere, optional but expected for a verification; and the job's
@@ -186,7 +186,7 @@ contain: required everywhere, optional but expected for a verification; and the 
 `report_blocker` when something outside its control blocks the phase (never submit
 partial work), never to ask for permission, and to stop once the submit succeeds.
 
-Phase by status (each phase has its skill, `skills/agentq-<phase>`): `draft` → refine,
+Phase by status (each phase has its skill, `skills/mtq-<phase>`): `draft` → refine,
 `plan_requested` / `plan_changes_requested` → plan, `plan_review_requested` →
 plan-review, `ready_for_code` / `changes_requested` → code, `verify_requested` →
 verify, `code_review_requested` → review, `approved` → merge (role `pr`). Runners from
@@ -211,7 +211,7 @@ When the child exits the runner re-reads the task:
   planning→`plan_requested`, coding→`ready_for_code`, reviewing→`code_review_requested`,
   merging→`approved`), records history, adds a **system** conversation entry with the
   exit code and the last 30 lines of output, and logs a `task_reverted` activity event.
-  The job is `reverted`. After `AGENTQ_MAX_REVERTS` (3) runs in a row that ended without a
+  The job is `reverted`. After `MTQ_MAX_REVERTS` (3) runs in a row that ended without a
   submit, the task goes to `needs_human` instead, with a blocker quoting the last output,
   and the job is `blocked`: a broken task no longer loops forever. Any submit, answer or
   unblock resets the count.
@@ -253,10 +253,10 @@ records its heartbeat.
 ### Claim tokens
 
 Each claim gets a secret `claimToken` that every `submit_*` and `report_blocker` call
-must present. The runner puts it in the job's MCP launch env (`AGENTQ_TASK_ID`,
-`AGENTQ_CLAIM_TOKEN`, `AGENTQ_AGENT_ID`), so the job's server attaches it on its own, and
+must present. The runner puts it in the job's MCP launch env (`MTQ_TASK_ID`,
+`MTQ_CLAIM_TOKEN`, `MTQ_AGENT_ID`), so the job's server attaches it on its own, and
 also writes it into the prompt's submit arguments for tools that end up using another
-`agentq` server. The runner claims with `runnerId`, which becomes the claim's stable
+`mtq` server. The runner claims with `runnerId`, which becomes the claim's stable
 `sessionKey` (`runner:<id>`).
 
 The token never leaves the server over HTTP: no API response or SSE event includes a
@@ -285,7 +285,7 @@ it, runs the commands in the task's worktree and routes it:
   and the project's `verifyTimeoutSec` (600 s) in its own process group: a timeout kills
   the whole tree (`a && b`, npm scripts, forked test workers), not just the shell. A
   failing command is retried once and marked **flaky** when the retry passes. Logs go to
-  `<AGENTQ_HOME>/runs/<taskId>/verify-R<round>-<attempt>-<i>.log`; the evidence keeps the
+  `<MTQ_HOME>/runs/<taskId>/verify-R<round>-<attempt>-<i>.log`; the evidence keeps the
   last 40 lines.
 - **Trust**: the project's own commands always run. Commands an agent wrote (plan items,
   criteria) run only when a person approved the plan, or when they start with an
@@ -322,7 +322,7 @@ verifier agent"), never the previous submission's result. Without commands the c
 straight to review and the task notes that it was not verified; so it does when the
 verifier is not running (it writes a heartbeat every 30 s, also while a long verification
 runs; MCP-only setups have no web server), unless a runner can take over (next section).
-`AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
+`MTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
 Code that waits for the built-in verifier after its heartbeat stopped goes on to review,
 not verified, after 5 minutes (the sweeper).
 
@@ -332,7 +332,7 @@ A project can hand verification to an agent: **Projects → Edit → Autonomy �
 code** (the policy's `verifier: "agent"`, see [policy.md](policy.md#who-verifies)). Its
 code always goes to `verify_requested`, with or without commands, and the built-in
 verifier's claim skips it, so the agent with the `verify` role gets it: a runner with that
-role (its job starts in the task's worktree with the `agentq-verify` skill, and may run
+role (its job starts in the task's worktree with the `mtq-verify` skill, and may run
 the same commands the built-in verifier would; see [Permission modes](#permission-modes)),
 or a session someone opens. The agent runs the commands its brief names and reports
 `evidence` with `submit_verification`. The server does not take its word for the rest:
@@ -347,7 +347,7 @@ within the project's `reviewStarvationMin` goes on to review, marked as not veri
 (0 = keep waiting).
 
 A runner with the `verify` role also takes over in a project that uses the built-in
-verifier, while that verifier is off (`AGENTQ_VERIFY_WORKER=0`): a submit then sends the
+verifier, while that verifier is off (`MTQ_VERIFY_WORKER=0`): a submit then sends the
 code to `verify_requested` when an enabled runner with the role may take it and the web
 server is up. The server says it is up with a `server_heartbeat` its sweep writes every
 minute (three missed beats, or a clean shutdown, count as down), so a runner left
@@ -358,12 +358,12 @@ processes only read it.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
-| `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
-| `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
-| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off: a runner with the `verify` role takes over when one can, else code goes to review not verified (projects set to agent verification are unaffected) |
-| `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
-| `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
+| `MTQ_HOME` | `~/.mtq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
+| `MTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
+| `MTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
+| `MTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off: a runner with the `verify` role takes over when one can, else code goes to review not verified (projects set to agent verification are unaffected) |
+| `MTQ_DB_PATH` | `~/.mtq/mtq.db` | Database; every job's Moonlight Task Queue MCP server is bound to it |
+| `MTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
 
 ## Live updates
 
@@ -382,7 +382,7 @@ as `task_updated`, so claims and submissions made by agents show up on the board
 
 ```bash
 # 1. start the server (any spare port, throwaway DB)
-AGENTQ_DB_PATH=/tmp/agentq-demo.db PORT=3999 bun run packages/web/src/index.ts
+MTQ_DB_PATH=/tmp/mtq-demo.db PORT=3999 bun run packages/web/src/index.ts
 
 # 2. a project pointing at a real checkout
 curl -s localhost:3999/api/projects -H 'content-type: application/json' -d '{
@@ -403,7 +403,7 @@ curl -s localhost:3999/api/runners -H 'content-type: application/json' -d '{
 #    → complete once the PR is merged on GitHub (or "Mark merged" on the task page)
 ```
 
-For tests, start the server with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1` and use `tool: "custom"` with `extraArgs` such as
+For tests, start the server with `MTQ_ALLOW_CUSTOM_RUNNERS=1` and use `tool: "custom"` with `extraArgs` such as
 `["bun", "packages/web/src/runner/testing/fake-agent.ts", "submit_plan", "{\"message\":\"## Plan\"}"]`:
-the fake agent starts the server from `$AGENTQ_MCP_CONFIG` and calls the tool for
-`$AGENTQ_TASK_ID`, as a real coding tool would.
+the fake agent starts the server from `$MTQ_MCP_CONFIG` and calls the tool for
+`$MTQ_TASK_ID`, as a real coding tool would.

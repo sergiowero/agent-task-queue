@@ -7,10 +7,10 @@ import type {
   Severity,
   TaskType,
   Verdict,
-} from "@agentq/shared/catalog";
-import type { AcceptanceCriterion } from "@agentq/shared/criteria";
-import type { VerifierMode } from "@agentq/shared/policy";
-import type { ProjectProfile } from "@agentq/shared/profile";
+} from "@mtq/shared/catalog";
+import type { AcceptanceCriterion } from "@mtq/shared/criteria";
+import type { VerifierMode } from "@mtq/shared/policy";
+import type { ProjectProfile } from "@mtq/shared/profile";
 
 export type { AcceptanceCriterion, ProjectProfile };
 
@@ -222,7 +222,7 @@ export interface Meta {
   verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
   /**
    * GitHub sync of open PRs: `available` is the `gh` CLI, `enabled` the periodic sync running (off with
-   * AGENTQ_PR_SYNC=0). Unless both are true a merged PR does not complete its task by itself.
+   * MTQ_PR_SYNC=0). Unless both are true a merged PR does not complete its task by itself.
    */
   prSync?: { available: boolean; enabled: boolean; lastRunAt: string | null; errors: { taskId: string; error: string }[] };
 }

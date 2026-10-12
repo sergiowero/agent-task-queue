@@ -1,6 +1,6 @@
-# AgentQ — Master Prompt
+# Moonlight Task Queue — Master Prompt
 
-> **Outdated (historical spec).** This document describes the original design, where agents used an `agentq` command-line binary. That binary no longer exists: agents now use the AgentQ MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
+> **Outdated (historical spec).** This document describes the original design, where agents used an `mtq` command-line binary. That binary no longer exists: agents now use the Moonlight Task Queue MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
 
 Build a local task queue system for managing coding-agent work across multiple projects. It provides a centralized backlog that allows AI agents (OpenCode, Codex, Claude, Kimi, Junie) to pull work items, complete them, and continue from well-defined context.
 
@@ -50,7 +50,7 @@ Local-first — CLI operates directly on SQLite, no running server required for 
 ## 3. Project Structure
 
 ```
-agent-task-queue/
+moonlight-task-queue/
 ├── package.json                       # Workspace root — 5 packages
 ├── tsconfig.json                      # ESNext, bundler resolution, strict
 ├── eslint.config.js                   # Flat config: TS + React + import rules
@@ -58,7 +58,7 @@ agent-task-queue/
 ├── project.md                         # Full project spec
 │
 ├── packages/
-│   ├── shared/src/                    # @agentq/shared
+│   ├── shared/src/                    # @mtq/shared
 │   │   ├── index.ts                   # Re-exports everything
 │   │   ├── types.ts                   # Enums (TaskStatus) + interfaces
 │   │   ├── schemas.ts                 # Zod validation schemas
@@ -68,11 +68,11 @@ agent-task-queue/
 │   │   ├── env.ts                     # Zod-validated env config
 │   │   └── database.test.ts           # Tests (~580 lines)
 │   │
-│   ├── cli/src/index.ts               # @agentq/cli — Commander CLI (~580 lines, single file)
+│   ├── cli/src/index.ts               # @mtq/cli — Commander CLI (~580 lines, single file)
 │   │
-│   ├── web/src/index.ts               # @agentq/web — Bun.serve server (~740 lines, single file)
+│   ├── web/src/index.ts               # @mtq/web — Bun.serve server (~740 lines, single file)
 │   │
-│   ├── web-ui/                        # @agentq/web-ui — React SPA
+│   ├── web-ui/                        # @mtq/web-ui — React SPA
 │   │   ├── index.html
 │   │   ├── vite.config.ts
 │   │   ├── tailwind.config.js
@@ -88,15 +88,15 @@ agent-task-queue/
 │   │       ├── components/            # 19 components (Layout, TaskCard, modals, etc.)
 │   │       └── pages/                 # 7 pages (Board, TaskDetail, Agents, Activity, Projects, Tools, InstallTool)
 │   │
-│   └── installer/src/                 # @agentq/installer — install scripts
-│       ├── install-bin.ts             # Build + install agentq binary to ~/.local/bin
+│   └── installer/src/                 # @mtq/installer — install scripts
+│       ├── install-bin.ts             # Build + install mtq binary to ~/.local/bin
 │       └── install-skills.ts          # Copy workflow skill to agent config dirs
 │
 ├── skills/                            # Shared agent skill definitions
-│   └── agentq-workflow/SKILL.md
+│   └── mtq-workflow/SKILL.md
 │
 └── .opencode/                         # OpenCode-specific config
-    └── skills/                        # agentq-workflow, agentq-create-task
+    └── skills/                        # mtq-workflow, mtq-create-task
 ```
 
 ---
@@ -205,7 +205,7 @@ interface ActivityEvent {
 
 ## 5. Database Schema (SQLite via `bun:sqlite`)
 
-- **File path**: `~/.agentq/agentq.db` (configurable via `AGENTQ_DB_PATH` env var, supports `~` expansion)
+- **File path**: `~/.mtq/mtq.db` (configurable via `MTQ_DB_PATH` env var, supports `~` expansion)
 - **Connection**: Lazily initialized singleton with `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON`
 
 ### Tables
@@ -532,19 +532,19 @@ Each action validates current task status, records history, adds conversation en
 
 ## 8. CLI (`packages/cli/src/index.ts`)
 
-Standalone binary named `agentq`, built with Commander (`^12`). Single file (~580 lines). The CLI operates directly on the SQLite database — no server needed.
+Standalone binary named `mtq`, built with Commander (`^12`). Single file (~580 lines). The CLI operates directly on the SQLite database — no server needed.
 
 ### ALL Commands support `--json` flag
 
 JSON success: `{ "success": true, ... }` | JSON error: `{ "success": false, "error": "..." }`
 
-### `agentq list`
+### `mtq list`
 List all tasks with project info. Human-readable summary or `--json`.
 
-### `agentq projects`
+### `mtq projects`
 List all projects. Human-readable or `--json`.
 
-### `agentq create <title>`
+### `mtq create <title>`
 Create a new task.
 
 | Option | Required | Description |
@@ -563,10 +563,10 @@ Create a new task.
 
 **Note**: The `--context` flag is passed to `createTask()` but the underlying function ignores extra keys — contexts are handled via separate `updateTask` calls in other commands.
 
-### `agentq get <id>`
+### `mtq get <id>`
 Get task by ID. Includes project object in JSON output.
 
-### `agentq claim`
+### `mtq claim`
 Claim highest-priority eligible task for agent's role.
 
 | Option | Required | Description |
@@ -606,16 +606,16 @@ Claim logic:
 5. Records history and conversation entry
 6. Appends context if provided
 
-### `agentq submit-plan <taskId>`
+### `mtq submit-plan <taskId>`
 Status: `planning` → `waiting_plan_review`. Options: `-m/--message`, `-a/--author` (default "agent"), `--context`, `--json`
 
-### `agentq submit-code <taskId>`
+### `mtq submit-code <taskId>`
 Status: `coding` → `waiting_code_review`. Options: `-m/--message`, `-a/--author`, `-w/--worktree` **(required)**, `--context`, `--json`
 
-### `agentq submit-review <taskId>`
+### `mtq submit-review <taskId>`
 Status: `reviewing` → `waiting_code_review`. Options: `-m/--message`, `-a/--author`, `--context`, `--json`
 
-### `agentq submit-merge <taskId>`
+### `mtq submit-merge <taskId>`
 Status: `merging` → `merged`. Options:
 
 | Option | Required | Description |
@@ -689,7 +689,7 @@ React SPA with Vite build. Tailwind CSS for styling.
 
 | Component | Description |
 |---|---|
-| **Layout** | Sidebar nav (Board, Projects, Agents, Activity, Tools) + header "AgentQ — your 100x engineer tool" + theme toggle + main outlet |
+| **Layout** | Sidebar nav (Board, Projects, Agents, Activity, Tools) + header "Moonlight Task Queue — your 100x engineer tool" + theme toggle + main outlet |
 | **TaskCard** | Card: title, priority badge, branch, status badge, assigned agent, plan/review badges, edit button |
 | **CreateTaskModal** | Modal form: title, description, project, priority, branch, requiresPlan, mergeBranch, acceptance criteria, guardrails, steer details |
 | **EditTaskModal** | Modal form for editing task fields |
@@ -756,13 +756,13 @@ typescript ^5.8
 
 ### Shared Skills (`skills/` — installed to multiple agent tools)
 
-**agentq-workflow/SKILL.md** (~250 lines):
+**mtq-workflow/SKILL.md** (~250 lines):
 - Identity info: `toolName`, `version`, `model`, `sessionId`, `role`
 - CLI command reference with `--json` flags
 - Phase intelligence table (task status → phase → action)
 - Working directory per phase (project root for planning, worktree for coding/review/merge)
 - Worktree management rules (create for coding+, skip for planning, use existing path)
-- Path format: `{project}/.agentq/worktrees/{task.id}` (not `/tmp`)
+- Path format: `{project}/.mtq/worktrees/{task.id}` (not `/tmp`)
 - Git safety: NO commits until merging phase
 - Message format templates (plan, code, review, merge)
 - Context reading guidance (description, steerDetails, guardrails, acceptanceCriteria)
@@ -772,8 +772,8 @@ typescript ^5.8
 
 ### OpenCode Skills (`.opencode/skills/`)
 
-- `agentq-workflow/SKILL.md` — Adapted for OpenCode
-- `agentq-create-task/SKILL.md` — Creating well-structured tasks via CLI
+- `mtq-workflow/SKILL.md` — Adapted for OpenCode
+- `mtq-create-task/SKILL.md` — Creating well-structured tasks via CLI
 
 ---
 
@@ -781,21 +781,21 @@ typescript ^5.8
 
 ### `install-bin.ts` — Binary Installation
 
-1. `bun build --compile` CLI source → `/tmp/agentq-binary`
-2. Copy to `~/.local/bin/agentq`
+1. `bun build --compile` CLI source → `/tmp/mtq-binary`
+2. Copy to `~/.local/bin/mtq`
 3. `chmod 755`
 4. Remove temp file
-5. Verify with `agentq --version`
+5. Verify with `mtq --version`
 6. Check PATH (`echo $PATH`) and warn if `~/.local/bin` not in PATH
 
 ### `install-skills.ts` — Skill Installation
 
-Copies `skills/agentq-workflow/SKILL.md` to all agent config directories:
-- `~/.claude/skills/agentq-workflow/SKILL.md`
-- `~/.config/opencode/skills/agentq-workflow/SKILL.md`
-- `~/.codex/skills/agentq-workflow/SKILL.md`
-- `~/.kimi-code/skills/agentq-workflow/SKILL.md`
-- `~/.junie/skills/agentq-workflow/SKILL.md`
+Copies `skills/mtq-workflow/SKILL.md` to all agent config directories:
+- `~/.claude/skills/mtq-workflow/SKILL.md`
+- `~/.config/opencode/skills/mtq-workflow/SKILL.md`
+- `~/.codex/skills/mtq-workflow/SKILL.md`
+- `~/.kimi-code/skills/mtq-workflow/SKILL.md`
+- `~/.junie/skills/mtq-workflow/SKILL.md`
 
 Creates target directories if missing.
 
@@ -808,7 +808,7 @@ Creates target directories if missing.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Web server port (validated: positive int, max 65535) |
-| `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | SQLite database path (`~` expanded to `homedir()`) |
+| `MTQ_DB_PATH` | `~/.mtq/mtq.db` | SQLite database path (`~` expanded to `homedir()`) |
 
 ### Agent ID Format
 
@@ -819,7 +819,7 @@ Examples: `opencode@1.2.1|gpt-4`, `github-copilot@1.0|raptor`
 
 ### Worktree Path Convention
 
-`<project-working-directory>/.agentq/worktrees/<task-id>`
+`<project-working-directory>/.mtq/worktrees/<task-id>`
 
 Set by agent on `submit-code --worktree`. Stored in `task.worktreePath`.
 
@@ -859,12 +859,12 @@ husky ^9.1, lint-staged ^17.2
 ## 14. Package Relationships
 
 ```
-@agentq/shared        (zod, bun-types)
+@mtq/shared        (zod, bun-types)
     ↑
-@agentq/web           (shared → workspace:*)
-@agentq/cli           (shared → workspace:*, commander ^12)
-@agentq/web-ui        (shared → workspace:*, react, react-router, tanstack-query, vite, tailwind, etc.)
-@agentq/installer     (no deps — uses bun $ and fs)
+@mtq/web           (shared → workspace:*)
+@mtq/cli           (shared → workspace:*, commander ^12)
+@mtq/web-ui        (shared → workspace:*, react, react-router, tanstack-query, vite, tailwind, etc.)
+@mtq/installer     (no deps — uses bun $ and fs)
 ```
 
 Bun workspace root `package.json` references `packages/*`.
@@ -875,7 +875,7 @@ Bun workspace root `package.json` references `packages/*`.
 
 **Location**: `packages/shared/src/database.test.ts`
 **Runner**: `bun test` (Bun's built-in test runner)
-**Database**: Uses in-memory SQLite (`AGENTQ_DB_PATH=:memory:`)
+**Database**: Uses in-memory SQLite (`MTQ_DB_PATH=:memory:`)
 
 ### Test Groups
 
@@ -939,7 +939,7 @@ bun run install:skills
 8. **Immutable requiresPlan** — cannot be changed after task creation. Determines initial status and workflow path.
 9. **Soft delete by default** — hard delete requires explicit `?hard=true` flag. Deleted items excluded from queries via `WHERE deleted_at IS NULL`.
 10. **Conversation authorName convention** — `"agentName|tool|model"` for agent messages so UI can parse both readable name and metadata.
-11. **Local-first** — SQLite path defaults to `~/.agentq/agentq.db`, supporting `~` expansion. Database is lazily initialized on first access.
+11. **Local-first** — SQLite path defaults to `~/.mtq/mtq.db`, supporting `~` expansion. Database is lazily initialized on first access.
 12. **No HTTP from CLI** — the CLI imports shared code directly and calls database functions in-process. No network calls needed.
 
 ---
