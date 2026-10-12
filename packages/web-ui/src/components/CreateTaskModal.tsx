@@ -25,6 +25,7 @@ import {
 } from "../lib/icons";
 import { cn } from "../lib/cn";
 import { Badge } from "./Badge";
+import { DependencyPicker } from "./DependencyPicker";
 import { Button } from "./Button";
 import { Field } from "./Field";
 import { Input } from "./Input";
@@ -56,6 +57,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const [steerDetails, setSteerDetails] = useState("");
   const [guardrails, setGuardrails] = useState("");
   const [criteria, setCriteria] = useState("");
+  const [blockedBy, setBlockedBy] = useState<string[]>([]);
   const [showMore, setShowMore] = useState(false);
 
   const { data: projects = [] } = useQuery({
@@ -79,6 +81,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
         risk: risk || undefined,
         autonomy: autonomy === "" ? undefined : (Number(autonomy) as AutonomyLevel),
         acceptanceCriteria: criteria ? criteria.split("\n").filter(Boolean) : undefined,
+        blockedBy: blockedBy.length ? blockedBy : undefined,
         projectId: selectedProjectId,
       }),
     onSuccess: (task) => {
@@ -98,7 +101,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
   const projectBranch =
     projects.find((p) => p.id === selectedProjectId)?.defaultMergeBranch ?? "the project's default branch";
   const canCreate = Boolean(title.trim() && description.trim() && selectedProjectId);
-  const extrasFilled = [steerDetails, guardrails, criteria].filter((v) => v.trim()).length;
+  const extrasFilled = [steerDetails, guardrails, criteria].filter((v) => v.trim()).length + (blockedBy.length ? 1 : 0);
 
   return (
     <Modal
@@ -122,7 +125,10 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
     >
       <div className="space-y-4">
         <Field label="Project" required icon={ProjectsIcon}>
-          <Select value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
+          <Select value={selectedProjectId} onChange={(e) => {
+              setSelectedProjectId(e.target.value);
+              setBlockedBy([]);
+            }}>
             <option value="">Select a project…</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -263,7 +269,7 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
               </Badge>
             )}
             <span className="hidden text-xs font-normal text-text-muted sm:inline">
-              Steer details, guardrails, acceptance criteria
+              Steer details, guardrails, acceptance criteria, dependencies
             </span>
           </button>
           <div
@@ -309,6 +315,12 @@ export function CreateTaskModal({ projectId, onClose }: CreateTaskModalProps) {
                     value={criteria}
                     onChange={(e) => setCriteria(e.target.value)}
                   />
+                </Field>
+                <Field
+                  label="Starts after"
+                  hint="Nobody codes this task until these are complete (it can still be refined and planned)."
+                >
+                  <DependencyPicker projectId={selectedProjectId} value={blockedBy} onChange={setBlockedBy} />
                 </Field>
               </div>
             </div>

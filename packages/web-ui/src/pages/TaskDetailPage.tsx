@@ -53,6 +53,7 @@ import { PageBody, PageHeader } from "../components/PageHeader";
 import { ConversationEntryCard } from "../components/ConversationEntryCard";
 import { MarkdownRenderer } from "../components/MarkdownRenderer";
 import { EditableField, PropertyRow } from "../components/EditableField";
+import { TaskDependencies } from "../components/TaskDependencies";
 import { Skeleton } from "../components/Skeleton";
 import { ArchiveTaskModal } from "../components/ArchiveTaskModal";
 import { PrSyncNotice } from "../components/PrSyncNotice";
@@ -999,7 +1000,7 @@ export function TaskDetailPage() {
                 </ul>
               </Alert>
             )}
-            {(subtasks.length > 0 || task.parentId || task.blockedBy.length > 0) && (
+            {(subtasks.length > 0 || task.parentId || task.blockedBy.length > 0 || canEdit) && (
               <div className="card mb-4 p-4">
                 <h2 className="eyebrow mb-2">Related tasks</h2>
                 {task.parentId && (
@@ -1011,15 +1012,12 @@ export function TaskDetailPage() {
                     {task.held && " — waiting for its plan to be approved"}
                   </p>
                 )}
-                {task.blockedBy.length > 0 && (
-                  <p className="mt-1 text-sm text-text-secondary">
-                    Starts after:{" "}
-                    {task.blockedBy.map((id) => (
-                      <Link key={id} className="mr-2 font-mono text-xs text-primary underline" to={`/tasks/${id}/details`}>
-                        {id.slice(0, 8)}
-                      </Link>
-                    ))}
-                  </p>
+                {(task.blockedBy.length > 0 || canEdit) && (
+                  <TaskDependencies
+                    task={task}
+                    editable={canEdit}
+                    onSave={(blockedBy) => updateMutation.mutateAsync({ blockedBy })}
+                  />
                 )}
                 {subtasks.length > 0 && (
                   <ul className="mt-2 space-y-1.5">
