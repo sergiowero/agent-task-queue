@@ -3,7 +3,7 @@ name: mtq-plan
 description: Planning phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the mtq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
 allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_plan, mcp__mtq__create_subtask, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
 metadata:
-  version: "6.5.0"
+  version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -36,7 +36,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 ## Steps
 
 1. `cd {task.project.workingDirectory}`
-2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` and `brief.handoffs` (the refiner's notes, if any), see Context Reading in `mtq-claim`. Call `get_task` only if you need the whole conversation
+2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` and `brief.handoffs` (the refiner's notes, if any), see Context Reading in `mtq-claim`. Call `get_task` only if you need the whole conversation. `brief.dependencies` lists the tasks this one starts after: a task can be planned before they are complete (nobody codes it until they are), so plan on top of the work they describe and name in the plan what you rely on from each
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
 5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). The project's own commands (install, build, typecheck, lint, test) always run; add as regression commands only the extra ones that must keep passing (e.g. a focused test file)

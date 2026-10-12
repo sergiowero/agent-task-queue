@@ -52,11 +52,16 @@ A planner can split a task with `create_subtask` (with `blockedBy` naming earlie
 subtasks for order; never the task being split, whose completion waits for them,
 nor a canceled task). The subtasks are held until the parent's plan is approved
 (by a person, by the critic, or by a person resolving the plan's blocker to
-`ready_for_code`); then they run like any task (a blocked one waits for its
-dependencies to be complete) and the parent, in `split`, completes when they are
+`ready_for_code`); then they run like any task (one with dependencies waits for
+them to be complete, in every phase) and the parent, in `split`, completes when they are
 all finished. Re-planning drops the held subtasks of the previous plan. Every one
 of those approvals logs a `task_split` event that names the subtasks it released.
 
+- **Any task can start after others** of its project (`blockedBy`, set by a
+  person in the portal or by an agent with `create_task`, `add_dependency` and
+  `remove_dependency`). It is refined and planned meanwhile, but nobody codes it
+  until they are all complete; a subtask waits in every phase. See
+  [mcp.md](mcp.md#dependencies) for what the server refuses.
 - **Canceling a task cancels its unfinished subtasks** (their runner jobs are stopped).
 - **A dependency that will never complete** (canceled or deleted) sends each task
   queued after it to `needs_human`. Resolving that blocker drops the dead

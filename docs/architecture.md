@@ -125,7 +125,8 @@ Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-t
 - **report_blocker** — stops with a reason and a question: the task goes to `needs_human`
 - **heartbeat** — extends the lease of a claim made by a hand-opened session
 - **post_comment** — adds a note to a task without changing its status
-- **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement, draft)
+- **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement, draft, dependencies)
+- **add_dependency** / **remove_dependency** — make a task start after another of its project, or drop that dependency
 - **archive_task** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`pullRequests`, `overview`, `force`, `directory`)
 - **JSON results** — every tool returns `{ success, ... }` as text and structured content
 - **Direct database access** — no server dependency; `MTQ_DB_PATH` comes from the tool's MCP config
@@ -161,7 +162,7 @@ Scripts for one-click setup:
 A unit of work assigned to an agent. Contains:
 - **Identity**: UUID, title, description
 - **Guidance**: steerDetails (technical recommendations), guardrails (behavioral constraints), acceptanceCriteria (objects: id `ACn`, text, how it is verified, status, evidence ids)
-- **Subtasks**: parentId, blockedBy (claimable only when those are complete; a canceled or deleted one sends the task to `needs_human`), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths, size warnings). Canceling a task cancels its unfinished subtasks
+- **Subtasks and dependencies**: parentId, blockedBy (tasks of the same project it starts after: claimable for coding and later phases only when those are complete, a subtask in every phase; a canceled or deleted one sends the task to `needs_human`), held (waiting for the parent's plan approval), planSubmission (open questions, suggested risk, proposed subtasks, touched paths, size warnings). Canceling a task cancels its unfinished subtasks
 - **Scope**: type (with a description template and agent guidance per type), nonGoals, references, dorIssues (Definition-of-Ready problems found at creation or edit; projects choose warn, enforce or off)
 - **Handoffs**: structured notes between phases in `task_handoffs` (phase, round, agent, summary, decisions, risks, next); `contexts` keeps the plain summaries
 - **Evidence**: validationPlan, approvedPlan (frozen at approval), headSha, commits (the commit of every code submission, verification and PR, with its round and branch, read from the worktree by the server), diffStats, verification (the latest result with its evidence ids, tamper strikes and the tampering a person accepted; "not verified" while a new submission waits for the verifier), riskReasons, approval (who approved the code and the commit the PR ships); evidence rows live in `task_evidence`

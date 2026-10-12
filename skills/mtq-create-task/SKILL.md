@@ -1,9 +1,9 @@
 ---
 name: mtq-create-task
-description: Instructions for creating well-structured tasks in Moonlight Task Queue through the Moonlight Task Queue MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into a Moonlight Task Queue task for other agents to claim and execute.
-allowed-tools: mcp__mtq__list_projects, mcp__mtq__create_task
+description: Instructions for creating well-structured tasks in Moonlight Task Queue through the Moonlight Task Queue MCP server (`list_projects`, `list_tasks`, `create_task`, `add_dependency`, `remove_dependency`). Use when the user wants to create a task, break down work, formalize a request into an Moonlight Task Queue task for other agents to claim and execute, or make a task wait for another (dependencies).
+allowed-tools: mcp__mtq__list_projects, mcp__mtq__list_tasks, mcp__mtq__create_task, mcp__mtq__add_dependency, mcp__mtq__remove_dependency
 metadata:
-  version: "6.5.0"
+  version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -43,10 +43,15 @@ Call `create_task`:
   "nonGoals": ["<what the task deliberately does not do>"],
   "references": [{ "label": "<what it is>", "target": "<URL, file path or issue id>" }],
   "mergeBranch": "<only when the user names one>",
+  "blockedBy": ["<id of a task of the same project this one starts after>"],
   "context": "<initial context entry, optional>" }
 ```
 
 Mandatory: `title`, `projectId`, `description`. Omit `mergeBranch` to use the project's default branch (detected from `origin/HEAD`, usually `main`). The task starts in `plan_requested` when `requiresPlan` is true, otherwise in `ready_for_code`. The result is `{ "success": true, "task": { "id": "...", "status": "...", "project": {...}, ... } }`; on failure `{ "success": false, "error": "..." }`.
+
+### Dependencies
+
+A task can start after other tasks of the same project: pass their ids in `blockedBy` when you create it, or change an existing task with `add_dependency` / `remove_dependency` (`{ "taskId": "<the task that waits>", "dependsOn": "<the task it starts after>" }`, result `{ "success": true, "taskId", "status", "blockedBy" }`). Find the ids with `list_tasks` (`{ "projectId": "<projectId>" }`). The task can be refined and planned meanwhile, but nobody codes it until every dependency is `complete` (its PR merged). The server refuses a canceled or already complete task, another project's task, the task's parent or subtasks, a cycle, and changes while an agent holds the task.
 
 ## Protocol
 
@@ -92,6 +97,8 @@ Take what the user described and produce a complete, well-structured task.
   - `docs/` for documentation
 - **Requires plan**: Set to `true` for complex or multi-step tasks, `false` for simple ones.
 
+**Order:** when the user says a task must wait for other work (or you create several tasks where one needs another's code), set `blockedBy` to those tasks. Only use ids you got from `list_tasks` or from a `create_task` result.
+
 ### 3. Create the Task
 
 Call `create_task` with the elaborated fields (see Create a Task). `description` holds the functional requirements only; steer details, guardrails and acceptance criteria go in their own fields. Confirm to the user that the task was created, with its `id` and initial status.
@@ -131,7 +138,7 @@ When writing the description, use this structure:
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use the Moonlight Task Queue MCP tools only (`list_projects`, `create_task`)
+- **NEVER** use API calls (HTTP/curl/fetch) — use the Moonlight Task Queue MCP tools only (`list_projects`, `list_tasks`, `create_task`, `add_dependency`, `remove_dependency`)
 - **DO NOT** claim or execute the task — this skill is only for creating tasks
 - **DO NOT** call `claim_task` or the `submit_*` tools — those belong to the `mtq-claim` skill
 - **DO** elaborate descriptions and acceptance criteria — always add value beyond what the user provided

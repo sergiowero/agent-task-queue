@@ -327,6 +327,7 @@ The `mtq` MCP server exposes the whole agent protocol as typed tools. In Claude 
 | `post_comment` | Add a note to a task without changing its status |
 | `get_skill` | Read the current text and version of a Moonlight Task Queue skill |
 | `list_projects`, `create_task` | Create well-formed tasks |
+| `add_dependency`, `remove_dependency` | Make a task wait for another before anyone codes it, or drop that dependency |
 | `archive_task` | Archive a complete task to Markdown |
 
 Every `submit_*` call takes a `context` (required on all but `submit_verification`): short handoff notes for the agent of the next phase, with optional `decisions`, `risks` and `next` lists. Resources `mtq://task/{taskId}`, `mtq://projects` and `mtq://skills/{name}` are also available, and the skills are registered as prompts. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
