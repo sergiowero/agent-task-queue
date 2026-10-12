@@ -34,6 +34,12 @@ describe("resolvePolicy", () => {
     expect(p.code).toBe("human");
     expect(p.maxReviewRounds).toBe(5);
   });
+
+  it("the built-in verifier verifies unless the project chooses an agent", () => {
+    expect(resolvePolicy(null).verifier).toBe("builtin");
+    expect(resolvePolicy({ policy: { maxReviewRounds: 5 } }).verifier).toBe("builtin");
+    expect(resolvePolicy({ policy: { verifier: "agent" } }).verifier).toBe("agent");
+  });
 });
 
 describe("routing", () => {
@@ -64,6 +70,15 @@ describe("routing", () => {
     expect(afterCode(task(), resolvePolicy({ autonomy: 0 }))).toBe(TaskStatus.WaitingCodeReview);
     for (const level of [1, 2, 3] as AutonomyLevel[]) {
       expect(afterCode(task(), resolvePolicy({ autonomy: level }))).toBe(TaskStatus.CodeReviewRequested);
+    }
+  });
+
+  it("code a verifier will take is verified first, at every level and whoever verifies", () => {
+    for (const level of [0, 1, 2, 3] as AutonomyLevel[]) {
+      for (const verifier of ["builtin", "agent"] as const) {
+        const p = resolvePolicy({ autonomy: level, policy: { verifier } });
+        expect(afterCode(task(), p, { verify: true })).toBe(TaskStatus.VerifyRequested);
+      }
     }
   });
 

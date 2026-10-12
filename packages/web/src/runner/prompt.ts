@@ -152,6 +152,8 @@ export interface BuildPromptInput {
   role: Role;
   /** The job's claim: every submit for this task must carry it. */
   claimToken?: string;
+  /** The task's worktree, when the job starts in it instead of the project's working directory (reviews and verifications do). */
+  worktree?: string;
   /** Overrides the skill body read from disk (tests). */
   phaseSkill?: string;
 }
@@ -185,7 +187,11 @@ export function buildPrompt(input: BuildPromptInput): string {
     `You are an AgentQ agent working the **${role}** role (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
     `Task \`${task.id}\` has ALREADY been claimed for you by the runner. Do **NOT** call \`claim_task\`.`,
     `Current status: \`${task.status}\` (phase: ${phase}).`,
-    project ? `Project working directory: \`${project.workingDirectory}\` (you are running inside it).` : "",
+    project
+      ? input.worktree
+        ? `You are running inside the task's worktree \`${input.worktree}\` (project working directory: \`${project.workingDirectory}\`).`
+        : `Project working directory: \`${project.workingDirectory}\` (you are running inside it).`
+      : "",
     "",
     "## AgentQ MCP tools",
     "",

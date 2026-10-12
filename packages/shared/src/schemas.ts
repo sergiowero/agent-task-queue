@@ -83,6 +83,7 @@ export const policySettingsSchema = z
     reviewStarvationMin: ranged(POLICY_RANGES.reviewStarvationMin),
     leaseMin: ranged(POLICY_RANGES.leaseMin),
     autoMerge: z.boolean(),
+    verifier: z.enum(["builtin", "agent"]),
   })
   .partial()
   .strict();

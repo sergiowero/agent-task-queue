@@ -124,7 +124,7 @@ The API has no login, so it only serves you: the server listens on `127.0.0.1`, 
      > Work the AgentQ queue.
 
      The `agentq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty. Use a second session for the critique and the review.
-4. **Let it run.** At L2 an AI critic reviews the plan and an AI reviewer the code, change requests go back to the coder with findings tracked by id, and the built-in verifier runs the project's commands before any review. A task comes to **Needs you** only when a person has to decide: a plan of medium or high risk, the code of a high-risk task, a question an agent escalated (or a limit it hit), and the pull request. The task page puts the AI verdict, the verification, the diff size and the criteria in one panel to decide on. Want to approve every plan and every change yourself? Set the project to **L0** under **Projects → Edit → Autonomy**.
+4. **Let it run.** At L2 an AI critic reviews the plan and an AI reviewer the code, change requests go back to the coder with findings tracked by id, and the built-in verifier (or an agent with the `verify` role, if you choose one under **Projects → Edit → Autonomy**) runs the project's commands before any review. A task comes to **Needs you** only when a person has to decide: a plan of medium or high risk, the code of a high-risk task, a question an agent escalated (or a limit it hit), and the pull request. The task page puts the AI verdict, the verification, the diff size and the criteria in one panel to decide on. Want to approve every plan and every change yourself? Set the project to **L0** under **Projects → Edit → Autonomy**.
 5. **Merge and finish.** The agent pushes the branch and opens the pull request: review and merge it on GitHub. With `gh` logged in, AgentQ sees the merge and completes the task (without `gh`, click **Mark merged**). Then **Archive** the task to save the whole story as Markdown in the repo.
 
 ## Two ways to run agents
@@ -146,12 +146,14 @@ Both go through the same MCP server, the same SQLite database and the same workf
 | Gemini CLI | ✅ | | ✅ `gemini` |
 | GitHub Copilot CLI | ✅ | | via `custom` |
 | GitHub Copilot in VS Code | ✅ | | |
-| Kimi Code, Junie | manual | ✅ | via `custom` |
+| Kimi Code, Junie | manual (`bun run mcp`) | ✅ | via `custom` |
 | Any other MCP client | manual (`bun run mcp`) | | via `custom` |
+
+Both installers only touch tools that are on the machine, and use the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` move them). Gemini CLI and Copilot read the skills through the `get_skill` MCP tool instead of a skills folder. Details in [docs/mcp.md](docs/mcp.md#setup).
 
 ## The workflow
 
-A task moves through these states. At the default autonomy level (**L2**) agents move it along: a critic agent decides plans and a reviewer agent decides code, so the edges labelled `you` leave the states that wait in your **Needs you** inbox. Some edges depend on the level (`L0`, `L1+`, `L2+`) and on the task: a critic's approval skips you only for a low-risk plan, code goes to verification first when the project has commands to run, and a reviewer's approval skips you unless the task is high risk or the approval is picked for a spot check. See [Autonomy](#autonomy) for the levels.
+A task moves through these states. At the default autonomy level (**L2**) agents move it along: a critic agent decides plans and a reviewer agent decides code, so the edges labelled `you` leave the states that wait in your **Needs you** inbox. Some edges depend on the level (`L0`, `L1+`, `L2+`) and on the task: a critic's approval skips you only for a low-risk plan, code goes to verification first when the project has commands to run (or always, when it is set to agent verification), and a reviewer's approval skips you unless the task is high risk or the approval is picked for a spot check. See [Autonomy](#autonomy) for the levels.
 
 ```mermaid
 stateDiagram-v2
@@ -175,7 +177,7 @@ stateDiagram-v2
     plan_changes_requested --> planning: plan role claims
     split --> complete: subtasks finished
     ready_for_code --> coding: code role claims
-    coding --> verify_requested: submit_code (commands to run)
+    coding --> verify_requested: submit_code (commands to run, or agent verification)
     coding --> code_review_requested: submit_code (L1+)
     coding --> waiting_code_review: submit_code (L0)
     verify_requested --> verifying: verify role claims
@@ -247,11 +249,11 @@ Each project has an autonomy level (L0–L3, default **L2**; a task can override
 | **L2** Human PR (default) | AI critic, then you unless the task is low risk | AI reviewer | You |
 | **L3** Autonomous | AI critic, then you unless the task is low risk | AI reviewer | You, or auto-merge when green and low risk |
 
-From L2 up a critic agent reviews each plan: approve sends a low-risk plan straight to coding and anything riskier to you, and request changes goes back to the planner. After two critiques that ask for changes, or when the plan has a blocking question or the critic cannot decide, you decide. From L1 up, `submit_code` goes straight to an AI review (after verification, when the project has commands), and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and you decide after three rounds, when the reviewer keeps reopening a finding the coder answered, when it asks a question, for a high-risk task, or for an approval picked for a spot check (every Nth, off by default). Nobody critiques, verifies or reviews their own plan or code, in any round: a second runner (or agent session) that can do it picks it up, the Runners page warns when no runner may, and a critique or review nobody takes within 20 minutes comes to you. L0 keeps every gate human. Every number is a setting under **Projects → Edit → Autonomy**. See [docs/policy.md](docs/policy.md).
+From L2 up a critic agent reviews each plan: approve sends a low-risk plan straight to coding and anything riskier to you, and request changes goes back to the planner. After two critiques that ask for changes, or when the plan has a blocking question or the critic cannot decide, you decide. From L1 up, `submit_code` goes straight to an AI review (after verification, when the project has commands), and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and you decide after three rounds, when the reviewer keeps reopening a finding the coder answered, when it asks a question, for a high-risk task, or for an approval picked for a spot check (every Nth, off by default). Nobody critiques, verifies or reviews their own plan or code, in any round: a second runner (or agent session) that can do it picks it up, the Runners page warns when no runner may, and a critique or review nobody takes within 20 minutes comes to you. L0 keeps every gate human. Every number is a setting under **Projects → Edit → Autonomy**, where you also choose who verifies code (the built-in verifier, or an agent). See [docs/policy.md](docs/policy.md).
 
 The task ends on GitHub. The agent with the `pr` role opens the PR with a body AgentQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you, and a change request (on GitHub, or **Request changes** on the task page) sends it back to the coder: the fix goes through verification and review again and lands on the same PR. Without `gh`, or with `AGENTQ_PR_SYNC=0`, nothing follows the PR: the task page and **Needs you** say so, and you click **Mark merged** once it is merged (the task page also shows when GitHub was last checked, and what `gh` reported when it failed on that PR). At **L3** with `autoMerge`, green low-risk PRs merge themselves, as long as their head is the commit the review approved. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
-Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds before any reviewer spends time on them. The server also reads every submission's diff itself: weakened tests go straight back to the coder, and changes to protected paths or an oversized diff raise the task's risk to high, so a person reviews the code too, with or without commands. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
+Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds before any reviewer spends time on them. A project can hand that step to an agent with the `verify` role instead (**Projects → Edit → Autonomy → Who verifies code**); that agent never verifies its own code. Whoever verifies, the server also reads every submission's diff itself: weakened tests go straight back to the coder, and changes to protected paths or an oversized diff raise the task's risk to high, so a person reviews the code too, with or without commands. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
 
 ### Roles
 
@@ -263,7 +265,7 @@ A role is a phase. An agent or runner has **one or more** roles and claims the t
 | `plan` | `plan_requested`, `plan_changes_requested` | Reads the repo and writes the plan with its validation plan; splits big work into subtasks |
 | `plan_review` | `plan_review_requested` | Critiques plans (L2+); a low-risk plan it approves goes straight to coding |
 | `code` | `ready_for_code`, `changes_requested` | Codes in the task worktree with tests and evidence, and commits |
-| `verify` | `verify_requested` | Runs the verification commands (the server has a built-in verifier) |
+| `verify` | `verify_requested` | Runs the verification commands (the server has a built-in verifier; a project can choose an agent instead) |
 | `review` | `code_review_requested` | Reviews the commits; the verdict routes the task |
 | `pr` | `approved` | Pushes the branch and opens the PR |
 
@@ -296,8 +298,8 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 
 - **Model and effort**: type any model id the tool accepts, or leave it empty to use the tool's default; pick an effort level for tools that have one.
 - **Live logs**: follow every job's output from the Runners page.
-- **`safe` mode** (default): file edits, a fixed allow-list of commands (`git`, `gh`, `bun`, `npm`...) and only the MCP tools the phase needs.
-- **`full` mode**: no permission prompts and no sandbox. Use only on repositories you trust the agent with unattended.
+- **`safe` mode** (default): each role gets only what it needs. Only the coder edits files; planners and critics only read (Codex: read-only sandbox), reviews and verifications also re-run the project's own commands in the task's worktree (any language: the commands come from **Projects → Edit → Commands**), and the `pr` role runs `git` and `gh` but never commits or merges. Every role gets only the MCP tools of its phase. Claude Code and Codex enforce this; OpenCode, Gemini and custom runners have no per-role limits (see [docs/runner.md](docs/runner.md#permission-modes)).
+- **`full` mode**: no permission prompts, no sandbox and no per-role limits. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
 - **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$AGENTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`.
 
@@ -405,7 +407,7 @@ No. AgentQ is a local Bun process and a SQLite file. The only network traffic co
 <details>
 <summary><b>Do agents need the web server running?</b></summary>
 
-No. The MCP server writes directly to the database, and the dashboard picks up agent changes as soon as it is open. Whatever lives inside the web server needs it: runners, the built-in verifier (without it, code goes to review marked as not verified), the PR sync and the sweeper that returns expired claims to the queue.
+No. The MCP server writes directly to the database, and the dashboard picks up agent changes as soon as it is open. Whatever lives inside the web server needs it: runners, the built-in verifier (without it, code goes to review marked as not verified, except in a project set to agent verification, which waits for an agent you open), the PR sync and the sweeper that returns expired claims to the queue.
 </details>
 
 <details>

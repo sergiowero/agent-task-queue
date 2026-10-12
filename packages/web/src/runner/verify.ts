@@ -10,7 +10,9 @@ import { hostname } from "os";
 import { join } from "path";
 import type { NewEvidence, Project, SubmitVerificationInput, Task } from "@agentq/shared";
 import {
+  BUILTIN_VERIFIER_AUTHOR,
   DEFAULT_VERIFY_ALLOWLIST,
+  VERIFIER_RUNNER_ID,
   analyzeDiff,
   claimNextTask,
   getProjectById,
@@ -27,8 +29,6 @@ import { runsDir } from "./commands.js";
 
 const IS_WINDOWS = process.platform === "win32";
 const SUMMARY_LINES = 40;
-
-export const VERIFIER_RUNNER_ID = "builtin:verifier";
 
 export interface VerifyCommand {
   command: string;
@@ -297,7 +297,10 @@ export interface VerifyWorkerOptions {
   run?: typeof runVerification;
 }
 
-/** Claims `verify_requested` tasks one at a time and verifies them. */
+/**
+ * Claims `verify_requested` tasks one at a time and verifies them. Projects whose policy
+ * hands verification to an agent (`verifier: "agent"`) are left alone: the claim skips them.
+ */
 export class VerifyWorker {
   private readonly broadcast: (event: string, data: unknown) => void;
   private readonly intervalMs: number;
@@ -370,7 +373,7 @@ export class VerifyWorker {
       try {
         const project = claimed.task.projectId ? getProjectById(claimed.task.projectId) : null;
         const report = await this.run(claimed.task, project);
-        submitVerification(claimed.task.id, { ...report, claimToken: claimed.claimToken, author: "runner:verify" });
+        submitVerification(claimed.task.id, { ...report, claimToken: claimed.claimToken, author: BUILTIN_VERIFIER_AUTHOR });
         verified = claimed.task.id;
       } catch (e: any) {
         revertClaim(claimed.task.id, `The verifier failed: ${e?.message ?? e}`);

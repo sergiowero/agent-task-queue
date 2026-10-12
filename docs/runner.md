@@ -56,7 +56,7 @@ config to `<jobId>.mcp.json` next to it, and runs:
 | Tool | Command |
 |------|---------|
 | `claude` | `claude -p <prompt> --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
-| `codex` | `codex exec --full-auto -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` |
+| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.agentq.command=… -c mcp_servers.agentq.args=… -c mcp_servers.agentq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
 | `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
 | `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
 | `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$AGENTQ_PROMPT` |
@@ -66,7 +66,11 @@ Every child gets `AGENTQ_TASK_ID`, `AGENTQ_ROLE`, `AGENTQ_PROMPT_FILE`,
 database) in its environment. `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` are removed so a runner started
 from inside a Claude Code session does not trip the nested-session guard. The working
 directory is the project's `workingDirectory` (with `~` expanded); if it does not exist
-the task is released immediately and the job is marked reverted.
+the task is released immediately and the job is marked reverted. A **code review or
+verification** job starts in the task's worktree instead (`task.worktreePath`), so what it
+runs and writes stays out of the main checkout; the runner only does so when that folder
+exists and lies inside the project's working directory (the path is the coder's word), and
+the prompt says where the job is.
 
 ### The AgentQ MCP server in every job
 
@@ -112,19 +116,55 @@ Empty means the tool's default effort.
 
 ### Permission modes
 
-- **safe** (default) — the tool may edit files, run a fixed allow-list of commands and
-  call the AgentQ tools a claimed job needs. For Claude Code: `--permission-mode
-  acceptEdits --allowedTools mcp__agentq__get_task mcp__agentq__post_comment
-  mcp__agentq__submit_plan mcp__agentq__submit_code mcp__agentq__submit_review
-  mcp__agentq__submit_pr mcp__agentq__submit_merge "Bash(git:*)" "Bash(gh:*)" "Bash(bun:*)" "Bash(npm:*)"
-  "Bash(npx:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(grep:*)" "Bash(find:*)" Edit Write Read
-  Glob Grep`. `claim_task`, `create_task`, `list_tasks` and `archive_task` are not
-  allowed: the runner already claimed the task. Codex runs with `--full-auto` (sandboxed
-  workspace-write; its MCP servers run outside the sandbox, so the AgentQ server can write
-  the database).
-- **full** — no prompts, no sandbox: Claude gets `--dangerously-skip-permissions`, Codex
-  `--dangerously-bypass-approvals-and-sandbox`. Use only for repositories you trust the
-  agent to operate in unattended.
+- **safe** (default) — the tool gets what the job's **role** needs and no more. Only the
+  coder changes files; the roles that critique, review or verify never do:
+
+  | Role | Changes files | Claude Code | Codex |
+  |------|:---:|-------------|-------|
+  | `refine`, `plan`, `plan_review` | no | `Read Glob Grep` and a read-only shell: `git log`, `diff`, `show`, `status`, `rev-parse`, `rev-list`, `merge-base`, `ls-files`, `blame`, `branch --show-current`, `ls`, `cd`. No `bun`, `npm`, `npx`, `find` or `cat` (nothing that runs or deletes) | `--sandbox read-only` (no writes, no network) |
+  | `review`, `verify` | no | The same, plus the project's commands **exactly as configured** (below). They start in the task's worktree | `--sandbox workspace-write`, no network for a review, network for a verification (its `install` command) |
+  | `pr` | no | `git`, `gh`, `ls`, `cd`. Denied: `git commit`, `add`, `rm`, `mv`, `reset`, `checkout`, `switch`, `restore`, `clean`, `stash`, `merge`, `rebase`, `cherry-pick`, `apply`, `am` and `gh pr merge` | `--sandbox workspace-write` with network (push, `gh`) |
+  | `code` | yes | `Edit Write Read Glob Grep`, `git`, `gh`, `bun`, `npm`, `npx`, `ls`, `cat`, `grep`, `find`, and the program of each of the project's commands (`pytest`, `make`, `cargo`...) | `--sandbox workspace-write` with network (dependency installs) |
+
+  For Claude Code every role gets `--allowedTools` with only the AgentQ tools of its
+  phase (`get_task`, `get_task_brief`, `get_skill`, `post_comment`, `report_blocker`
+  and its own `submit_*`; the planner also `create_subtask`): `claim_task`, `create_task`,
+  `list_tasks` and `archive_task` are never allowed, since the runner already claimed
+  the task. The roles that do not edit also get `--disallowedTools Edit Write
+  NotebookEdit`, which wins over any allow rule or permission mode in your own Claude
+  settings, and only the coder is started with `--permission-mode acceptEdits`. Codex
+  MCP servers run outside its sandbox, so the AgentQ server can write the database in
+  every role. A role this file does not know gets the read-only profile.
+
+  **What a review or verification may run.** The project's commands (**Projects → Edit →
+  Commands**), the approved plan's `regressionCommands` and the commands of its items and
+  criteria: the same ones, under the same trust rule, as the built-in verifier (a plan
+  that a person approved, or a command that starts with an allowlisted prefix; see
+  [Verification](#verification)). Each simple command of them (`a && b | c` is `a`, `b` and
+  `c`) becomes a rule that matches exactly that command, e.g. `Bash(pytest -q)` or `Bash(make
+  lint)`: no arguments can be appended, and no interpreter or package runner is allowed, so
+  a job that must not write code cannot run new code either. That works for any language,
+  not only `bun`/`npm`. A command with quotes, globs, substitutions or redirections gets no
+  rule. The coder additionally gets a wildcard rule for the program of each command (except
+  shells, `rm` and the like, which only get the exact rule).
+
+  The Bash rules are not a sandbox: they stop a tool from running what its role does not
+  need, but a program you allowed still does what it does (a test suite can write files).
+  The server also reads the worktree itself on `submit_code` and `submit_verification`.
+  **`opencode`, `gemini` and `custom` runners have no per-role limits**: they run with
+  their usual automatic-approval flag whatever the role, and what a role must not do is
+  only in the prompt. Use Claude Code or Codex for the roles that must not edit (`plan`,
+  `plan_review`, `review`, `verify`).
+
+  Codex's `workspace-write` sandbox has no network unless
+  `sandbox_workspace_write.network_access` is on, which the runner turns on for the
+  roles that need it (`code`, `verify`, `pr`). A `git push` may still need credentials
+  the sandbox cannot reach (an SSH agent, the keychain): if the `pr` phase fails inside the
+  sandbox, give the runner that has the `pr` role mode `full`. The runner passes
+  `--sandbox` instead of `--full-auto`, which current Codex releases no longer accept.
+- **full** — no prompts, no sandbox, no per-role limits: Claude gets
+  `--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`.
+  Use only for repositories you trust the agent to operate in unattended.
 
 ### The prompt
 
@@ -195,7 +235,8 @@ the artifact, and a claim never returns the plan critique, verification or revie
 of a plan or code the same runner wrote in any round. On an L1+ project a runner
 with both `code` and `review` therefore needs a second runner with `review` (on
 another model when the project sets `requireDifferentModel`; a runner with no
-model runs its tool's default, which differs from another tool's). The Runners page
+model runs its tool's default, which differs from another tool's). The same holds for
+the `verify` role in a project set to agent verification. The Runners page
 warns, per project, when no enabled runner may take such a check. Reviews nobody
 eligible picks up go to a person after the project's `reviewStarvationMin`.
 
@@ -204,8 +245,9 @@ and a claim from the job would not carry the runner's identity.
 
 When the server starts, tasks that a runner job held when the server went down
 go back to the queue (`recoverOrphans`), before any runner claims again. The
-server also sweeps every minute: expired leases of hand-opened sessions and
-starved reviews (see [policy.md](policy.md)).
+server also sweeps every minute: expired leases of hand-opened sessions, starved
+reviews and code nobody verified (see [policy.md](policy.md)), and records its
+heartbeat.
 
 ### Claim tokens
 
@@ -274,11 +316,42 @@ it, runs the commands in the task's worktree and routes it:
   failure count and the tamper strikes. A missing worktree goes to `needs_human` without
   counting a failure.
 
-Until the verifier reports, the task shows "Waiting for the verifier", never the previous
-submission's result. Without commands, or when the verifier is not running (it writes a
-heartbeat every 30 s, also while a long verification runs; MCP-only setups have no web
-server), the code goes straight to review and the task notes that it was not verified.
+Until the verifier reports, the task shows "Waiting for the verifier" (or "Waiting for a
+verifier agent"), never the previous submission's result. Without commands the code goes
+straight to review and the task notes that it was not verified; so it does when the
+verifier is not running (it writes a heartbeat every 30 s, also while a long verification
+runs; MCP-only setups have no web server), unless a runner can take over (next section).
 `AGENTQ_VERIFY_WORKER=0` turns the verifier off. The Runners page shows its status.
+Code that waits for the built-in verifier after its heartbeat stopped goes on to review,
+not verified, after 5 minutes (the sweeper).
+
+### Verification by an agent
+
+A project can hand verification to an agent: **Projects → Edit → Autonomy → Who verifies
+code** (the policy's `verifier: "agent"`, see [policy.md](policy.md#who-verifies)). Its
+code always goes to `verify_requested`, with or without commands, and the built-in
+verifier's claim skips it, so the agent with the `verify` role gets it: a runner with that
+role (its job starts in the task's worktree with the `agentq-verify` skill, and may run
+the same commands the built-in verifier would; see [Permission modes](#permission-modes)),
+or a session someone opens. The agent runs the commands its brief names and reports
+`evidence` with `submit_verification`. The server does not take its word for the rest:
+it reads the worktree's diff itself (weakened tests are red even if the report has none,
+protected paths and a large diff raise the risk, `diffStats` is recorded), and it
+attributes the evidence to the agent's own id from its claim, not to `runner:verify`.
+
+The agent is never the one that wrote the code, nor, under `requireDifferentModel`, on
+its model: the claim refuses it, so a runner with both `code` and `verify` never verifies
+its own code and the Runners page warns when no other runner may. Code nobody takes
+within the project's `reviewStarvationMin` goes on to review, marked as not verified
+(0 = keep waiting).
+
+A runner with the `verify` role also takes over in a project that uses the built-in
+verifier, while that verifier is off (`AGENTQ_VERIFY_WORKER=0`): a submit then sends the
+code to `verify_requested` when an enabled runner with the role may take it and the web
+server is up. The server says it is up with a `server_heartbeat` its sweep writes every
+minute (three missed beats, or a clean shutdown, count as down), so a runner left
+enabled in a stopped server is never counted on. The heartbeat is the server's; MCP
+processes only read it.
 
 ## Environment variables
 
@@ -287,7 +360,7 @@ server), the code goes straight to review and the task notes that it was not ver
 | `AGENTQ_HOME` | `~/.agentq` | Root for run artifacts (`<home>/runs/<taskId>/<jobId>.log` and `.prompt.md`) |
 | `AGENTQ_JOB_TIMEOUT_MIN` | `60` | Kill a job that runs longer than this and release its task |
 | `AGENTQ_MAX_REVERTS` | `3` | Consecutive runs without a submit after which the task goes to `needs_human` |
-| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off |
+| `AGENTQ_VERIFY_WORKER` | on | `0` turns the built-in verifier off: a runner with the `verify` role takes over when one can, else code goes to review not verified (projects set to agent verification are unaffected) |
 | `AGENTQ_DB_PATH` | `~/.agentq/agentq.db` | Database; every job's AgentQ MCP server is bound to it |
 | `AGENTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv (tool `custom`, or `extraArgs` on any tool) |
 

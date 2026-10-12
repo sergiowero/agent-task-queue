@@ -117,7 +117,6 @@ export {
   pullRequestClosed,
   recordPullRequest,
   editTask,
-  verifierOnline,
   hasVerificationCommands,
   raiseRisk,
   reportBlocker,
@@ -183,6 +182,7 @@ export {
   type Gate,
   type GatePolicy,
   type PolicySettings,
+  type VerifierMode,
   type ReviewRouting,
   type RoundChip,
   type RoutingTask,
@@ -190,6 +190,7 @@ export {
 
 export {
   separationGaps,
+  verifyRunners,
   type SeparationGap,
   type SeparationProject,
   type SeparationRunner,
@@ -212,6 +213,18 @@ export {
   type NewFinding,
   type FindingSource,
 } from "./records.js";
+
+export {
+  verifierOnline,
+  recordServerHeartbeat,
+  markServerOffline,
+  serverOnline,
+  agentVerifierAvailable,
+  verifierFor,
+  verifyWait,
+  VERIFY_WAIT_MIN,
+  type VerifyWait,
+} from "./verifier.js";
 
 export { sweepQueue, type SweepResult } from "./sweeper.js";
 

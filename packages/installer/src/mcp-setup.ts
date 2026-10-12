@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "path";
 import type { McpServerLaunch } from "@agentq/mcp";
 import { MCP_SERVER_NAME } from "@agentq/mcp";
+import { claudeHome, codexHome, opencodeHome, xdgConfigHome } from "@agentq/shared/tool-paths";
 
 /**
  * Registers the AgentQ MCP server in the user-level config of every installed
@@ -126,8 +127,8 @@ const codexTarget: ToolTarget = {
   tool: "codex",
   label: "Codex",
   binary: "codex",
-  configPath: (e) => join(e.env.CODEX_HOME || join(e.homeDir, ".codex"), "config.toml"),
-  homeMarker: (e) => e.env.CODEX_HOME || join(e.homeDir, ".codex"),
+  configPath: (e) => join(codexHome(e.env, e.homeDir), "config.toml"),
+  homeMarker: (e) => codexHome(e.env, e.homeDir),
   entry: (launch) => ({ command: launch.command, args: launch.args, env: launch.env }),
   read(content) {
     if (!content) return undefined;
@@ -156,16 +157,13 @@ const codexTarget: ToolTarget = {
 
 // ─── Targets ───────────────────────────────────────────────────────────
 
+/** Where Claude Code keeps `.claude.json`: `$CLAUDE_CONFIG_DIR`, else the home folder itself. */
 function claudeDir(e: SetupEnv): string {
   return e.env.CLAUDE_CONFIG_DIR || e.homeDir;
 }
 
-function xdgConfigHome(e: SetupEnv): string {
-  return e.env.XDG_CONFIG_HOME || join(e.homeDir, ".config");
-}
-
 function opencodeDir(e: SetupEnv): string {
-  return join(xdgConfigHome(e), "opencode");
+  return opencodeHome(e.env, e.homeDir);
 }
 
 function copilotDir(e: SetupEnv): string {
@@ -180,7 +178,7 @@ function vscodeUserDir(e: SetupEnv): string {
   if (e.platform === "darwin") {
     return join(e.homeDir, "Library", "Application Support", "Code", "User");
   }
-  return join(xdgConfigHome(e), "Code", "User");
+  return join(xdgConfigHome(e.env, e.homeDir), "Code", "User");
 }
 
 export const TARGETS: ToolTarget[] = [
@@ -191,8 +189,7 @@ export const TARGETS: ToolTarget[] = [
       binary: "claude",
       // User-scoped servers live in ~/.claude.json (or $CLAUDE_CONFIG_DIR/.claude.json).
       configPath: (e) => join(claudeDir(e), ".claude.json"),
-      homeMarker: (e) =>
-        e.env.CLAUDE_CONFIG_DIR ? e.env.CLAUDE_CONFIG_DIR : join(e.homeDir, ".claude"),
+      homeMarker: (e) => claudeHome(e.env, e.homeDir),
       entry: (launch) => ({
         type: "stdio",
         command: launch.command,
@@ -280,7 +277,7 @@ function sameJson(a: unknown, b: unknown): boolean {
 const AGENTQ_ONLY_ENTRIES = new Set(["skills"]);
 
 /** The tool's home exists and holds something the tool itself wrote. */
-function hasToolData(dir: string): boolean {
+export function hasToolData(dir: string): boolean {
   if (!existsSync(dir)) return false;
   try {
     return readdirSync(dir).some((name) => !AGENTQ_ONLY_ENTRIES.has(name));

@@ -41,6 +41,8 @@ import {
   getHandoffs,
   editTask,
   detectProjectCommands,
+  markServerOffline,
+  recordServerHeartbeat,
   verifierOnline,
   sweepQueue,
   requestAiReview,
@@ -419,6 +421,24 @@ export function startServer(opts: StartServerOptions = {}) {
   return server;
 }
 
+/**
+ * The server's housekeeping, every minute: it beats (the MCP servers read the beat to know that
+ * the runners are up, so code can wait for one of them to verify it), then expired claims of
+ * silent sessions, reviews nobody eligible picked up and code nobody verified move on.
+ */
+export function sweep(): void {
+  try {
+    recordServerHeartbeat();
+    const { expired, starved, unverified } = sweepQueue();
+    for (const id of [...expired, ...starved, ...unverified]) {
+      const task = getTaskById(id);
+      if (task) broadcastSSE("task_updated", task);
+    }
+  } catch (e) {
+    console.error("[sweeper]", e);
+  }
+}
+
 async function main() {
   if (isDev) {
     console.log("[server] starting in dev mode, launching Vite...");
@@ -434,6 +454,10 @@ async function main() {
     verifyWorker.stop();
     prSync.stop();
     await runnerEngine.shutdown();
+    // The runners are gone with the server: code no longer waits for one of them to verify it.
+    try {
+      markServerOffline();
+    } catch {}
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());
@@ -447,18 +471,6 @@ async function main() {
   if (process.env.AGENTQ_VERIFY_WORKER !== "0") verifyWorker.start();
   // Completes tasks whose PR was merged on GitHub (needs the gh CLI, logged in).
   if (process.env.AGENTQ_PR_SYNC !== "0") prSync.start();
-  // Expired claims of silent sessions and reviews nobody eligible picked up.
-  const sweep = () => {
-    try {
-      const { expired, starved } = sweepQueue();
-      for (const id of [...expired, ...starved]) {
-        const task = getTaskById(id);
-        if (task) broadcastSSE("task_updated", task);
-      }
-    } catch (e) {
-      console.error("[sweeper]", e);
-    }
-  };
   sweep();
   setInterval(sweep, 60_000);
 

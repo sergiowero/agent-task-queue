@@ -116,12 +116,39 @@ without at least one open finding. The same holds for a plan critique's `approve
 
 ## Verification
 
-Before any review, the built-in verifier runs the project's commands and the approved
-plan's checks in the task's worktree (see [runner.md](runner.md#verification)). Red goes
-back to the coder with the evidence; red `maxVerifyFailures` times in a row, or tests
-weakened twice, goes to a person. A run where no command that checks the code ran is
-"not verified", never green. Touching protected paths or a large diff raises the risk
-to high. Green continues to the review gate of the level.
+Before any review, a verifier runs the project's commands and the approved plan's checks
+in the task's worktree: the server's built-in verifier (see
+[runner.md](runner.md#verification)), or an agent with the `verify` role when the project
+chooses one (below). Red goes back to the coder with the evidence; red `maxVerifyFailures`
+times in a row, or tests weakened twice, goes to a person. A run where no command that
+checks the code ran is "not verified", never green. Touching protected paths or a large
+diff raises the risk to high. Green continues to the review gate of the level.
+
+### Who verifies
+
+The project's `verifier` setting (**Projects → Edit → Autonomy → Who verifies code**)
+decides:
+
+- **`builtin`** (default): the built-in verifier, when the project has commands to run and
+  it is running (a runner with the `verify` role may still pick up code it has not claimed
+  yet). While it is not running (`AGENTQ_VERIFY_WORKER=0`), an enabled runner with the
+  `verify` role takes over if the web server is up and the runner may take the task
+  (separation of duties, below). Without a runner to take over, or without a web server at
+  all, and for a project with no commands, the code goes straight to review, marked as not
+  verified.
+- **`agent`**: code always goes to `verify_requested` and waits for an agent with the
+  `verify` role, a runner or a session you open, with or without project commands, and the
+  built-in verifier never claims it. An agent with nothing to run reports manual checks:
+  the result is "not verified", as for the built-in verifier. The agent may not be there
+  yet, so the wait is bounded: code no agent took within `reviewStarvationMin` goes on to
+  review, marked as not verified, with a note that says to start a runner with the role
+  (0 = keep waiting, as for a review). The Runners page shows which projects rely on an
+  agent verifier and whether a runner can take it, and warns when none may.
+
+For a project on `builtin`, the sweeper sends code whose built-in verifier stopped beating
+on to review unverified after 5 minutes, unless an enabled runner with the `verify` role can
+take over: it then waits for that runner like for an agent verifier. A built-in verifier
+that keeps beating is given all the time it needs.
 
 The diff guards do not depend on the verifier: on every `submit_code` and
 `submit_verification` the server reads the worktree's diff itself. Protected paths or a
@@ -152,6 +179,7 @@ findings already verified cannot be answered again.
 | A runner job ends `AGENTQ_MAX_REVERTS` (3) times without submitting | `needs_human` with the last output |
 | No eligible reviewer picks up a review within `reviewStarvationMin` (20 min) | `waiting_code_review` (a person reviews) |
 | No eligible critic picks up a plan within `reviewStarvationMin` | `waiting_plan_review` (a person approves) |
+| No agent takes the verification of a project set to agent verification within `reviewStarvationMin` | The review, marked as not verified |
 | Plan critiques reach `maxPlanRounds` (2), or the plan has a blocking question | `needs_human` |
 | The task's PR is closed on GitHub without merging | `needs_human` (reopen it, send the task back to `approved` for a new PR or to the coder, or cancel) |
 | A task it starts after is canceled or deleted | `needs_human` (drop the dependency, or cancel) |
@@ -323,7 +351,10 @@ and a claim of `verify_requested` or `code_review_requested` skips code, that an
 of the claim's identities produced in any round: the round-1 coder does not
 review round 2 after someone else fixed it, since its commits are still on the
 branch. The built-in verifier (`runner:builtin:verifier`) never produces code, so
-it always may verify.
+it always may verify. An agent verifier, a runner or an MCP session, is held to the
+same rule. The evidence it reports is recorded under its own agent id (`task.producers.verify`
+names it too); only the built-in verifier's evidence is attributed to `runner:verify`,
+which the server decides from the claim, never from the report's `author`.
 
 With `requireDifferentModel`, the checker's model must also differ from the model
 of every producer. Models are compared as model keys: case, provider prefixes
@@ -337,8 +368,8 @@ With a single runner that has both `code` and `review` on an L1+ project, review
 therefore wait for a second runner with the `review` role (on another model under
 `requireDifferentModel`), and go to
 a person after `reviewStarvationMin`. The Runners page warns, per project, when no
-enabled runner may take the review of some runner's code or the critique of its
-plans.
+enabled runner may take the review of some runner's code, the critique of its
+plans or, in a project set to agent verification, its verification.
 
 A runner job's MCP server starts out holding the job's claim and does not offer
 `claim_task`: a claim from it would not carry the runner's identity, so the job
@@ -372,9 +403,9 @@ verdict (the planner or the coder).
 
 ## Settings
 
-Every one is edited on **Projects → Edit**: the **Autonomy** tab has the level, the round and
-failure limits, the spot check, the reviewer wait, the lease, the different-model rule and
-auto-merge (only enabled at L3); the profile's timeout, archive and Definition-of-Ready
+Every one is edited on **Projects → Edit**: the **Autonomy** tab has the level, who verifies
+code, the round and failure limits, the spot check, the reviewer wait, the lease, the
+different-model rule and auto-merge (only enabled at L3); the profile's timeout, archive and Definition-of-Ready
 settings are on the **Commands** and **General** tabs, its size limits, protected paths and
 allowlist on **Guardrails**. Numbers are clamped to the range the server accepts
 (`POLICY_RANGES` and `PROFILE_RANGES`), and `PUT /api/projects/:id` merges what it is given
@@ -387,9 +418,10 @@ into the stored policy and profile, so a partial edit keeps the rest.
 | `maxVerifyFailures` | 2 | Consecutive red verifications before a person decides |
 | `requireDifferentModel` | false | The plan critic, verifier and reviewer must use a different model than whoever wrote the plan or code (see Separation of duties) |
 | `humanSampleEvery` | 0 | Every Nth AI approval in the project also goes to a person (0 = never) |
-| `reviewStarvationMin` | 20 | Minutes a review may wait for an eligible reviewer (0 = never hand it over) |
+| `reviewStarvationMin` | 20 | Minutes a review, a plan critique or an agent verification may wait for an eligible agent (0 = never hand it over) |
 | `leaseMin` | 90 | Minutes a hand-opened agent session may stay silent before its claim expires |
 | `autoMerge` | false | L3: merge a green, low-risk PR without a person |
+| `verifier` | `builtin` | Who verifies submitted code: `builtin` (the server's verifier, which runs the project's commands) or `agent` (an agent with the `verify` role, with or without commands; see Who verifies) |
 
 ## Risk and task types
 
@@ -403,6 +435,7 @@ person also reviews the code after an AI approval.
 Runner claims end with their process. Claims made by hand-opened sessions have
 a lease (`leaseMin`): any AgentQ call from the session extends it, and
 `heartbeat` extends it during long silent work. The web server sweeps every
-minute (and before each MCP claim): expired claims go back to the queue, and
-reviews nobody eligible picked up go to a person. On start, the server also
+minute (and before each MCP claim): expired claims go back to the queue, reviews
+nobody eligible picked up go to a person, and code nobody verified goes on to review,
+marked as not verified (see Who verifies). On start, the server also
 returns tasks held by runner jobs that did not survive the restart.

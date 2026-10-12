@@ -16,6 +16,7 @@
     "./catalog": "./src/catalog.ts",
     "./policy": "./src/policy.ts",
     "./skills": "./src/skills.ts",
+    "./tool-paths": "./src/tool-paths.ts",
     "./testing": "./src/testing.ts",
     "./criteria": "./src/criteria.ts",
     "./profile": "./src/profile.ts",

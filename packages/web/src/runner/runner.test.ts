@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -13,6 +13,7 @@ import {
   TaskStatus,
   skillForPhase,
   claimNextTask,
+  getEvidence,
   getFindings,
   submitCode,
   submitReview,
@@ -32,10 +33,11 @@ import {
 import { REDACTED_CLAIM_TOKEN, RunnerEngine, secretRedactor, type RunnerJob } from "./runner.js";
 import type { BuiltCommand, CommandContext } from "./commands.js";
 import {
-  CLAUDE_AGENTQ_TOOLS,
   CUSTOM_RUNNERS_DISABLED,
+  ROLE_MCP_TOOLS,
   agentqHome,
   buildCommand,
+  claudeAgentqTools,
   geminiSettings,
   opencodeConfigContent,
 } from "./commands.js";
@@ -597,6 +599,30 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
     expect(reviewed.producers.review?.sessionKey).toBe(`runner:${reviewer.id}`);
   }, 60_000);
 
+  it("a review job starts in the task's worktree, and its prompt says so", async () => {
+    const worktree = join(PROJECT_DIR, ".agentq", "worktrees", "review-cwd");
+    mkdirSync(worktree, { recursive: true });
+    const task = createTask({ title: "review in the worktree", description: "", projectId });
+    const coder = { toolName: "coder", version: "1", model: "m", sessionId: "cwd-coder" };
+    const coded = claimNextTask({ roles: ["code"], agent: coder, projectId })!;
+    submitCode(task.id, { message: "c", worktree, claimToken: coded.claimToken });
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.CodeReviewRequested);
+
+    // A tool that only says where it runs; it never submits, so the task goes back to the queue.
+    const runner = makeRunner(bunEval("console.log('CWD=' + process.cwd())"), { roles: ["review"] });
+    const engine = makeEngine();
+    engine.start(runner.id);
+    const job = await waitFor(() => {
+      const j = lastJob(engine, runner.id);
+      return j && j.status !== "running" ? j : null;
+    }, 20_000, "review job to finish");
+
+    // process.cwd() is the real path (macOS temp folders are links).
+    expect(readFileSync(job.logPath, "utf8")).toContain(`CWD=${realpathSync(worktree)}`);
+    const prompt = readFileSync(join(HOME, "runs", task.id, `${job.id}.prompt.md`), "utf8");
+    expect(prompt).toContain(`You are running inside the task's worktree \`${worktree}\``);
+  }, 30_000);
+
   it("recoverOrphans gives back tasks whose runner job did not survive a restart", () => {
     const task = planTask("orphaned");
     const claimed = claimNextTask({
@@ -610,6 +636,46 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
     expect(engine.recoverOrphans()).toContain(task.id);
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.PlanRequested);
   });
+});
+
+describe("RunnerEngine: agent verification (autonomy L2)", () => {
+  it("a verify runner verifies the code of a project set to agent verification, and never the code it wrote", async () => {
+    const agentProject = randomUUID();
+    createProject({ id: agentProject, displayName: "Agent verified", workingDirectory: PROJECT_DIR, autonomy: 2, policy: { verifier: "agent" } });
+    const task = createTask({ title: "verify me", description: "", projectId: agentProject });
+    // No commands, and no built-in verifier in this process: the code waits for an agent with the verify role.
+    const author = makeRunner(
+      agentArgv("submit_code", { message: "## Changes", worktree: PROJECT_DIR, context: "look at x" }),
+      { roles: ["code", "verify"], projectId: agentProject },
+    );
+    const engine = makeEngine();
+    engine.start(author.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.VerifyRequested, 20_000, "code submitted");
+
+    // Several polls later the author still has not picked up the verification of its own code.
+    await Bun.sleep(2500);
+    expect(engine.getJobs(author.id)).toHaveLength(1);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.VerifyRequested);
+    await engine.stop(author.id);
+
+    const verifier = makeRunner(
+      agentArgv("submit_verification", {
+        passed: true,
+        evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "3 pass" }],
+        context: "green",
+      }),
+      { roles: ["verify"], projectId: agentProject },
+    );
+    engine.start(verifier.id);
+    await waitFor(() => getTaskById(task.id)!.status === TaskStatus.CodeReviewRequested, 20_000, "code verified");
+    const verified = getTaskById(task.id)!;
+    expect(lastJob(engine, verifier.id)!.phase).toBe("verify");
+    expect(verified.verification).toMatchObject({ passed: true, skipped: false });
+    expect(verified.producers.code?.sessionKey).toBe(`runner:${author.id}`);
+    expect(verified.producers.verify?.sessionKey).toBe(`runner:${verifier.id}`);
+    // The evidence is the verifier agent's own, not the built-in verifier's.
+    expect(getEvidence(task.id).map((e) => e.producedBy)).toEqual([verified.producers.verify!.agentId!]);
+  }, 60_000);
 });
 
 describe("RunnerEngine: plan critique (autonomy L2)", () => {
@@ -697,6 +763,8 @@ describe("buildCommand", () => {
     "-c", 'mcp_servers.agentq.args=["run", "/agentq/packages/mcp/src/index.ts"]',
     "-c", 'mcp_servers.agentq.env={ "AGENTQ_DB_PATH" = "/data/agentq.db" }',
   ];
+  // The coder's sandbox: it writes in the workspace and installs dependencies.
+  const CODEX_CODE_SANDBOX = ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
 
   it("gives every child the job's MCP config and database", () => {
     for (const tool of ["claude", "codex", "opencode", "custom"] as const) {
@@ -712,10 +780,13 @@ describe("buildCommand", () => {
     expect(safe.cmd.slice(0, 7)).toEqual(["claude", "-p", "PROMPT", "--output-format", "json", "--mcp-config", "/runs/t1/job.mcp.json"]);
     expect(safe.cmd).toContain("--permission-mode");
     const allowed = safe.cmd.slice(safe.cmd.indexOf("--allowedTools") + 1);
-    expect(CLAUDE_AGENTQ_TOOLS).toEqual(RUNNER_MCP_TOOLS.map((t) => `mcp__agentq__${t}`));
-    for (const tool of CLAUDE_AGENTQ_TOOLS) expect(allowed).toContain(tool);
+    // The coder's own phase: the common tools and submit_code, all of them runner tools.
+    const coderTools = claudeAgentqTools("code");
+    expect(coderTools).toEqual(ROLE_MCP_TOOLS.code.map((t) => `mcp__agentq__${t}`));
+    for (const tool of ROLE_MCP_TOOLS.code) expect(RUNNER_MCP_TOOLS).toContain(tool);
+    for (const tool of coderTools) expect(allowed).toContain(tool);
     // Nothing broader than the tools a claimed job needs.
-    expect(allowed.filter((t) => t.startsWith("mcp__"))).toEqual(CLAUDE_AGENTQ_TOOLS);
+    expect(allowed.filter((t) => t.startsWith("mcp__"))).toEqual(coderTools);
     for (const denied of ["mcp__agentq", "mcp__agentq__claim_task", "mcp__agentq__create_task", "mcp__agentq__archive_task"]) {
       expect(allowed).not.toContain(denied);
     }
@@ -734,13 +805,16 @@ describe("buildCommand", () => {
   });
 
   it("codex: the server comes in as -c mcp_servers.agentq.* overrides", () => {
-    expect(buildCommand("codex", ctx).cmd).toEqual(["codex", "exec", "--full-auto", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "PROMPT"]);
+    expect(buildCommand("codex", ctx).cmd).toEqual([
+      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "PROMPT",
+    ]);
     expect(buildCommand("codex", { ...ctx, permissionMode: "full", model: "o3" }).cmd).toEqual([
       "codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-m", "o3", "PROMPT",
     ]);
     // Windows paths survive the TOML quoting.
     const win = buildCommand("codex", { ...ctx, mcp: { ...mcp, command: "C:\\bun\\bun.exe" } }).cmd;
-    expect(Bun.TOML.parse(win[win.indexOf("-c") + 1].replace("=", " = "))).toEqual({
+    const command = win.find((arg) => arg.startsWith("mcp_servers.agentq.command="))!;
+    expect(Bun.TOML.parse(command.replace("=", " = "))).toEqual({
       mcp_servers: { agentq: { command: "C:\\bun\\bun.exe" } },
     });
   });
@@ -808,11 +882,11 @@ describe("buildCommand", () => {
     expect(buildCommand("claude", ctx).cmd).not.toContain("--effort");
 
     expect(buildCommand("codex", { ...ctx, model: "gpt-5.5", effort: "xhigh", extraArgs: ["--json"] }).cmd).toEqual([
-      "codex", "exec", "--full-auto", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP,
+      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP,
       "-m", "gpt-5.5", "-c", 'model_reasoning_effort="xhigh"', "--json", "PROMPT",
     ]);
     expect(buildCommand("codex", { ...ctx, effort: "low" }).cmd).toEqual([
-      "codex", "exec", "--full-auto", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-c", 'model_reasoning_effort="low"', "PROMPT",
+      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-c", 'model_reasoning_effort="low"', "PROMPT",
     ]);
 
     expect(buildCommand("opencode", { ...ctx, model: "opencode/big-pickle", effort: "max" }).cmd).toEqual([

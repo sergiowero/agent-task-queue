@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import toast from "react-hot-toast";
-import type { Runner, RunnerJob, RunnerJobEvent } from "../lib/api";
+import type { Project, Runner, RunnerJob, RunnerJobEvent } from "../lib/api";
 import { api } from "../lib/api";
 import type { LucideIcon } from "../lib/icons";
 import {
@@ -31,7 +31,8 @@ import { TONE_SOFT, TOOL_TONE } from "../lib/status";
 import { formatDateTime, formatDuration, formatRelative, pluralize } from "../lib/format";
 import { cn } from "../lib/cn";
 import { ROLE_INFO, type Role } from "@agentq/shared/catalog";
-import { separationGaps, type SeparationGap } from "@agentq/shared/separation";
+import { resolvePolicy } from "@agentq/shared/policy";
+import { separationGaps, verifyRunners, type SeparationGap } from "@agentq/shared/separation";
 import { useSSE } from "../hooks/useSSE";
 import { Alert } from "../components/Alert";
 import { Badge, Dot, JobStatusBadge } from "../components/Badge";
@@ -648,7 +649,7 @@ export function RunnersPage() {
             }
           />
         )}
-        <VerifierStatus />
+        <VerifierStatus runners={runners} projects={projects} />
         {runners.length > 0 && (
           <div className="space-y-5">
             {gaps.length > 0 && (
@@ -663,7 +664,8 @@ export function RunnersPage() {
                 <p className="mt-1">
                   A runner never critiques, verifies or reviews its own work. Add a runner with that role
                   {gaps.some((g) => g.reason === "model") && " on another model"}; otherwise these checks wait
-                  for an agent session you open and go to you after a while.
+                  for an agent session you open and go to you after a while
+                  {gaps.some((g) => g.check === "verify") && " (code nobody verifies goes on to review, marked as not verified)"}.
                 </p>
               </Alert>
             )}
@@ -716,8 +718,8 @@ function SeparationGapText({
   runners: Runner[];
 }) {
   const authors = gap.authors.map((id) => runners.find((r) => r.id === id)?.name ?? id).join(", ");
-  const work = gap.check === "review" ? "code" : "plans";
-  const checks = gap.check === "review" ? "reviews code" : "critiques plans";
+  const work = gap.check === "plan_review" ? "plans" : "code";
+  const checks = { plan_review: "critiques plans", verify: "verifies code", review: "reviews code" }[gap.check];
   return (
     <>
       <span className="font-medium">{projectName}</span>: {work} by {authors},{" "}
@@ -728,20 +730,51 @@ function SeparationGapText({
   );
 }
 
-/** The server's built-in verifier: runs each project's commands on submitted code. */
-function VerifierStatus() {
+/**
+ * Who verifies submitted code: the server's built-in verifier (it runs each project's commands), and
+ * the projects that leave it to an agent with the verify role, with whether a runner can take it.
+ */
+function VerifierStatus({ runners, projects }: { runners: Runner[]; projects: Project[] }) {
   const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: api.getMeta, refetchInterval: 15_000 });
   const v = meta?.verifier;
-  if (!v) return null;
+  const agentProjects = projects
+    .map((project) => ({ project, policy: resolvePolicy(project) }))
+    .filter(({ policy }) => policy.verifier === "agent");
+  if (!v && agentProjects.length === 0) return null;
   return (
-    <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-border-light px-4 py-3 text-sm">
-      <Badge tone={v.online ? "success" : "neutral"}>{v.online ? "verifier online" : "verifier offline"}</Badge>
-      <span className="text-text-secondary">
-        {v.busy && v.currentTaskId
-          ? "Verifying a task now."
-          : "Runs each project's commands (Projects → Edit → Commands) on submitted code, then routes it to review."}
-      </span>
-      {v.lastRunAt && <span className="ml-auto text-xs text-text-muted">last run {formatRelative(v.lastRunAt)}</span>}
+    <div className="mb-5 space-y-2 rounded-xl border border-border-light px-4 py-3 text-sm">
+      {v && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={v.online ? "success" : "neutral"}>{v.online ? "verifier online" : "verifier offline"}</Badge>
+          <span className="text-text-secondary">
+            {v.busy && v.currentTaskId
+              ? "Verifying a task now."
+              : `Runs each project's commands (Projects → Edit → Commands) on submitted code, then routes it to review${agentProjects.length > 0 ? ", except in the projects below" : ""}.`}
+          </span>
+          {v.lastRunAt && <span className="ml-auto text-xs text-text-muted">last run {formatRelative(v.lastRunAt)}</span>}
+        </div>
+      )}
+      {agentProjects.map(({ project, policy }) => {
+        const available = verifyRunners(runners, project.id);
+        return (
+          <div key={project.id} className="flex flex-wrap items-center gap-2">
+            <Badge tone={available.length > 0 ? "success" : "warning"}>
+              {available.length > 0 ? "agent verifier available" : "no agent verifier"}
+            </Badge>
+            <span className="text-text-secondary">
+              <span className="font-medium text-text">{project.displayName}</span> is verified by an agent with the verify
+              role, never by the built-in verifier
+              {available.length > 0
+                ? `: ${available.map((r) => r.name).join(", ")} can take it, but never for code it wrote.`
+                : `. No enabled runner has that role, so its code waits for a session you open${
+                    policy.reviewStarvationMin > 0
+                      ? ` and goes on to review, marked as not verified, after ${policy.reviewStarvationMin} min`
+                      : ""
+                  }.`}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

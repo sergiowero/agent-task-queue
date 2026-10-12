@@ -13,6 +13,7 @@ import {
   getTasks,
   getTaskById,
   getActivityEvents,
+  getEvidence,
   patchTask,
   updateTask,
   ROLES,
@@ -1387,6 +1388,53 @@ describe("AgentQ MCP claims and blockers", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  it("a project set to agent verification waits for a verify session that is not the coder's, whose evidence carries its own id", async () => {
+    const pid = `${projectId}-agent-verify`;
+    createProject({
+      id: pid,
+      displayName: "Agent verify",
+      workingDirectory: "/tmp/agent-verify",
+      policy: { verifier: "agent", requireDifferentModel: true },
+    });
+    const task = createTask({ title: "agent verified", description: "d", projectId: pid });
+    const coder = await connect();
+    const coding = parse(await call(coder, "claim_task", { ...agent, roles: ["code"], sessionId: "av-coder", projectId: pid }));
+    expect(coding.task.id).toBe(task.id);
+    // No project commands and no built-in verifier running: the code waits for an agent with the verify role.
+    const submitted = parse(await call(coder, "submit_code", { taskId: task.id, message: "done", context: "c", worktree: "/w" }));
+    expect(submitted.newStatus).toBe(TaskStatus.VerifyRequested);
+
+    const claim = async (over: Record<string, unknown>) =>
+      parse(await call(await connect(), "claim_task", { ...agent, roles: ["verify"], projectId: pid, ...over }));
+    // The coder's conversation (on a restarted server), and another session on its model, are refused.
+    expect((await claim({ sessionId: "av-coder" })).reason).toBe("no_tasks_available");
+    expect((await claim({ sessionId: "av-peer" })).reason).toBe("no_tasks_available");
+
+    const verifier = await connect();
+    const claimed = parse(
+      await call(verifier, "claim_task", { ...agent, model: "other-model", roles: ["verify"], sessionId: "av-verifier", projectId: pid }),
+    );
+    expect(claimed.task.id).toBe(task.id);
+    expect(claimed.brief.independent).toBe(true);
+    const done = parse(
+      await call(verifier, "submit_verification", {
+        taskId: task.id,
+        passed: true,
+        evidence: [{ kind: "command", command: "bun test", exitCode: 0, summary: "3 pass" }],
+        context: "green",
+        // An agent cannot pass itself off as the built-in verifier.
+        author: "runner:verify",
+      }),
+    );
+    expect(done.success).toBe(true);
+    const verified = getTaskById(task.id)!;
+    expect(verified.status).toBe(TaskStatus.CodeReviewRequested);
+    expect(verified.verification).toMatchObject({ passed: true, skipped: false });
+    expect(getEvidence(task.id).map((e) => e.producedBy)).toEqual([claimed.agent.id]);
+    expect(claimed.agent.id).toBe("claimer@1.0|other-model");
+    removeProjectTasks(pid);
   });
 
   it("claim_task returns the brief instead of the conversation; get_task_brief re-reads it", async () => {

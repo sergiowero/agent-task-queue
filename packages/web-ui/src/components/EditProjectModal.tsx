@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { AUTONOMY_LEVELS, type AutonomyLevel } from "@agentq/shared/catalog";
-import { DEFAULT_POLICY, POLICY_RANGES } from "@agentq/shared/policy";
+import { DEFAULT_POLICY, POLICY_RANGES, type VerifierMode } from "@agentq/shared/policy";
 import { DEFAULT_PROFILE, PROFILE_RANGES } from "@agentq/shared/profile";
 import { api } from "../lib/api";
 import type { PolicySettings, ProjectProfile } from "../lib/api";
@@ -46,6 +46,13 @@ const DOR_HINTS = {
   enforce: "A task that is not ready is refused until the problems are fixed.",
   off: "New tasks are not checked.",
 } as const;
+
+const VERIFIER_HINTS: Record<VerifierMode, string> = {
+  builtin:
+    "The server runs the project's commands (Commands tab) on every code submission. A runner with the verify role picks up what it has not taken yet, and takes over while it is off.",
+  agent:
+    "Code always waits for an agent with the verify role (a runner, or a session you open), with or without commands: the built-in verifier leaves it alone. Code no agent takes goes on to review, marked as not verified, after the reviewer wait below.",
+};
 
 interface EditProjectModalProps {
   project: ProjectRef;
@@ -121,6 +128,7 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
     policy?.requireDifferentModel ?? DEFAULT_POLICY.requireDifferentModel,
   );
   const [autoMerge, setAutoMerge] = useState(policy?.autoMerge ?? DEFAULT_POLICY.autoMerge);
+  const [verifier, setVerifier] = useState<VerifierMode>(policy?.verifier ?? DEFAULT_POLICY.verifier);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [tab, setTab] = useState<ProjectTab>(initialTab);
   const profile = project.profile;
@@ -175,6 +183,7 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
           leaseMin: clamped(leaseMin, POLICY_RANGES.leaseMin, DEFAULT_POLICY.leaseMin),
           requireDifferentModel,
           autoMerge,
+          verifier,
         },
         profile: {
           commands: Object.fromEntries(COMMANDS.map((k) => [k, commands[k]?.trim() ?? ""])),
@@ -308,6 +317,12 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
                 ))}
               </Select>
             </Field>
+            <Field label="Who verifies code" hint={VERIFIER_HINTS[verifier]}>
+              <Select value={verifier} onChange={(e) => setVerifier(e.target.value as VerifierMode)}>
+                <option value="builtin">Built-in verifier (runs the project's commands)</option>
+                <option value="agent">An agent with the verify role</option>
+              </Select>
+            </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="AI review rounds" hint="Change requests before a person decides.">
                 <Input
@@ -346,7 +361,7 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
               </Field>
               <Field
                 label="Wait for a reviewer (min)"
-                hint="A review or plan critique no eligible agent picked up goes to you after this (0 = never)."
+                hint="A review or plan critique no eligible agent picked up goes to you after this; code no verifier agent took goes on to review, not verified (0 = never)."
               >
                 <Input
                   type="number"
@@ -394,8 +409,9 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
               </Alert>
             )}
             <p className="text-sm text-text-secondary">
-              The verifier runs these in the task's worktree after every code submission (install
-              first), and agents read them in their brief. Leave a command empty to skip it.
+              The built-in verifier runs these in the task's worktree after every code submission
+              (install first), and agents read them in their brief (an agent verifier runs them
+              itself). Leave a command empty to skip it.
             </p>
             <Button variant="secondary" size="sm" loading={detecting} onClick={detect}>
               Detect from the repository

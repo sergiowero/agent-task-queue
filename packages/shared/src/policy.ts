@@ -14,6 +14,12 @@ import {
 /** Who decides a gate: a person, an agent (reviewer/critic), or nobody. */
 export type Gate = "human" | "agent" | "none";
 
+/**
+ * Who verifies submitted code: the server's built-in verifier (it runs the project's commands, no LLM),
+ * or an agent with the `verify` role (a runner, or a session someone opens).
+ */
+export type VerifierMode = "builtin" | "agent";
+
 /** Per-project knobs, stored as JSON on the project (missing keys use the defaults). */
 export interface PolicySettings {
   /** Plan critiques that may ask for changes before a person decides. */
@@ -32,6 +38,11 @@ export interface PolicySettings {
   leaseMin: number;
   /** L3 only: merge a green, low-risk PR without a person. */
   autoMerge: boolean;
+  /**
+   * `builtin`: the server's verifier verifies (a runner with the verify role picks up what it has not taken yet, and takes over while it is off).
+   * `agent`: code always waits for an agent with the verify role, with or without project commands.
+   */
+  verifier: VerifierMode;
 }
 
 /** The range each numeric setting accepts: the server refuses others, and the portal clamps to them. */
@@ -53,6 +64,7 @@ export const DEFAULT_POLICY: PolicySettings = {
   reviewStarvationMin: 20,
   leaseMin: 90,
   autoMerge: false,
+  verifier: "builtin",
 };
 
 export interface GatePolicy extends PolicySettings {
@@ -172,7 +184,7 @@ export function reviewGate(p: GatePolicy): TaskStatus {
 }
 
 /**
- * After submit_code. With commands to run and the verifier up, the code is
+ * After submit_code. When a verifier will take it (see `verifierFor`), the code is
  * verified first; otherwise it goes straight to review.
  */
 export function afterCode(_task: RoutingTask, p: GatePolicy, opts: { verify?: boolean } = {}): TaskStatus {

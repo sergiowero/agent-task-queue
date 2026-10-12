@@ -10,7 +10,7 @@
  * never the notes, messages or evidence of the agent whose work they check.
  */
 import { getProjectById, getSubtasks, getTaskById } from "./database.js";
-import { BLOCKING_SEVERITIES, STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
+import { BLOCKING_SEVERITIES, BUILTIN_VERIFIER_AUTHOR, STATUS_INFO, TASK_TYPES, TaskStatus, type Phase } from "./catalog.js";
 import { getEvidence, getFindings, getHandoffs, latestHandoffs } from "./records.js";
 import { resolveProfile, type ProjectCommands } from "./profile.js";
 import { planRoundsUsed, resolvePolicy, reviewRoundsUsed } from "./policy.js";
@@ -190,19 +190,25 @@ function briefBasics(task: Task) {
   };
 }
 
-/** The evidence of the task's latest verification (older records: every verifier row of its round). */
+/**
+ * The evidence of the task's latest verification, whoever verified: the built-in verifier or an agent.
+ * Older records list no evidence ids: the built-in verifier's rows of their round (it was the only one
+ * whose evidence was told apart from the coder's).
+ */
 function verificationEvidence(task: Task): Evidence[] {
   const v = task.verification;
   if (!v) return [];
   const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
-  return getEvidence(task.id).filter((e) => (ids ? ids.has(e.id) : e.round === v.round));
+  return getEvidence(task.id).filter((e) =>
+    ids ? ids.has(e.id) : e.round === v.round && e.producedBy === BUILTIN_VERIFIER_AUTHOR,
+  );
 }
 
 /** The latest verification, with the commands the verifier saw fail. */
 function verificationOf(task: Task): TaskBrief["verification"] {
   if (!task.verification) return null;
   const failing = verificationEvidence(task)
-    .filter((e) => e.producedBy === "runner:verify" && !e.skipped && e.exitCode !== 0)
+    .filter((e) => !e.skipped && e.exitCode !== 0)
     .map((e) => ({ command: e.command, exitCode: e.exitCode, summary: e.summary }));
   return { ...task.verification, failing };
 }

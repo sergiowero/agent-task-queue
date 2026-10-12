@@ -14,6 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerLaunch } from "@agentq/mcp";
+import { skillVersion, skillsBundleVersion } from "@agentq/shared/skills";
 
 // Runs the real `install:all` on the OS the tests run on (CI: Linux, macOS, Windows)
 // against a throwaway home folder: the user's own tool configs are never touched.
@@ -69,12 +70,20 @@ function snapshot(): Record<string, string> {
   );
 }
 
-function runInstallAll(args: string[] = []) {
+/**
+ * `extra` sets more variables (undefined removes one) and `at` runs it against another
+ * throwaway home. `noTools` empties PATH, so only the folders a tool wrote count as installed.
+ */
+function runInstallAll(
+  args: string[] = [],
+  extra: { at?: string; env?: Record<string, string | undefined>; noTools?: boolean } = {},
+) {
+  const h = extra.at ?? home;
   const env: Record<string, string | undefined> = {
     ...process.env,
-    HOME: home, // homedir() on macOS and Linux
-    USERPROFILE: home, // homedir() on Windows
-    APPDATA: join(home, "AppData", "Roaming"),
+    HOME: h, // homedir() on macOS and Linux
+    USERPROFILE: h, // homedir() on Windows
+    APPDATA: join(h, "AppData", "Roaming"),
   };
   for (const name of [
     "AGENTQ_DB_PATH",
@@ -85,6 +94,11 @@ function runInstallAll(args: string[] = []) {
   ]) {
     delete env[name];
   }
+  if (extra.noTools) {
+    for (const name of Object.keys(env)) if (name.toUpperCase() === "PATH") delete env[name];
+    env.PATH = join(sandbox, "no-tools");
+  }
+  Object.assign(env, extra.env);
   const proc = Bun.spawnSync([process.execPath, "run", INSTALL_ALL, ...args], {
     cwd: sandbox,
     env,
@@ -207,5 +221,71 @@ describe(`install:all on ${process.platform}`, () => {
     expect(runInstallAll(["--db", `~${sep}other${sep}agentq.db`]).exitCode).toBe(0);
     dbPath = registeredLaunches().vscode.env.AGENTQ_DB_PATH;
     expect(dbPath).toBe(join(home, "other", "agentq.db"));
+  }, 60_000);
+
+  it("replaces an installed skill folder as a whole, so a file the skill dropped is gone", () => {
+    const skill = join(home, ".claude", "skills", "agentq-code");
+    writeFileSync(join(skill, "stale.md"), "from an older bundle");
+    mkdirSync(join(skill, "references"), { recursive: true });
+    writeFileSync(join(skill, "references", "old.md"), "from an older bundle");
+    writeFileSync(join(skill, "SKILL.md"), "edited by hand");
+
+    expect(runInstallAll().exitCode).toBe(0);
+    expect(existsSync(join(skill, "stale.md"))).toBe(false);
+    expect(existsSync(join(skill, "references"))).toBe(false);
+    expect(readFileSync(join(skill, "SKILL.md"), "utf8")).toContain("name: agentq-code");
+  }, 60_000);
+});
+
+describe("install:all follows the folders the tools themselves use", () => {
+  it("puts the MCP entry and the skills in $CLAUDE_CONFIG_DIR, $CODEX_HOME and $XDG_CONFIG_HOME", () => {
+    const moved = join(sandbox, "moved");
+    const at = join(moved, "home");
+    const [claude, codex, xdg] = ["claude-config", "codex-home", "xdg-config"].map((d) => join(moved, d));
+    // Each tool counts as installed by what it wrote in its own folder.
+    for (const file of [
+      join(claude, "settings.json"),
+      join(codex, "auth.json"),
+      join(xdg, "opencode", "package.json"),
+    ]) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "{}");
+    }
+    mkdirSync(at, { recursive: true });
+
+    const env = { CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, XDG_CONFIG_HOME: xdg };
+    expect(runInstallAll([], { at, env, noTools: true }).exitCode).toBe(0);
+
+    expect(existsSync(join(claude, ".claude.json"))).toBe(true);
+    const config = Bun.TOML.parse(readFileSync(join(codex, "config.toml"), "utf8")) as {
+      mcp_servers: { agentq: { command: string } };
+    };
+    expect(config.mcp_servers.agentq.command).toBeTruthy();
+    for (const skills of [join(claude, "skills"), join(codex, "skills"), join(xdg, "opencode", "skills")]) {
+      expect(existsSync(join(skills, "agentq-claim", "SKILL.md"))).toBe(true);
+    }
+    // Nothing goes where the tools do not look.
+    for (const dir of [".claude", ".claude.json", ".codex", ".config"]) {
+      expect(existsSync(join(at, dir))).toBe(false);
+    }
+  }, 60_000);
+
+  it("leaves tools that are not installed alone and refreshes the copies a tool already holds", () => {
+    const at = join(sandbox, "partial-home");
+    mkdirSync(join(at, ".claude"), { recursive: true });
+    writeFileSync(join(at, ".claude", "settings.json"), "{}");
+    // Junie has no MCP registration, but an earlier install left an old copy of a skill there.
+    const old = join(at, ".junie", "skills", "agentq-claim");
+    mkdirSync(old, { recursive: true });
+    writeFileSync(join(old, "SKILL.md"), '---\nname: agentq-claim\nmetadata:\n  version: "1.0.0"\n---\nold');
+
+    const { exitCode, stdout } = runInstallAll([], { at, noTools: true });
+    expect(exitCode).toBe(0);
+
+    expect(existsSync(join(at, ".claude", "skills", "agentq-claim", "SKILL.md"))).toBe(true);
+    expect(skillVersion(readFileSync(join(old, "SKILL.md"), "utf8"))).toBe(skillsBundleVersion());
+    // Kimi Code, Codex and OpenCode are not here: no folder is made for them.
+    for (const dir of [".kimi-code", ".codex", ".config"]) expect(existsSync(join(at, dir))).toBe(false);
+    expect(stdout).toContain("Skills not installed in kimi");
   }, 60_000);
 });

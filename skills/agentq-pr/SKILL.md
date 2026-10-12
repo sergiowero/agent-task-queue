@@ -3,7 +3,7 @@ name: agentq-pr
 description: Pull-request phase of the AgentQ workflow. Use right after the AgentQ `claim_task` MCP tool (or an AgentQ runner) handed you a task claimed from `approved`, now in `merging` (the agentq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body AgentQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
 allowed-tools: mcp__agentq__get_task_brief, mcp__agentq__submit_pr, mcp__agentq__report_blocker, mcp__agentq__get_task, mcp__agentq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
-  version: "6.4.0"
+  version: "6.5.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -62,20 +62,18 @@ Push rejected → do not open the PR; call `report_blocker` with the full output
 
 ```bash
 cd {task.project.workingDirectory}
-cat > .git/agentq-pr-body.md <<'EOF'
-{brief.pr.body}
-EOF
 gh pr create \
   --base {task.mergeBranch} \
   --head {feature branch} \
   --title "{task.title}" \
-  --body-file .git/agentq-pr-body.md
-rm .git/agentq-pr-body.md
+  --body-file - <<'EOF'
+{brief.pr.body}
+EOF
 ```
 
-- Keep the body file inside `.git/` so it is never committed.
+- The body goes in on standard input (`--body-file -`, quoted `'EOF'` so nothing in it is expanded): you write no file, and this phase has no file-editing tools.
 - Capture the **PR URL** printed by `gh pr create`.
-- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file .git/agentq-pr-body.md`) and record it with `submit_pr` as usual.
+- A PR for this head branch already exists → reuse it (`gh pr view {feature branch} --json url,number`), do not open a duplicate. `brief.pr.url` set means the task was sent back from its open PR and the fix is now approved: the push above updated that PR; refresh its body with the new one (`gh pr edit {brief.pr.url} --body-file - <<'EOF'` … `EOF`, the same way) and record it with `submit_pr` as usual.
 - `gh` missing, not authenticated or failing → `report_blocker` with the output. Never call `submit_pr` for a PR that does not exist.
 
 ### 4. Record it with `submit_pr`

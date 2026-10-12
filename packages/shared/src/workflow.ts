@@ -4,7 +4,6 @@ import {
   appendJson,
   createAgent,
   createTask,
-  getAppState,
   getClaimableTasks,
   getDbHandle,
   getDependents,
@@ -42,12 +41,14 @@ import { normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { matchesAny, profileCommands, resolveProfile } from "./profile.js";
 import { checkDefinitionOfReady, type ReadinessInput } from "./dor.js";
 import { analyzeDiff, diffRiskReasons, mergeDiffReasons, protectedFiles } from "./diff.js";
+import { verifierFor } from "./verifier.js";
 
 /** A pull request URL on GitHub, GitLab or Bitbucket. */
 const PR_URL_RE = /https?:\/\/[^\s<>()[\]"'`]+?\/(?:pull|pulls|merge_requests|pull-requests)\/\d+/;
 import {
   ALL_STATUSES,
   BLOCKING_SEVERITIES,
+  BUILTIN_VERIFIER_AUTHOR,
   CLAIM_RULES,
   CLAIMABLE_FROM,
   REQUIRES_PLAN_EDITABLE,
@@ -55,6 +56,7 @@ import {
   STATUS_INFO,
   TASK_TYPES,
   UNBLOCK_TARGET,
+  VERIFIER_RUNNER_ID,
   canTransition,
   claimRuleFor,
   criteriaEditable,
@@ -446,7 +448,7 @@ export function claimNextTask(input: ClaimNextTaskInput): ClaimNextTaskResult | 
       input.projectId,
       MAX_CLAIM_ATTEMPTS,
       input.excludeTaskIds ?? [],
-      { identities, modelKey: claimModel, model: input.agent.model },
+      { identities, modelKey: claimModel, model: input.agent.model, builtinVerifier: input.runnerId === VERIFIER_RUNNER_ID },
     );
     for (const candidate of candidates) {
       const rule = claimRuleFor(candidate.status);
@@ -1843,16 +1845,6 @@ export interface SubmitCodeInput extends SubmitInput {
   findingResolutions?: { id: string; status: "fixed" | "wontfix"; resolution: string }[];
 }
 
-/** Minutes after which the verifier's heartbeat counts as gone. */
-const VERIFIER_STALE_MS = 2 * 60_000;
-
-export function verifierOnline(now = Date.now()): boolean {
-  const beat = getAppState("verifier_heartbeat");
-  if (!beat) return false;
-  const at = new Date(beat.value).getTime();
-  return now - (Number.isFinite(at) ? at : new Date(beat.updatedAt).getTime()) < VERIFIER_STALE_MS;
-}
-
 /**
  * The verification record of code that is not (or not yet) verified. It replaces
  * the previous result, so the reviewer, the PR body and the portal never show an
@@ -2106,21 +2098,26 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
         };
       }
 
-      const verifyNow = hasVerificationCommands(task) && verifierOnline();
+      const hasCommands = hasVerificationCommands(task);
+      // This submission's coder already counts as an author: a runner that wrote the code is not the one that verifies it.
+      const submitted = { ...task, producers: { ...task.producers, code: producerOf(task, task.producers.code) } };
+      const verifier = verifierFor(submitted, policy, hasCommands);
       // Never leave the previous submission's result on the task: until the verifier
       // reports, this code is not verified.
       const verification = unverifiedRecord(
         task,
-        verifyNow
+        verifier === "builtin"
           ? "Waiting for the verifier."
-          : hasVerificationCommands(task)
-            ? "Not verified: the AgentQ web server (which runs the verifier) is not running."
-            : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
+          : verifier === "agent"
+            ? "Waiting for a verifier agent (a runner or session with the verify role)."
+            : hasCommands
+              ? "Not verified: the built-in verifier is not running (the AgentQ web server runs it) and no runner with the verify role can take over."
+              : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
         round,
       );
 
       return {
-        to: afterCode(task, policy, { verify: verifyNow }),
+        to: afterCode(task, policy, { verify: verifier !== null }),
         message: input.message,
         events,
         ...(raised ? { note: { message: raised } } : {}),
@@ -2153,7 +2150,8 @@ export interface SubmitVerificationInput extends ClaimAuth, Pick<SubmitInput, "c
  * The verifier reports: evidence per command, criteria met/failed, and where
  * the task goes. When the report carries no diff (an agent verifier over MCP),
  * the server reads the worktree's diff itself, so risk and tampering never
- * depend on what the verifier chose to report.
+ * depend on what the verifier chose to report. The evidence is attributed to the
+ * claim: `runner:verify` for the built-in verifier, the agent's own id otherwise.
  */
 export function submitVerification(taskId: string, input: SubmitVerificationInput): SubmitResult {
   const current = input.infraError || input.diffStats !== undefined ? null : getTaskById(taskId);
@@ -2161,7 +2159,11 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
   return withTransaction(() => {
     const task = requireClaim(taskId, TaskStatus.Verifying, input);
     const policy = policyFor(task);
-    const actor = input.author ?? task.assignedAgent?.agentId ?? "runner:verify";
+    const actor = input.author ?? task.assignedAgent?.agentId ?? BUILTIN_VERIFIER_AUTHOR;
+    // The built-in verifier's evidence is the server's own; an agent verifier's carries its agent id,
+    // read from the claim and never from what the report says it is.
+    const producedBy =
+      task.assignedAgent?.runnerId === VERIFIER_RUNNER_ID ? BUILTIN_VERIFIER_AUTHOR : (task.assignedAgent?.agentId ?? actor);
     const round = task.codeRound + 1;
     const now = new Date().toISOString();
 
@@ -2187,7 +2189,7 @@ export function submitVerification(taskId: string, input: SubmitVerificationInpu
       return { task: blocked, previousStatus: task.status, newStatus: blocked.status, message: "Verification blocked." };
     }
 
-    const evidence = addEvidence(taskId, round, input.evidence, "runner:verify");
+    const evidence = addEvidence(taskId, round, input.evidence, producedBy);
     const results = new Map<string, boolean>();
     for (const e of evidence) {
       if (!e.criterionId || e.skipped) continue;
