@@ -1,4 +1,4 @@
-import { STATUS_INFO, TaskStatus } from "@agentq/shared/catalog";
+import { STATUS_INFO, TaskStatus } from "@mtq/shared/catalog";
 import type { LucideIcon } from "./icons";
 import {
   ApproveIcon,

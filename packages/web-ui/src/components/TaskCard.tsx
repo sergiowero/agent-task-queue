@@ -1,5 +1,5 @@
-import { DEFAULT_POLICY, planRoundChip, reviewRoundChip, type PolicySettings } from "@agentq/shared/policy";
-import { STATUS_INFO, type TaskStatus } from "@agentq/shared/catalog";
+import { DEFAULT_POLICY, planRoundChip, reviewRoundChip, type PolicySettings } from "@mtq/shared/policy";
+import { STATUS_INFO, type TaskStatus } from "@mtq/shared/catalog";
 import type { Task } from "../lib/api";
 import { AgentsIcon, ArchiveIcon, BranchIcon, DeleteIcon, MergeIcon, PriorityIcon } from "../lib/icons";
 import { priorityTone } from "../lib/status";

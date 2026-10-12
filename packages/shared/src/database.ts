@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
-import { mkdirSync } from "fs";
+import { existsSync, mkdirSync, renameSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { AutonomyLevel, Risk, Role, TaskType } from "./catalog.js";
@@ -33,11 +33,43 @@ function resolveDbPath(p: string): string {
   return p;
 }
 
-// Resolved lazily on first use so callers (e.g. tests) can set AGENTQ_DB_PATH
+// Resolved lazily on first use so callers (e.g. tests) can set MTQ_DB_PATH
 // after importing this module — ESM imports are hoisted above env assignments.
-/** Absolute database path from AGENTQ_DB_PATH (default `~/.agentq/agentq.db`), `~` expanded. */
+/** Absolute database path from MTQ_DB_PATH (default `~/.mtq/mtq.db`), `~` expanded. */
 export function getDbPath(): string {
-  return resolveDbPath(process.env.AGENTQ_DB_PATH || "~/.agentq/agentq.db");
+  return resolveDbPath(process.env.MTQ_DB_PATH || DEFAULT_DB_PATH);
+}
+
+const DEFAULT_DB_PATH = "~/.mtq/mtq.db";
+/** Default database from before the rename to Moonlight Task Queue. */
+const LEGACY_DB_PATH = "~/.agentq/agentq.db";
+
+/**
+ * Moves the pre-rename default database (with its WAL files) to the new default
+ * path, once. Worktrees and run logs stay where they are: tasks store their
+ * absolute paths. If the move fails (e.g. an old server still holds the file),
+ * the legacy file keeps being used so no data is lost.
+ */
+function migrateLegacyDb(path: string): string {
+  const legacy = resolveDbPath(LEGACY_DB_PATH);
+  if (process.env.MTQ_DB_PATH || existsSync(path) || !existsSync(legacy)) return path;
+  const moved: string[] = [];
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    for (const suffix of ["", "-wal", "-shm"]) {
+      if (!existsSync(legacy + suffix)) continue;
+      renameSync(legacy + suffix, path + suffix);
+      moved.push(suffix);
+    }
+    console.log(`Moved the database from ${legacy} to ${path}`);
+    return path;
+  } catch (error) {
+    for (const suffix of moved) {
+      try { renameSync(path + suffix, legacy + suffix); } catch {}
+    }
+    console.warn(`Could not move ${legacy} to ${path} (${error}); using ${legacy}`);
+    return legacy;
+  }
 }
 
 let db: Database | null = null;
@@ -72,8 +104,8 @@ function openDatabase(path: string): Database {
 
 function getDb(): Database {
   if (!db) {
-    const path = getDbPath();
-    // SQLite creates the file but not its folder (~/.agentq on a fresh machine).
+    const path = getDbPath() === ":memory:" ? ":memory:" : migrateLegacyDb(getDbPath());
+    // SQLite creates the file but not its folder (~/.mtq on a fresh machine).
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     db = openDatabase(path);
     initSchema();
@@ -89,7 +121,7 @@ export function getDbHandle(): Database {
 
 /**
  * Closes the current connection so the next getDb() call reopens using the
- * current AGENTQ_DB_PATH. Intended for tests that need a file-backed database
+ * current MTQ_DB_PATH. Intended for tests that need a file-backed database
  * (e.g. when subprocesses must see the same rows).
  */
 export function resetDb(): void {

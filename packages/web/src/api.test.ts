@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { Task, Project } from "@agentq/shared";
+import type { Task, Project } from "@mtq/shared";
 import {
   TaskStatus,
   addFindings,
@@ -15,13 +15,13 @@ import {
   serverOnline,
   skillsBundleVersion,
   updateFinding,
-} from "@agentq/shared";
-import { forceStatus } from "@agentq/shared/testing";
+} from "@mtq/shared";
+import { forceStatus } from "@mtq/shared/testing";
 import { startServer, sweep } from "./index.js";
 
 // Set test DB before the first DB call. The shared package resolves
-// AGENTQ_DB_PATH lazily in getDb(), and nothing touches the DB at import time.
-process.env.AGENTQ_DB_PATH = ":memory:";
+// MTQ_DB_PATH lazily in getDb(), and nothing touches the DB at import time.
+process.env.MTQ_DB_PATH = ":memory:";
 
 type Server = ReturnType<typeof startServer>;
 
@@ -134,21 +134,21 @@ describe("startServer", () => {
     expect(await res.json()).toEqual({ error: "not found" });
   });
 
-  it("listens on loopback unless AGENTQ_HOST names another address", () => {
-    const saved = process.env.AGENTQ_HOST;
+  it("listens on loopback unless MTQ_HOST names another address", () => {
+    const saved = process.env.MTQ_HOST;
     try {
-      delete process.env.AGENTQ_HOST;
+      delete process.env.MTQ_HOST;
       const local = startServer({ port: 0, dev: false });
       expect(local.hostname).toBe("127.0.0.1");
       local.stop(true);
 
-      process.env.AGENTQ_HOST = "localhost";
+      process.env.MTQ_HOST = "localhost";
       const named = startServer({ port: 0, dev: false });
       expect(named.hostname).toBe("localhost");
       named.stop(true);
     } finally {
-      if (saved === undefined) delete process.env.AGENTQ_HOST;
-      else process.env.AGENTQ_HOST = saved;
+      if (saved === undefined) delete process.env.MTQ_HOST;
+      else process.env.MTQ_HOST = saved;
     }
   });
 });
@@ -207,18 +207,18 @@ describe("request guard: a web page cannot drive the local API", () => {
     expect(getTaskById(task.id)!.status).toBe(TaskStatus.WaitingCodeReview);
   });
 
-  it("refuses a Host that does not name this machine (DNS rebinding) unless AGENTQ_ALLOWED_HOSTS lists it", async () => {
+  it("refuses a Host that does not name this machine (DNS rebinding) unless MTQ_ALLOWED_HOSTS lists it", async () => {
     expect((await api("/api/tasks", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(403);
     expect((await api("/api/events", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(403);
     expect((await api("/api/tasks", { headers: { Host: `127.0.0.1:${server.port}` } })).status).toBe(200);
 
-    const saved = process.env.AGENTQ_ALLOWED_HOSTS;
-    process.env.AGENTQ_ALLOWED_HOSTS = "rebound.example";
+    const saved = process.env.MTQ_ALLOWED_HOSTS;
+    process.env.MTQ_ALLOWED_HOSTS = "rebound.example";
     try {
       expect((await api("/api/tasks", { headers: { Host: `rebound.example:${server.port}` } })).status).toBe(200);
     } finally {
-      if (saved === undefined) delete process.env.AGENTQ_ALLOWED_HOSTS;
-      else process.env.AGENTQ_ALLOWED_HOSTS = saved;
+      if (saved === undefined) delete process.env.MTQ_ALLOWED_HOSTS;
+      else process.env.MTQ_ALLOWED_HOSTS = saved;
     }
   });
 });
@@ -329,7 +329,7 @@ describe("POST /api/tasks", () => {
   });
 
   it("uses the project's default branch unless the task names one", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "agentq-api-repo-"));
+    const repo = mkdtempSync(join(tmpdir(), "mtq-api-repo-"));
     try {
       const git = (...args: string[]) => Bun.spawnSync(["git", "-C", repo, ...args]);
       git("init", "-q", "-b", "trunk");
@@ -712,7 +712,7 @@ describe("workflow sub-actions (requiresPlan task)", () => {
 });
 
 describe("POST /api/tasks/:id/archive", () => {
-  const archiveRoot = mkdtempSync(join(tmpdir(), "agentq-api-archive-"));
+  const archiveRoot = mkdtempSync(join(tmpdir(), "mtq-api-archive-"));
   const archiveProjectId = randomUUID();
 
   beforeAll(async () => {
@@ -1113,7 +1113,7 @@ describe("autonomy, risk and findings", () => {
   });
 
   it("projects keep a profile; detect-commands reads the repository", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "agentq-api-profile-"));
+    const repo = mkdtempSync(join(tmpdir(), "mtq-api-profile-"));
     try {
       Bun.write(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test", lint: "eslint .", typecheck: "tsc" } }));
       Bun.write(join(repo, "bun.lock"), "");
@@ -1140,8 +1140,8 @@ describe("autonomy, risk and findings", () => {
   });
 
   it("a new project gets the commands detected from its repository, unless the request names its own", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "agentq-api-create-"));
-    const empty = mkdtempSync(join(tmpdir(), "agentq-api-empty-"));
+    const repo = mkdtempSync(join(tmpdir(), "mtq-api-create-"));
+    const empty = mkdtempSync(join(tmpdir(), "mtq-api-empty-"));
     try {
       await Bun.write(join(repo, "package.json"), JSON.stringify({ scripts: { test: "bun test", lint: "eslint ." } }));
       await Bun.write(join(repo, "bun.lock"), "");

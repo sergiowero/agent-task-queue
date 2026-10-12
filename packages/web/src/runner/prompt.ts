@@ -1,5 +1,5 @@
-import { MCP_SERVER_NAME } from "@agentq/mcp";
-import type { Agent, Phase, Project, Role, Task, TaskStatus } from "@agentq/shared";
+import { MCP_SERVER_NAME } from "@mtq/mcp";
+import type { Agent, Phase, Project, Role, Task, TaskStatus } from "@mtq/shared";
 import {
   ROLE_INFO,
   STATUS_INFO,
@@ -8,7 +8,7 @@ import {
   readSkill,
   skillForPhase,
   stripFrontmatter,
-} from "@agentq/shared";
+} from "@mtq/shared";
 
 export type { Phase };
 export { stripFrontmatter };
@@ -37,7 +37,7 @@ const CONTEXT_HINT: Record<Phase, string> = {
   merge: "the PR URL/number, the base and head branches, and what the person merging should check",
 };
 
-/** The AgentQ MCP tool that ends each phase, with the arguments to pass. */
+/** The Moonlight Task Queue MCP tool that ends each phase, with the arguments to pass. */
 export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args: Record<string, unknown> }> = {
   refine: (taskId) => ({
     tool: "submit_refinement",
@@ -182,9 +182,9 @@ export function buildPrompt(input: BuildPromptInput): string {
     : "Start from the latest handoffs, the open findings and `humanNotes` (what people said since the last submission). The brief leaves out the full conversation; call `get_task` if you need it.";
 
   return [
-    `# AgentQ agent: ${ROLE_INFO[role].label}`,
+    `# Moonlight Task Queue agent: ${ROLE_INFO[role].label}`,
     "",
-    `You are an AgentQ agent working the **${role}** role (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
+    `You are a Moonlight Task Queue agent working the **${role}** role (agent id \`${agent.id}\`, tool ${agent.toolName}, model ${agent.model}).`,
     `Task \`${task.id}\` has ALREADY been claimed for you by the runner. Do **NOT** call \`claim_task\`.`,
     `Current status: \`${task.status}\` (phase: ${phase}).`,
     project
@@ -193,7 +193,7 @@ export function buildPrompt(input: BuildPromptInput): string {
         : `Project working directory: \`${project.workingDirectory}\` (you are running inside it).`
       : "",
     "",
-    "## AgentQ MCP tools",
+    "## Moonlight Task Queue MCP tools",
     "",
     `This run has the \`${MCP_SERVER_NAME}\` MCP server (Claude Code names its tools \`mcp__${MCP_SERVER_NAME}__<tool>\`). Do all queue work through its tools:`,
     "",

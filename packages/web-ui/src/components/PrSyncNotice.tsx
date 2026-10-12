@@ -37,7 +37,7 @@ function prSyncOff(prSync: PrSync): { why: ReactNode; fix: ReactNode } | null {
     return {
       why: (
         <>
-          The server runs with <Code>AGENTQ_PR_SYNC=0</Code>
+          The server runs with <Code>MTQ_PR_SYNC=0</Code>
         </>
       ),
       fix: "Restart the server without that setting",

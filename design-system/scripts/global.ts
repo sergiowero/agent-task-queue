@@ -1,4 +1,4 @@
-// Classic-script entry: expose the bundle as window.AgentQ.
-import * as AgentQ from "./entry";
+// Classic-script entry: expose the bundle as window.MTQ.
+import * as MTQ from "./entry";
 
-(window as unknown as { AgentQ: typeof AgentQ }).AgentQ = AgentQ;
+(window as unknown as { MTQ: typeof MTQ }).MTQ = MTQ;

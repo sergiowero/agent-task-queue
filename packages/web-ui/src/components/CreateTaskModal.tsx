@@ -8,7 +8,7 @@ import {
   type AutonomyLevel,
   type Risk,
   type TaskType,
-} from "@agentq/shared/catalog";
+} from "@mtq/shared/catalog";
 import { api } from "../lib/api";
 import {
   AddIcon,

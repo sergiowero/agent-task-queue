@@ -1,8 +1,8 @@
-# AgentQ
+# Moonlight Task Queue
 
-> **Outdated (historical spec).** This document describes the original design, where agents used an `agentq` command-line binary. That binary no longer exists: agents now use the AgentQ MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
+> **Outdated (historical spec).** This document describes the original design, where agents used an `mtq` command-line binary. That binary no longer exists: agents now use the Moonlight Task Queue MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
 
-ATQ is a local tool designed to act as a "100x engineer" assistant for managing coding-agent work across multiple projects.
+Moonlight Task Queue is a local tool designed to act as a "100x engineer" assistant for managing coding-agent work across multiple projects.
 
 ## Purpose
 
@@ -25,7 +25,7 @@ The system will consist of five core components:
 
 ### Web Portal
 
-The web portal will provide a visual task board with columns representing action buckets and priorities. The board will support configurable columns so users can decide which action columns to show or hide, and each column can filter which underlying workflow statuses are visible inside it. It will include a board view for tasks, a task detail drawer, an agents view showing which agent is working on which task, a projects view for managing projects, and an activity feed for monitoring task lifecycle events. The interface will be labeled "ATQ - your 100x engineer tool". The board receives real-time updates via SSE (Server-Sent Events) so changes made by agents or other users appear without manual refresh.
+The web portal will provide a visual task board with columns representing action buckets and priorities. The board will support configurable columns so users can decide which action columns to show or hide, and each column can filter which underlying workflow statuses are visible inside it. It will include a board view for tasks, a task detail drawer, an agents view showing which agent is working on which task, a projects view for managing projects, and an activity feed for monitoring task lifecycle events. The interface will be labeled "Moonlight Task Queue - your 100x engineer tool". The board receives real-time updates via SSE (Server-Sent Events) so changes made by agents or other users appear without manual refresh.
 
 #### Recommended web view features
 
@@ -71,27 +71,27 @@ The CLI tool will allow coding agents to interact directly with the local databa
 
 #### Recommended CLI features
 
-The CLI should be built as a practical command layer for coding agents, with simple commands for discovery, task claiming, progress updates, and handoff to review. The CLI binary is named `atq` and operates directly against the local SQLite database, requiring no running server.
+The CLI should be built as a practical command layer for coding agents, with simple commands for discovery, task claiming, progress updates, and handoff to review. The CLI binary is named `mtq` and operates directly against the local SQLite database, requiring no running server.
 
 1. Task listing and inspection
    - Agent actions: list all tasks or get a specific task by ID.
    - What the agent sees: formatted task details with ID, title, status, priority, and related metadata.
-   - Overall design: commands like `atq list` to list all tasks and `atq get <id>` to inspect a single task in detail.
+   - Overall design: commands like `mtq list` to list all tasks and `mtq get <id>` to inspect a single task in detail.
 
 2. Task creation
    - Agent actions: create a new task with title, description, acceptance criteria, priority, recommended branch, requires-plan flag, and merge branch.
     - What the agent sees: confirmation of task creation with the new task's ID and initial status (New if requiresPlan, Ready for Code otherwise).
-   - Overall design: a command like `atq create <title>` with optional flags for all other fields.
+   - Overall design: a command like `mtq create <title>` with optional flags for all other fields.
 
 3. Task claiming
-   - Agent actions: claim the highest-priority eligible task via `atq claim` with agent identity arguments (name, version, model, role, session-id).
+   - Agent actions: claim the highest-priority eligible task via `mtq claim` with agent identity arguments (name, version, model, role, session-id).
    - What the agent sees: the claimed task's full details and confirmation of the new status.
    - Overall design: the CLI automatically selects the highest-priority unclaimed task based on the agent's role, creates or updates the agent record, transitions the task to the appropriate working state, and outputs structured task details. Role-to-status mappings are: planner (PlanRequested, Plan Changes Requested), implementer (Ready for Code, Changes Requested, Approved), reviewer (Code Review Requested), senior (all), architect (planner + reviewer).
 
 4. Task progress updates and handoff
    - Agent actions: submit a plan, submit code, submit review, and submit merge. All these actions add a conversation entry with the agent's context and progress notes.
    - What the agent sees: confirmation of the action taken, any feedback from the system, and the updated task status.
-   - Overall design: commands like `atq submit-plan <id>`, `atq submit-code <id>`, `atq submit-review <id>`, and `atq submit-merge <id>` that accept relevant parameters and provide structured output.
+   - Overall design: commands like `mtq submit-plan <id>`, `mtq submit-code <id>`, `mtq submit-review <id>`, and `mtq submit-merge <id>` that accept relevant parameters and provide structured output.
    - Submit-merge requires branch, commit hash, and authors; worktree path is optional.
    - Review-specific behavior: a user action can move a task to **Code review requested**; once a reviewer agent claims that task, the system moves it to **Reviewing** and the CLI exposes that state in its output so the agent can see it is actively being reviewed.
    Note: Agents lose ownership of the task after submitting a plan, code, or review. The system automatically updates the task status and clears the assigned agent.
@@ -106,7 +106,7 @@ The local database will store all queue data, task metadata, and project informa
 
 ### AI Skills
 
-AI skills will guide coding agents on how to use the CLI and interact with the ATQ backend consistently. In a second phase, coding assistants will be able to create new tasks using AI capabilities, so users can submit well-defined, concise, context-rich tasks that other coding agents can begin working on immediately.
+AI skills will guide coding agents on how to use the CLI and interact with the Moonlight Task Queue backend consistently. In a second phase, coding assistants will be able to create new tasks using AI capabilities, so users can submit well-defined, concise, context-rich tasks that other coding agents can begin working on immediately.
 
 ## Domain Entities
 
@@ -121,7 +121,7 @@ Example:
 {
   "id": "uuid",
   "name": "atq",
-  "displayName": "AgentQ",
+  "displayName": "Moonlight Task Queue",
   "workingDirectory": "/users/boss/atq_repo",
   "created_at": "2026-07-09T12:00:00.000Z",
   "updated_at": "2026-07-09T12:00:00.000Z"
@@ -367,20 +367,20 @@ Is a combination if planner and reviewer roles, allowing the agent to create pla
 
 ## Agent Workflow
 
-Coding agents interact with ATQ through the CLI using a structured protocol. The workflow is:
+Coding agents interact with Moonlight Task Queue through the CLI using a structured protocol. The workflow is:
 
-1. **Claim** a task using `atq claim --json`
+1. **Claim** a task using `mtq claim --json`
 2. **Read** the task status from the response
 3. **Determine phase** based on status
 4. **Work** on the task according to the phase
-5. **Submit** using the appropriate `atq submit-*` command
+5. **Submit** using the appropriate `mtq submit-*` command
 6. **Repeat** until no tasks available
 
 ### JSON Output
 
 All CLI commands support `--json` flag for structured output:
-- `atq claim --json` returns task with embedded project object and agent identity
-- `atq submit-* --json` returns success/failure with status transitions
+- `mtq claim --json` returns task with embedded project object and agent identity
+- `mtq submit-* --json` returns success/failure with status transitions
 - Error responses return `{ "success": false, "error": "..." }`
 
 ### Worktree Management

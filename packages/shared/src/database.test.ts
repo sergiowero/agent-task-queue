@@ -48,14 +48,14 @@ import { validateEnv } from "./env.js";
 import { detectDefaultBranch } from "./git.js";
 
 // Set test DB before any imports
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 const testProjectId = "test-project-isolation";
 const softDeleteProjectId = "soft-delete-project-" + Date.now();
 
 describe("Database Isolation (8.1)", () => {
   it("uses in-memory database for tests", () => {
-    expect(process.env.AGENTQ_DB_PATH).toBe(":memory:");
+    expect(process.env.MTQ_DB_PATH).toBe(":memory:");
   });
 });
 
@@ -425,7 +425,7 @@ describe("patchTask / appendJson", () => {
 
 describe("default merge branch detection", () => {
   it("reads origin/HEAD, then a local main/master, else main", () => {
-    const repo = mkdtempSync(join(tmpdir(), "agentq-branch-"));
+    const repo = mkdtempSync(join(tmpdir(), "mtq-branch-"));
     try {
       const git = (...args: string[]) => Bun.spawnSync(["git", "-C", repo, ...args]);
       expect(detectDefaultBranch(repo)).toBe("main");
@@ -446,17 +446,17 @@ describe("Env Validation", () => {
   it("validateEnv returns default values", () => {
     const env = validateEnv();
     expect(env.PORT).toBe(3000);
-    expect(env.AGENTQ_DB_PATH).toBe(":memory:");
+    expect(env.MTQ_DB_PATH).toBe(":memory:");
   });
 
-  it("defaults the database to ~/.agentq/agentq.db", () => {
-    const previous = process.env.AGENTQ_DB_PATH;
-    delete process.env.AGENTQ_DB_PATH;
+  it("defaults the database to ~/.mtq/mtq.db", () => {
+    const previous = process.env.MTQ_DB_PATH;
+    delete process.env.MTQ_DB_PATH;
     try {
-      expect(getDbPath()).toBe(join(homedir(), ".agentq", "agentq.db"));
-      expect(validateEnv().AGENTQ_DB_PATH).toBe("~/.agentq/agentq.db");
+      expect(getDbPath()).toBe(join(homedir(), ".mtq", "mtq.db"));
+      expect(validateEnv().MTQ_DB_PATH).toBe("~/.mtq/mtq.db");
     } finally {
-      process.env.AGENTQ_DB_PATH = previous;
+      process.env.MTQ_DB_PATH = previous;
     }
   });
 });
@@ -650,11 +650,11 @@ describe("Schema Validation — SteerDetails & Guardrails", () => {
 // Last in the file: it swaps the in-memory database for a file-backed one to re-run a migration.
 describe("024_phase_roles", () => {
   it("turns legacy runner roles into role lists and renames agent roles", () => {
-    const dir = mkdtempSync(join(tmpdir(), "agentq-roles-"));
-    const previous = process.env.AGENTQ_DB_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "mtq-roles-"));
+    const previous = process.env.MTQ_DB_PATH;
     try {
       resetDb();
-      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      process.env.MTQ_DB_PATH = join(dir, "mtq.db");
       rollbackMigration("024_phase_roles");
       const d = getDbHandle();
       const now = new Date().toISOString();
@@ -677,7 +677,7 @@ describe("024_phase_roles", () => {
       expect(getAgents().find((a) => a.id === "legacy")?.role).toBe("code");
     } finally {
       resetDb();
-      process.env.AGENTQ_DB_PATH = previous;
+      process.env.MTQ_DB_PATH = previous;
       // Windows may keep the file locked a moment after close.
       try { rmSync(dir, { recursive: true, force: true }); } catch {}
     }
@@ -687,11 +687,11 @@ describe("024_phase_roles", () => {
 // File-backed too (see above): re-runs the migration on data written in the old form.
 describe("028_message_types", () => {
   it("gives refinements and plan critiques stored as plan/review messages their own types", () => {
-    const dir = mkdtempSync(join(tmpdir(), "agentq-types-"));
-    const previous = process.env.AGENTQ_DB_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "mtq-types-"));
+    const previous = process.env.MTQ_DB_PATH;
     try {
       resetDb();
-      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      process.env.MTQ_DB_PATH = join(dir, "mtq.db");
       rollbackMigration("028_message_types");
       const projectId = "types-" + Date.now();
       createProject({ id: projectId, displayName: "Types", workingDirectory: "/tmp/types" });
@@ -719,7 +719,7 @@ describe("028_message_types", () => {
       expect(getTaskById(task.id)!.conversation.map((e) => e.messageType)).toEqual(["plan", "plan", "review", "review", "user"]);
     } finally {
       resetDb();
-      process.env.AGENTQ_DB_PATH = previous;
+      process.env.MTQ_DB_PATH = previous;
       // Windows may keep the file locked a moment after close.
       try { rmSync(dir, { recursive: true, force: true }); } catch {}
     }
@@ -729,11 +729,11 @@ describe("028_message_types", () => {
 // File-backed too (see above): re-runs the migration on data written in the old form.
 describe("033_lease_expired_events", () => {
   it("relabels the expired claims that were logged as runner reverts, and only those", () => {
-    const dir = mkdtempSync(join(tmpdir(), "agentq-lease-"));
-    const previous = process.env.AGENTQ_DB_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "mtq-lease-"));
+    const previous = process.env.MTQ_DB_PATH;
     try {
       resetDb();
-      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      process.env.MTQ_DB_PATH = join(dir, "mtq.db");
       rollbackMigration("033_lease_expired_events");
       const projectId = "lease-" + Date.now();
       createProject({ id: projectId, displayName: "Lease", workingDirectory: "/tmp/lease" });
@@ -763,7 +763,7 @@ describe("033_lease_expired_events", () => {
       ]);
     } finally {
       resetDb();
-      process.env.AGENTQ_DB_PATH = previous;
+      process.env.MTQ_DB_PATH = previous;
       // Windows may keep the file locked a moment after close.
       try { rmSync(dir, { recursive: true, force: true }); } catch {}
     }

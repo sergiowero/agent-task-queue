@@ -4,7 +4,7 @@ import type {
   ArchiveRunnerJob,
   AgentSubmitAction,
   SubmitResult,
-} from "@agentq/shared";
+} from "@mtq/shared";
 import {
   archiveTask,
   TaskStatus,
@@ -78,7 +78,7 @@ import {
   deleteRunner,
   paginate,
   validateEnv,
-} from "@agentq/shared";
+} from "@mtq/shared";
 import { getRunnerEngine, listTools } from "./runner/runner.js";
 import { CUSTOM_RUNNERS_DISABLED, customRunnersAllowed, runsCustomArgv } from "./runner/commands.js";
 import { refuseRequest } from "./security.js";
@@ -369,7 +369,7 @@ function wrapHandler(
 export interface StartServerOptions {
   /** Port to listen on (0 = random free port). Defaults to env PORT. */
   port?: number;
-  /** Address to listen on. Defaults to env AGENTQ_HOST (loopback). */
+  /** Address to listen on. Defaults to env MTQ_HOST (loopback). */
   hostname?: string;
   /** Enable dev-mode CORS headers and the Vite proxy. Defaults to `--dev` flag. */
   dev?: boolean;
@@ -380,7 +380,7 @@ export function startServer(opts: StartServerOptions = {}) {
 
   const server = Bun.serve({
     port: opts.port ?? PORT,
-    hostname: opts.hostname ?? validateEnv().AGENTQ_HOST,
+    hostname: opts.hostname ?? validateEnv().MTQ_HOST,
     // SSE streams idle between events; the default 10 s idle timeout would
     // drop them before the 30 s keepalive comment goes out.
     idleTimeout: 120,
@@ -468,15 +468,15 @@ async function main() {
   runnerEngine.recoverOrphans();
   runnerEngine.startEnabledRunners();
   // The deterministic verifier runs the projects' commands on submitted code.
-  if (process.env.AGENTQ_VERIFY_WORKER !== "0") verifyWorker.start();
+  if (process.env.MTQ_VERIFY_WORKER !== "0") verifyWorker.start();
   // Completes tasks whose PR was merged on GitHub (needs the gh CLI, logged in).
-  if (process.env.AGENTQ_PR_SYNC !== "0") prSync.start();
+  if (process.env.MTQ_PR_SYNC !== "0") prSync.start();
   sweep();
   setInterval(sweep, 60_000);
 
-  console.log(`AgentQ Web Server running on http://localhost:${server.port}`);
+  console.log(`Moonlight Task Queue Web Server running on http://localhost:${server.port}`);
   if (!["127.0.0.1", "::1", "localhost"].includes(server.hostname ?? "")) {
-    console.warn(`[server] listening on ${server.hostname} (AGENTQ_HOST): anyone who can reach this port can drive AgentQ`);
+    console.warn(`[server] listening on ${server.hostname} (MTQ_HOST): anyone who can reach this port can drive Moonlight Task Queue`);
   }
 }
 

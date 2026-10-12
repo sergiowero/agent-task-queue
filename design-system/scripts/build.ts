@@ -99,7 +99,7 @@ if (!result.success) {
 let js = (await result.outputs[0].text()).trim();
 // Consumers inline the bundle in a <script>, so it may not contain an end tag or comment opener.
 js = js.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--");
-const header = { format: 4, namespace: "AgentQ", components: COMPONENTS.map((name) => ({ name })) };
+const header = { format: 4, namespace: "MTQ", components: COMPONENTS.map((name) => ({ name })) };
 writeFileSync(join(out, "bundle.js"), `/* @ds-bundle: ${JSON.stringify(header)} */\n${js}\n`);
 console.log(`bundle.js  ${(js.length / 1024).toFixed(0)} KB`);
 
@@ -149,7 +149,7 @@ let css = readFullColors(compiled);
 // Bun's CSS minifier would try to fetch the remote font @import, so set it aside while minifying.
 const fontImport = css.match(/^@import url\([^)]*\);\s*/)?.[0] ?? "";
 css = css.slice(fontImport.length);
-const tmp = mkdtempSync(join(tmpdir(), "agentq-ds-"));
+const tmp = mkdtempSync(join(tmpdir(), "mtq-ds-"));
 try {
   writeFileSync(join(tmp, "bundle.css"), css);
   const min = await Bun.build({ entrypoints: [join(tmp, "bundle.css")], minify: true });

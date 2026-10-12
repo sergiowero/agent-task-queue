@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import type { SubmitCodeInput, Task } from "@agentq/shared";
+import type { SubmitCodeInput, Task } from "@mtq/shared";
 import {
   TaskStatus,
   analyzeDiff,
@@ -26,17 +26,17 @@ import {
   sweepQueue,
   updateProject,
   verifierOnline,
-} from "@agentq/shared";
+} from "@mtq/shared";
 import { execCommand, runVerification, VerifyWorker, verificationCommands, isAllowed } from "./verify.js";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
-const HOME = mkdtempSync(join(tmpdir(), "agentq-verify-home-"));
-const previousHome = process.env.AGENTQ_HOME;
-process.env.AGENTQ_HOME = HOME;
+process.env.MTQ_DB_PATH = ":memory:";
+const HOME = mkdtempSync(join(tmpdir(), "mtq-verify-home-"));
+const previousHome = process.env.MTQ_HOME;
+process.env.MTQ_HOME = HOME;
 
 const BUN = JSON.stringify(process.execPath);
 const hasGit = !!Bun.which("git");
-const root = mkdtempSync(join(tmpdir(), "agentq-verify-"));
+const root = mkdtempSync(join(tmpdir(), "mtq-verify-"));
 const coder = { toolName: "Coder", version: "1", model: "m", sessionId: "verify-coder" };
 const reviewer = { toolName: "Reviewer", version: "1", model: "r", sessionId: "verify-reviewer" };
 
@@ -60,7 +60,7 @@ function makeRepo(): { repo: string; worktree: string } {
   write(repo, "src/a.ts", "export const a = 1;\n");
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "init");
-  const worktree = join(repo, ".agentq", "worktrees", "t");
+  const worktree = join(repo, ".mtq", "worktrees", "t");
   git(repo, "worktree", "add", "-q", "-b", "feat/x", worktree, "main");
   return { repo, worktree };
 }
@@ -96,7 +96,7 @@ function coded(projectId: string, worktree: string, over: Partial<Parameters<typ
 async function verify(projectId: string, opts: Parameters<typeof runVerification>[2] = {}) {
   const claimed = claimNextTask({
     roles: ["verify"],
-    agent: { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "v" },
+    agent: { toolName: "mtq-verifier", version: "1", model: "none", sessionId: "v" },
     projectId,
     runnerId: "builtin:verifier",
   })!;
@@ -129,8 +129,8 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(HOME, { recursive: true, force: true });
-  if (previousHome === undefined) delete process.env.AGENTQ_HOME;
-  else process.env.AGENTQ_HOME = previousHome;
+  if (previousHome === undefined) delete process.env.MTQ_HOME;
+  else process.env.MTQ_HOME = previousHome;
 });
 
 describe.skipIf(!hasGit)("verification", () => {

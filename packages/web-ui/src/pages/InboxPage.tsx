@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { inboxReason, type InboxReason } from "@agentq/shared/catalog";
+import { inboxReason, type InboxReason } from "@mtq/shared/catalog";
 import { api } from "../lib/api";
 import type { Task } from "../lib/api";
 import { useSSE } from "../hooks/useSSE";

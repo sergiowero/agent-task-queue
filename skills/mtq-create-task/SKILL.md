@@ -1,15 +1,15 @@
 ---
-name: agentq-create-task
-description: Instructions for creating well-structured tasks in AgentQ through the AgentQ MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into an AgentQ task for other agents to claim and execute.
-allowed-tools: mcp__agentq__list_projects, mcp__agentq__create_task
+name: mtq-create-task
+description: Instructions for creating well-structured tasks in Moonlight Task Queue through the Moonlight Task Queue MCP server (`list_projects`, `create_task`). Use when the user wants to create a task, break down work, or formalize a request into a Moonlight Task Queue task for other agents to claim and execute.
+allowed-tools: mcp__mtq__list_projects, mcp__mtq__create_task
 metadata:
   version: "6.5.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# AgentQ Create Task Skill
+# Moonlight Task Queue Create Task Skill
 
-All queue work goes through the tools of the `agentq` MCP server. Your client prefixes their names (in Claude Code `create_task` is `mcp__agentq__create_task`). If the `agentq` tools are missing, tell the user to run `bun run install:mcp` from the AgentQ checkout and restart the tool.
+All queue work goes through the tools of the `mtq` MCP server. Your client prefixes their names (in Claude Code `create_task` is `mcp__mtq__create_task`). If the `mtq` tools are missing, tell the user to run `bun run install:mcp` from the Moonlight Task Queue checkout and restart the tool.
 
 ## Identity
 
@@ -131,9 +131,9 @@ When writing the description, use this structure:
 
 ## Guardrails
 
-- **NEVER** use API calls (HTTP/curl/fetch) — use the AgentQ MCP tools only (`list_projects`, `create_task`)
+- **NEVER** use API calls (HTTP/curl/fetch) — use the Moonlight Task Queue MCP tools only (`list_projects`, `create_task`)
 - **DO NOT** claim or execute the task — this skill is only for creating tasks
-- **DO NOT** call `claim_task` or the `submit_*` tools — those belong to the `agentq-claim` skill
+- **DO NOT** call `claim_task` or the `submit_*` tools — those belong to the `mtq-claim` skill
 - **DO** elaborate descriptions and acceptance criteria — always add value beyond what the user provided
 - **DO** respect user-specified priority and branch — only generate them when not given
 - **DO** verify the project exists before creating the task

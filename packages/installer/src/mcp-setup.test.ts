@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { McpServerLaunch } from "@agentq/mcp";
+import type { McpServerLaunch } from "@mtq/mcp";
 import type { SetupEnv } from "./mcp-setup.js";
 import { TARGETS, manualEntry, registerAll } from "./mcp-setup.js";
 
 // Every test works in its own temp home: real tool configs are never read or written.
 const launch: McpServerLaunch = {
   command: "C:\\Program Files\\bun\\bun.exe",
-  args: ["run", "/agentq/packages/mcp/src/index.ts"],
-  env: { AGENTQ_DB_PATH: "/data/agentq.db" },
+  args: ["run", "/mtq/packages/mcp/src/index.ts"],
+  env: { MTQ_DB_PATH: "/data/mtq.db" },
 };
 
 let home: string;
@@ -41,7 +41,7 @@ function snapshot(): Record<string, string | null> {
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "agentq-mcp-setup-"));
+  home = mkdtempSync(join(tmpdir(), "mtq-mcp-setup-"));
   // Every tool "installed": its binary is on PATH.
   env = { homeDir: home, platform: "linux", env: {}, which: (bin) => `/usr/bin/${bin}` };
 });
@@ -63,16 +63,16 @@ describe("registerAll", () => {
     });
     const p = paths();
 
-    expect(JSON.parse(readFileSync(p.claude, "utf8")).mcpServers.agentq).toEqual({
+    expect(JSON.parse(readFileSync(p.claude, "utf8")).mcpServers.mtq).toEqual({
       type: "stdio",
       ...launch,
     });
     const codex = Bun.TOML.parse(readFileSync(p.codex, "utf8")) as any;
-    expect(codex.mcp_servers.agentq).toEqual(launch);
+    expect(codex.mcp_servers.mtq).toEqual(launch);
     expect(JSON.parse(readFileSync(p.opencode, "utf8"))).toEqual({
       $schema: "https://opencode.ai/config.json",
       mcp: {
-        agentq: {
+        mtq: {
           type: "local",
           command: [launch.command, ...launch.args],
           environment: launch.env,
@@ -80,12 +80,12 @@ describe("registerAll", () => {
         },
       },
     });
-    expect(JSON.parse(readFileSync(p.gemini, "utf8")).mcpServers.agentq).toEqual(launch);
+    expect(JSON.parse(readFileSync(p.gemini, "utf8")).mcpServers.mtq).toEqual(launch);
     expect(JSON.parse(readFileSync(p.copilot, "utf8"))).toEqual({
-      mcpServers: { agentq: { type: "local", ...launch, tools: ["*"] } },
+      mcpServers: { mtq: { type: "local", ...launch, tools: ["*"] } },
     });
     expect(JSON.parse(readFileSync(p.vscode, "utf8"))).toEqual({
-      servers: { agentq: { type: "stdio", ...launch } },
+      servers: { mtq: { type: "stdio", ...launch } },
     });
   });
 
@@ -104,7 +104,7 @@ describe("registerAll", () => {
     expect(snapshot()).toEqual(first);
     // Three runs do not pile up entries either.
     registerAll(launch, env);
-    expect(readFileSync(paths().codex, "utf8").match(/\[mcp_servers\.agentq\]/g)).toHaveLength(1);
+    expect(readFileSync(paths().codex, "utf8").match(/\[mcp_servers\.mtq\]/g)).toHaveLength(1);
   });
 
   it("updates an out-of-date entry and keeps everything else in the file", () => {
@@ -113,7 +113,7 @@ describe("registerAll", () => {
       p.claude,
       JSON.stringify({
         theme: "dark",
-        mcpServers: { other: { command: "x" }, agentq: { command: "old" } },
+        mcpServers: { other: { command: "x" }, mtq: { command: "old" } },
       }),
     );
     mkdirSync(join(home, ".codex"), { recursive: true });
@@ -122,12 +122,12 @@ describe("registerAll", () => {
       [
         'model = "gpt-5"',
         "",
-        "[mcp_servers.agentq]",
+        "[mcp_servers.mtq]",
         'command = "old-bun"',
         'args = ["old.ts"]',
         "",
-        "[mcp_servers.agentq.env]",
-        'AGENTQ_DB_PATH = "/old.db"',
+        "[mcp_servers.mtq.env]",
+        'MTQ_DB_PATH = "/old.db"',
         "",
         '[mcp_servers."other"]',
         'command = "other-mcp"',
@@ -135,7 +135,7 @@ describe("registerAll", () => {
       ].join("\n"),
     );
     mkdirSync(join(home, ".gemini"), { recursive: true });
-    const geminiBefore = JSON.stringify({ theme: "GitHub", mcpServers: { agentq: launch } });
+    const geminiBefore = JSON.stringify({ theme: "GitHub", mcpServers: { mtq: launch } });
     writeFileSync(p.gemini, geminiBefore);
     mkdirSync(join(home, ".config", "Code", "User"), { recursive: true });
     writeFileSync(
@@ -159,12 +159,12 @@ describe("registerAll", () => {
     const claude = JSON.parse(readFileSync(p.claude, "utf8"));
     expect(claude.theme).toBe("dark");
     expect(claude.mcpServers.other).toEqual({ command: "x" });
-    expect(claude.mcpServers.agentq.command).toBe(launch.command);
+    expect(claude.mcpServers.mtq.command).toBe(launch.command);
 
     const codex = Bun.TOML.parse(readFileSync(p.codex, "utf8")) as any;
     expect(codex.model).toBe("gpt-5");
     expect(codex.mcp_servers.other).toEqual({ command: "other-mcp" });
-    expect(codex.mcp_servers.agentq).toEqual(launch);
+    expect(codex.mcp_servers.mtq).toEqual(launch);
 
     // Already current: not rewritten, not even reformatted.
     expect(readFileSync(p.gemini, "utf8")).toBe(geminiBefore);
@@ -172,7 +172,38 @@ describe("registerAll", () => {
     const vscode = JSON.parse(readFileSync(p.vscode, "utf8"));
     expect(vscode.inputs).toEqual([{ id: "token", type: "promptString" }]);
     expect(vscode.servers.github).toEqual({ type: "http", url: "https://example.com/mcp" });
-    expect(vscode.servers.agentq.command).toBe(launch.command);
+    expect(vscode.servers.mtq.command).toBe(launch.command);
+  });
+
+  it("removes the pre-rename agentq entry, even when the mtq entry is current", () => {
+    const p = paths();
+    writeFileSync(
+      p.claude,
+      JSON.stringify({ mcpServers: { other: { command: "x" }, agentq: { command: "old" } } }),
+    );
+    mkdirSync(join(home, ".gemini"), { recursive: true });
+    writeFileSync(p.gemini, JSON.stringify({ mcpServers: { agentq: launch, mtq: launch } }));
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(
+      p.codex,
+      [
+        "[mcp_servers.agentq]",
+        'command = "old-bun"',
+        "",
+        "[mcp_servers.agentq.env]",
+        'AGENTQ_DB_PATH = "/old.db"',
+        "",
+      ].join("\n"),
+    );
+
+    const results = statuses(registerAll(launch, env));
+    expect(results).toMatchObject({ claude: "added", gemini: "updated", codex: "added" });
+
+    const claude = JSON.parse(readFileSync(p.claude, "utf8"));
+    expect(Object.keys(claude.mcpServers).sort()).toEqual(["mtq", "other"]);
+    expect(JSON.parse(readFileSync(p.gemini, "utf8")).mcpServers).toEqual({ mtq: launch });
+    const codex = Bun.TOML.parse(readFileSync(p.codex, "utf8")) as any;
+    expect(Object.keys(codex.mcp_servers)).toEqual(["mtq"]);
   });
 
   it("skips tools that are not installed", () => {
@@ -237,7 +268,7 @@ describe("registerAll", () => {
     mkdirSync(join(home, ".gemini"), { recursive: true });
     writeFileSync(p.gemini, "{ // a comment\n}");
     mkdirSync(join(home, ".codex"), { recursive: true });
-    writeFileSync(p.codex, 'mcp_servers.agentq = { command = "inline" }\n');
+    writeFileSync(p.codex, 'mcp_servers.mtq = { command = "inline" }\n');
 
     const results = registerAll(launch, env);
     const byTool = Object.fromEntries(results.map((r) => [r.tool, r]));
@@ -246,7 +277,7 @@ describe("registerAll", () => {
     expect(readFileSync(p.gemini, "utf8")).toBe("{ // a comment\n}");
     expect(byTool.codex.status).toBe("failed");
     expect(byTool.codex.message).toContain("inline");
-    expect(readFileSync(p.codex, "utf8")).toBe('mcp_servers.agentq = { command = "inline" }\n');
+    expect(readFileSync(p.codex, "utf8")).toBe('mcp_servers.mtq = { command = "inline" }\n');
     expect(byTool.claude.status).toBe("added");
   });
 
@@ -257,16 +288,16 @@ describe("registerAll", () => {
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(
       p.codex,
-      '\uFEFFmodel = "gpt-5"\r\n\r\n[mcp_servers.agentq]\r\ncommand = "old"\r\n',
+      '\uFEFFmodel = "gpt-5"\r\n\r\n[mcp_servers.mtq]\r\ncommand = "old"\r\n',
     );
 
     const results = registerAll(launch, env);
     expect(statuses(results)).toMatchObject({ gemini: "added", codex: "updated" });
     const gemini = JSON.parse(readFileSync(p.gemini, "utf8"));
-    expect(gemini).toEqual({ theme: "GitHub", mcpServers: { agentq: launch } });
+    expect(gemini).toEqual({ theme: "GitHub", mcpServers: { mtq: launch } });
     const codex = Bun.TOML.parse(readFileSync(p.codex, "utf8")) as any;
     expect(codex.model).toBe("gpt-5");
-    expect(codex.mcp_servers.agentq).toEqual(launch);
+    expect(codex.mcp_servers.mtq).toEqual(launch);
     expect(statuses(registerAll(launch, env))).toMatchObject({
       gemini: "unchanged",
       codex: "unchanged",
@@ -289,14 +320,14 @@ describe("manualEntry", () => {
   it("prints the block to paste for each tool", () => {
     for (const target of TARGETS) {
       const text = manualEntry(target.tool, launch);
-      expect(text).toContain("agentq");
-      expect(text).toContain("AGENTQ_DB_PATH");
+      expect(text).toContain("mtq");
+      expect(text).toContain("MTQ_DB_PATH");
     }
     expect(Bun.TOML.parse(manualEntry("codex", launch))).toEqual({
-      mcp_servers: { agentq: launch },
+      mcp_servers: { mtq: launch },
     });
-    expect(JSON.parse(manualEntry("opencode", launch)).mcp.agentq.type).toBe("local");
-    expect(JSON.parse(manualEntry("copilot", launch)).mcpServers.agentq.tools).toEqual(["*"]);
-    expect(JSON.parse(manualEntry("vscode", launch)).servers.agentq.type).toBe("stdio");
+    expect(JSON.parse(manualEntry("opencode", launch)).mcp.mtq.type).toBe("local");
+    expect(JSON.parse(manualEntry("copilot", launch)).mcpServers.mtq.tools).toEqual(["*"]);
+    expect(JSON.parse(manualEntry("vscode", launch)).servers.mtq.type).toBe("stdio");
   });
 });

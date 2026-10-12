@@ -21,9 +21,9 @@ import {
   listSkills,
   readSkill,
   skillsBundleVersion,
-} from "@agentq/shared";
-import { forceStatus } from "@agentq/shared/testing";
-import { createAgentQMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
+} from "@mtq/shared";
+import { forceStatus } from "@mtq/shared/testing";
+import { createMtqMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
 import {
   MCP_ENTRY,
   MCP_SERVER_NAME,
@@ -33,7 +33,7 @@ import {
 } from "./launch.js";
 
 // Set test DB before any DB access (the path is resolved lazily in getDb()).
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 const TOOL_NAMES = [
   "claim_task",
@@ -93,7 +93,7 @@ function resourceText(content: { text?: string; blob?: string }): string {
   return content.text!;
 }
 
-describe("AgentQ MCP server", () => {
+describe("Moonlight Task Queue MCP server", () => {
   const projectId = "mcp-project-" + Date.now();
   let client: Client;
 
@@ -102,7 +102,7 @@ describe("AgentQ MCP server", () => {
     createProject({ id: projectId, displayName: "MCP Project", workingDirectory: "/tmp/mcp", autonomy: 0 });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     client = new Client({ name: "test-client", version: "0.0.0" });
     await client.connect(clientTransport);
   });
@@ -143,9 +143,9 @@ describe("AgentQ MCP server", () => {
 
   it("lists resource templates and static resources", async () => {
     const { resourceTemplates } = await client.listResourceTemplates();
-    expect(resourceTemplates.map((r) => r.uriTemplate)).toContain("agentq://task/{taskId}");
+    expect(resourceTemplates.map((r) => r.uriTemplate)).toContain("mtq://task/{taskId}");
     const { resources } = await client.listResources();
-    expect(resources.map((r) => r.uri)).toContain("agentq://projects");
+    expect(resources.map((r) => r.uri)).toContain("mtq://projects");
   });
 
   it("exposes every tool a runner job is allowed to use", async () => {
@@ -216,7 +216,7 @@ describe("AgentQ MCP server", () => {
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
     expect(claimed.task.claimToken).toBeUndefined();
     expect(claimed.skillsVersion).toBe(skillsBundleVersion()!);
-    expect(claimed.skills["agentq-claim"]).toBe(skillsBundleVersion()!);
+    expect(claimed.skills["mtq-claim"]).toBe(skillsBundleVersion()!);
     // The claim's task leaves out the notes that grow with every round: the brief carries the latest handoffs.
     expect(claimed.task.contexts).toBeUndefined();
     expect(claimed.task.acceptanceCriteria).toEqual([
@@ -478,7 +478,7 @@ describe("AgentQ MCP server", () => {
   });
 
   it("archive_task writes the archive files for a complete task", async () => {
-    const root = mkdtempSync(join(tmpdir(), "agentq-mcp-archive-"));
+    const root = mkdtempSync(join(tmpdir(), "mtq-mcp-archive-"));
     try {
       const archiveProject = "mcp-archive-" + Date.now();
       createProject({ id: archiveProject, displayName: "Archive", workingDirectory: root });
@@ -515,27 +515,27 @@ describe("AgentQ MCP server", () => {
     }
   });
 
-  it("reads agentq://task/{id} and agentq://projects resources", async () => {
+  it("reads mtq://task/{id} and mtq://projects resources", async () => {
     const task = createTask({ title: "resource", description: "d", projectId });
-    const { contents } = await client.readResource({ uri: `agentq://task/${task.id}` });
+    const { contents } = await client.readResource({ uri: `mtq://task/${task.id}` });
     expect(contents).toHaveLength(1);
     expect(contents[0].mimeType).toBe("application/json");
     const json = JSON.parse(resourceText(contents[0]));
     expect(json.id).toBe(task.id);
     expect(json.project.id).toBe(projectId);
 
-    const projects = await client.readResource({ uri: "agentq://projects" });
+    const projects = await client.readResource({ uri: "mtq://projects" });
     const list = JSON.parse(resourceText(projects.contents[0]));
     expect(Array.isArray(list)).toBe(true);
     expect(list.map((p: any) => p.id)).toContain(projectId);
 
-    await expect(client.readResource({ uri: "agentq://task/missing" })).rejects.toThrow(
+    await expect(client.readResource({ uri: "mtq://task/missing" })).rejects.toThrow(
       "Task not found.",
     );
   });
 });
 
-describe("AgentQ MCP agent workflow", () => {
+describe("Moonlight Task Queue MCP agent workflow", () => {
   // Same scenarios agents go through: every role, every claim and submit transition.
   const projectId = "mcp-workflow-" + Date.now();
   const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model", skillsVersion: skillsBundleVersion()! };
@@ -573,7 +573,7 @@ describe("AgentQ MCP agent workflow", () => {
       autonomy: 0,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     client = new Client({ name: "workflow-client", version: "0.0.0" });
     await client.connect(clientTransport);
 
@@ -715,7 +715,7 @@ describe("AgentQ MCP agent workflow", () => {
     const own = await claim(["code", "review"], "s4");
     expect(own.reason).toBe("no_tasks_available");
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     const reviewerClient = new Client({ name: "reviewer-client", version: "0.0.0" });
     await reviewerClient.connect(clientTransport);
     primaryClient = client;
@@ -788,9 +788,9 @@ describe("AgentQ MCP agent workflow", () => {
   });
 });
 
-describe("AgentQ MCP create, list and archive", () => {
+describe("Moonlight Task Queue MCP create, list and archive", () => {
   const projectId = "mcp-create-" + Date.now();
-  const archiveRoot = mkdtempSync(join(tmpdir(), "agentq-mcp-archive-list-"));
+  const archiveRoot = mkdtempSync(join(tmpdir(), "mtq-mcp-archive-list-"));
   const archiveProjectId = "mcp-archive-list-" + Date.now();
   let client: Client;
 
@@ -816,7 +816,7 @@ describe("AgentQ MCP create, list and archive", () => {
       workingDirectory: archiveRoot,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     client = new Client({ name: "create-client", version: "0.0.0" });
     await client.connect(clientTransport);
   });
@@ -961,14 +961,14 @@ describe("AgentQ MCP create, list and archive", () => {
   });
 });
 
-describe("AgentQ MCP claims and blockers", () => {
+describe("Moonlight Task Queue MCP claims and blockers", () => {
   const projectId = "mcp-claims-" + Date.now();
   const agent = { toolName: "Claimer", version: "1.0", model: "m", skillsVersion: skillsBundleVersion()! };
   const clients: Client[] = [];
 
-  async function connect(opts?: Parameters<typeof createAgentQMcpServer>[0]): Promise<Client> {
+  async function connect(opts?: Parameters<typeof createMtqMcpServer>[0]): Promise<Client> {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer(opts).connect(serverTransport);
+    await createMtqMcpServer(opts).connect(serverTransport);
     const client = new Client({ name: "claims-client", version: "0.0.0" });
     await client.connect(clientTransport);
     clients.push(client);
@@ -1150,7 +1150,7 @@ describe("AgentQ MCP claims and blockers", () => {
     const listed = parse(await call(reviewer, "list_tasks", { projectId }));
     expect(leaks(listed.tasks.find((t: { id: string }) => t.id === task.id))).toEqual([]);
     expect(leaks(parse(await call(reviewer, "post_comment", { taskId: task.id, message: "looking" })))).toEqual([]);
-    const resource = await reviewer.readResource({ uri: `agentq://task/${task.id}` });
+    const resource = await reviewer.readResource({ uri: `mtq://task/${task.id}` });
     expect(leaks(resourceText(resource.contents[0]))).toEqual([]);
 
     // A runner job holding the review claim is isolated the same way.
@@ -1344,7 +1344,7 @@ describe("AgentQ MCP claims and blockers", () => {
   });
 
   it.skipIf(!Bun.which("git"))("submit_verification reads the worktree's diff itself: protected paths and size raise the risk", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "agentq-mcp-verify-"));
+    const repo = mkdtempSync(join(tmpdir(), "mtq-mcp-verify-"));
     const run = (...args: string[]) => {
       const out = Bun.spawnSync(["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...args]);
       if (out.exitCode !== 0) throw new Error(out.stderr.toString());
@@ -1445,7 +1445,7 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(claimed.task.conversation).toBeUndefined();
     expect(claimed.task.history).toBeUndefined();
     expect(claimed.brief.criteria[0]).toMatchObject({ id: "AC1" });
-    expect(claimed.phaseSkill).toMatchObject({ name: "agentq-code" });
+    expect(claimed.phaseSkill).toMatchObject({ name: "mtq-code" });
     const again = parse(await call(client, "get_task_brief", { taskId: created.id }));
     expect(again.brief.task.id).toBe(created.id);
     const submitted = parse(
@@ -1463,18 +1463,18 @@ describe("AgentQ MCP claims and blockers", () => {
     expect(full.task.handoffs.at(-1)).toMatchObject({ phase: "code", summary: "look at x", decisions: ["kept it small"], next: ["check x"] });
   });
 
-  it("serves the skills: get_skill, agentq://skills/{name} and prompts, with versions", async () => {
+  it("serves the skills: get_skill, mtq://skills/{name} and prompts, with versions", async () => {
     const client = await connect();
-    const skill = parse(await call(client, "get_skill", { name: "agentq-review" }));
-    expect(skill).toMatchObject({ success: true, name: "agentq-review", version: skillsBundleVersion() });
+    const skill = parse(await call(client, "get_skill", { name: "mtq-review" }));
+    expect(skill).toMatchObject({ success: true, name: "mtq-review", version: skillsBundleVersion() });
     expect(skill.body).toContain("Severity Rubric");
     expect(parse(await call(client, "get_skill", { name: "nope" })).error).toContain("Unknown skill");
-    const resource = await client.readResource({ uri: "agentq://skills/agentq-claim" });
+    const resource = await client.readResource({ uri: "mtq://skills/mtq-claim" });
     expect(resourceText(resource.contents[0])).toContain("claim_task");
     const { prompts } = await client.listPrompts();
-    const claim = prompts.find((p) => p.name === "agentq-claim")!;
+    const claim = prompts.find((p) => p.name === "mtq-claim")!;
     expect(claim.description).toContain(`v${skillsBundleVersion()}`);
-    const got = await client.getPrompt({ name: "agentq-plan" });
+    const got = await client.getPrompt({ name: "mtq-plan" });
     expect((got.messages[0].content as { text: string }).text).toContain("validationPlan");
   });
 
@@ -1521,13 +1521,13 @@ function topLevelKeys(example: string): string[] {
   return keys;
 }
 
-describe("AgentQ MCP contracts", () => {
+describe("Moonlight Task Queue MCP contracts", () => {
   let client: Client;
   let tools: Awaited<ReturnType<Client["listTools"]>>["tools"];
 
   beforeAll(async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     client = new Client({ name: "contracts-client", version: "0.0.0" });
     await client.connect(clientTransport);
     tools = (await client.listTools()).tools;
@@ -1602,11 +1602,11 @@ describe("AgentQ MCP contracts", () => {
 
 describe("mcpServerLaunch", () => {
   it("starts the stdio entry with bun, bound to the given database", () => {
-    const launch = mcpServerLaunch("/data/agentq.db", "/usr/local/bin/bun");
+    const launch = mcpServerLaunch("/data/mtq.db", "/usr/local/bin/bun");
     expect(launch).toEqual({
       command: "/usr/local/bin/bun",
       args: ["run", MCP_ENTRY],
-      env: { AGENTQ_DB_PATH: "/data/agentq.db" },
+      env: { MTQ_DB_PATH: "/data/mtq.db" },
     });
     expect(existsSync(MCP_ENTRY)).toBe(true);
     expect(mcpServersConfig(launch)).toEqual({ mcpServers: { [MCP_SERVER_NAME]: launch } });
@@ -1614,10 +1614,10 @@ describe("mcpServerLaunch", () => {
   });
 });
 
-describe("AgentQ MCP server over stdio", () => {
+describe("Moonlight Task Queue MCP server over stdio", () => {
   const dbPath = join(
     tmpdir(),
-    `agentq-mcp-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
+    `mtq-mcp-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
   );
 
   afterAll(() => {

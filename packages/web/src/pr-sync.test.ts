@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
-import type { AutonomyLevel, PolicySettings, ProjectProfile, PullRequest, Risk } from "@agentq/shared";
+import type { AutonomyLevel, PolicySettings, ProjectProfile, PullRequest, Risk } from "@mtq/shared";
 import {
   TaskStatus,
   cancelTask,
@@ -19,12 +19,12 @@ import {
   patchTask,
   resolveBlocker,
   submitPr,
-} from "@agentq/shared";
-import { forceStatus } from "@agentq/shared/testing";
+} from "@mtq/shared";
+import { forceStatus } from "@mtq/shared/testing";
 import type { GhResult, GhRunner } from "./pr-sync";
 import { PrSync, ghRunner, newChangeRequests, parsePullRequest, prRef, syncPullRequests } from "./pr-sync";
 
-const root = mkdtempSync(join(tmpdir(), "agentq-pr-sync-"));
+const root = mkdtempSync(join(tmpdir(), "mtq-pr-sync-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 function project(opts: { autonomy?: AutonomyLevel; policy?: Partial<PolicySettings>; profile?: Partial<ProjectProfile> } = {}) {
@@ -319,7 +319,7 @@ describe("syncPullRequests", () => {
       expect(result.autoMerged).toContain(id);
       const task = getTaskById(id)!;
       expect(task.status).toBe(TaskStatus.Complete);
-      expect(task.pullRequest).toMatchObject({ state: "merged", mergedBy: "agentq-auto-merge" });
+      expect(task.pullRequest).toMatchObject({ state: "merged", mergedBy: "mtq-auto-merge" });
       expect(getActivityEvents({ taskId: id }).map((e) => e.eventType)).toEqual(expect.arrayContaining(["pr_auto_merged", "pr_merged"]));
     });
 
@@ -425,7 +425,7 @@ describe("gh without blocking the server", () => {
   it("runs gh asynchronously and returns its output and exit code", async () => {
     const run = ghRunner(bun("console.log(process.argv.slice(1).join(' ')); console.error('warn'); process.exit(3)"), 10_000);
     expect(await run(["pr", "view", "7"], root)).toEqual({ exitCode: 3, stdout: "pr view 7\n", stderr: "warn\n" });
-    expect((await ghRunner(["agentq-no-such-gh"])(["pr"], root)).exitCode).toBe(127);
+    expect((await ghRunner(["mtq-no-such-gh"])(["pr"], root)).exitCode).toBe(127);
   });
 
   it("kills a gh call that hangs, and the event loop keeps running meanwhile", async () => {
@@ -486,7 +486,7 @@ describe("gh without blocking the server", () => {
     without.start();
     expect(without.state()).toEqual({ available: false, enabled: false, lastRunAt: null, errors: [] });
 
-    // With gh but never started (AGENTQ_PR_SYNC=0): available, yet nothing completes a merged task.
+    // With gh but never started (MTQ_PR_SYNC=0): available, yet nothing completes a merged task.
     const sync = new PrSync(() => {}, 60_000, gh, true);
     expect(sync.state()).toMatchObject({ available: true, enabled: false, lastRunAt: null });
     sync.start();

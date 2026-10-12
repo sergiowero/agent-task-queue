@@ -19,10 +19,10 @@ import { buildIndependentBrief, buildTaskBrief, INDEPENDENT_PHASES } from "./bri
 import { createTaskForProject } from "./workflow.js";
 import { forceStatus } from "./testing.js";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 describe("skills bundle", () => {
-  it("every agentq-* skill carries the bundle version", () => {
+  it("every mtq-* skill carries the bundle version", () => {
     const bundle = skillsBundleVersion();
     expect(bundle).toBeTruthy();
     const manifest = skillsManifest();
@@ -38,9 +38,9 @@ describe("skills bundle", () => {
   });
 
   it("the coder branches from the fetched merge branch, where its dependencies' work is", () => {
-    const body = readSkill("agentq-code")!.body;
+    const body = readSkill("mtq-code")!.body;
     const fetch = body.indexOf("git fetch origin {task.mergeBranch}");
-    const create = body.indexOf("git worktree add -b {task.recommendedBranch} {project}/.agentq/worktrees/{task.id} origin/{task.mergeBranch}");
+    const create = body.indexOf("git worktree add -b {task.recommendedBranch} {project}/.mtq/worktrees/{task.id} origin/{task.mergeBranch}");
     expect(fetch).toBeGreaterThan(-1);
     expect(create).toBeGreaterThan(fetch);
     expect(body).toContain("brief.dependencies");
@@ -67,10 +67,10 @@ describe("skills bundle", () => {
   });
 
   it("reads a skill body without its frontmatter", () => {
-    const skill = readSkill("agentq-claim")!;
+    const skill = readSkill("mtq-claim")!;
     expect(skill.body.startsWith("---")).toBe(false);
     expect(skill.body).toContain("claim_task");
-    expect(readSkill("agentq-does-not-exist")).toBeNull();
+    expect(readSkill("mtq-does-not-exist")).toBeNull();
   });
 
   it("parses versions and compares them numerically", () => {
@@ -91,10 +91,10 @@ describe("skills read what the claim result and the brief carry", () => {
       const stale = body.match(/\btask\.(findings|evidence|conversation|contexts|history)\b|pre_status/g) ?? [];
       expect({ name, stale }).toEqual({ name, stale: [] });
     }
-    const code = readSkill("agentq-code")!.body;
+    const code = readSkill("mtq-code")!.body;
     expect(code).toContain("brief.openFindings");
     expect(code).toContain("brief.verification.failing");
-    expect(readSkill("agentq-plan")!.body).toContain("findingResolutions");
+    expect(readSkill("mtq-plan")!.body).toContain("findingResolutions");
   });
 
   it("every brief.<path> a skill names exists in the brief", () => {

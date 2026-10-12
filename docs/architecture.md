@@ -1,4 +1,4 @@
-# AgentQ — Feature & Component Description
+# Moonlight Task Queue — Feature & Component Description
 
 A local task queue system for managing coding-agent work across multiple projects. Provides a centralized backlog that allows AI agents to pull work items, complete them, and continue from well-defined context.
 
@@ -49,7 +49,7 @@ Kanban-style board with four columns (Pending, In Progress, Needs you, Done), a 
 Stdio MCP server (`packages/mcp`) that operates directly on the local database — no running server required. It is the only agent channel: claiming, submitting, reading, listing, creating and archiving tasks are typed tools with JSON results. `bun run install:mcp` registers it with every installed coding tool, and runner jobs get it automatically.
 
 ### AI Skills
-Pre-built agent skill files that guide coding agents on how to use the AgentQ MCP tools and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails.
+Pre-built agent skill files that guide coding agents on how to use the Moonlight Task Queue MCP tools and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails.
 
 ### Feedback Loops
 Both planning and coding phases support iteration: plans can be revised, code can be reworked after review, and stuck tasks can be unblocked.
@@ -58,7 +58,7 @@ Both planning and coding phases support iteration: plans can be revised, code ca
 A person can request an AI code review from the task page (under L0 the AI review is advice only), which opens the task for a reviewer agent to claim and evaluate.
 
 ### Task Archive
-Complete tasks can be archived from the board (**Archive** button on complete cards and on the task page), the MCP server (`archive_task`) or the `agentq-archive` skill. Archiving writes two Markdown files to `{project.workingDirectory}/archive/`, and the task then gets `archivedAt` / `archivePath` and leaves the board and `list_tasks`. The logic lives in `packages/shared/src/archive.ts`.
+Complete tasks can be archived from the board (**Archive** button on complete cards and on the task page), the MCP server (`archive_task`) or the `mtq-archive` skill. Archiving writes two Markdown files to `{project.workingDirectory}/archive/`, and the task then gets `archivedAt` / `archivePath` and leaves the board and `list_tasks`. The logic lives in `packages/shared/src/archive.ts`.
 
 The files follow the flow the task really took: the phases that ran (refinement, plan, plan critique, code, verification, review, pull request) depend on the autonomy level, the risk and the verdicts.
 
@@ -98,23 +98,23 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 - REST API for all CRUD and workflow operations on tasks, projects, agents, runners, activity and flow metrics (`/api/metrics`), plus `/api/meta` (skills bundle version, the verifier's state and the PR sync's state)
 - Server-Sent Events endpoint for real-time streaming to connected clients
 - Static file serving for the pre-built web UI
-- Request validation via Zod schemas. The agent submissions (`POST /api/tasks/:id/submit-plan`, `submit-code`, `submit-review`, `submit-plan-review`, `submit-verification`, `submit-refinement`, `submit-pr`, `report-blocker`) take the MCP tools' arguments without `taskId` and parse them with the same schemas (`agentSubmitSchemas` in `@agentq/shared`); agents normally use MCP
+- Request validation via Zod schemas. The agent submissions (`POST /api/tasks/:id/submit-plan`, `submit-code`, `submit-review`, `submit-plan-review`, `submit-verification`, `submit-refinement`, `submit-pr`, `report-blocker`) take the MCP tools' arguments without `taskId` and parse them with the same schemas (`agentSubmitSchemas` in `@mtq/shared`); agents normally use MCP
 - Runner engine: claims tasks for the configured runners and launches their coding tools headless; see [runner.md](runner.md)
-- Built-in verifier: runs each project's commands on submitted code in the task's worktree (`AGENTQ_VERIFY_WORKER=0` turns it off; code then goes to review marked as not verified)
-- PR sync: with `gh`, checks every open pull request each `AGENTQ_PR_SYNC_SEC` (`AGENTQ_PR_SYNC=0` turns it off); see [policy.md](policy.md#pull-requests)
+- Built-in verifier: runs each project's commands on submitted code in the task's worktree (`MTQ_VERIFY_WORKER=0` turns it off; code then goes to review marked as not verified)
+- PR sync: with `gh`, checks every open pull request each `MTQ_PR_SYNC_SEC` (`MTQ_PR_SYNC=0` turns it off); see [policy.md](policy.md#pull-requests)
 - Sweeper: every minute, expired claims of hand-opened sessions go back to the queue and reviews nobody eligible picked up go to a person
 - Automatic Vite dev server management in development mode
 - CORS support for development
-- Local user only: it listens on loopback (`AGENTQ_HOST`), and before any route runs it refuses requests a web page could forge: a `Host` that is not localhost, an IP address or listed in `AGENTQ_ALLOWED_HOSTS` (403), a state-changing request from another `Origin` (403), a POST/PUT/PATCH that is not `application/json` (415)
+- Local user only: it listens on loopback (`MTQ_HOST`), and before any route runs it refuses requests a web page could forge: a `Host` that is not localhost, an IP address or listed in `MTQ_ALLOWED_HOSTS` (403), a state-changing request from another `Origin` (403), a POST/PUT/PATCH that is not `application/json` (415)
 - Claim tokens never leave it: every JSON response and SSE event drops `claimToken`, and runner job output shows `[claimToken]` in its place
-- Custom argv runners (tool `custom`, or `extraArgs`) only with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`
+- Custom argv runners (tool `custom`, or `extraArgs`) only with `MTQ_ALLOW_CUSTOM_RUNNERS=1`
 
 ### MCP Server
 Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction. [mcp.md](mcp.md) has every tool with its inputs, and a test keeps that file in step with the registered tools. In short:
 - **claim_task** — claims the highest-priority task one of the agent's roles works (refine, plan, plan_review, code, verify, review, pr; default all but verify) and returns the brief, the phase skill and a claim token
 - **get_task_brief** — the compact brief to continue a task (an independent one for plan critique, verification and review)
 - **get_task** / **list_tasks** — read a task with its findings, evidence and handoffs, or list task summaries filtered by status and project (archived tasks left out)
-- **get_skill** — the current text and version of an AgentQ skill
+- **get_skill** — the current text and version of a Moonlight Task Queue skill
 - **submit_refinement** — makes a draft ready: criteria, type, risk, scope, open questions
 - **submit_plan** / **create_subtask** — submit a plan with its validation plan, and split the task into held subtasks; the autonomy policy sends the plan to the AI critic or to a person
 - **submit_plan_review** — a plan critique: verdict and findings
@@ -128,7 +128,7 @@ Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-t
 - **list_projects** / **create_task** — create tasks with full metadata (description, priority, branch, acceptance criteria, guardrails, steer details, plan requirement, draft)
 - **archive_task** — writes a complete task's summary and detailed record to `{project}/archive/` and takes it off the board (`pullRequests`, `overview`, `force`, `directory`)
 - **JSON results** — every tool returns `{ success, ... }` as text and structured content
-- **Direct database access** — no server dependency; `AGENTQ_DB_PATH` comes from the tool's MCP config
+- **Direct database access** — no server dependency; `MTQ_DB_PATH` comes from the tool's MCP config
 
 ### Database
 Local SQLite database storing all system data:
@@ -141,17 +141,17 @@ Local SQLite database storing all system data:
 - Migration system for schema evolution
 
 ### AI Skills
-Agent instruction files that define the exact protocol for interacting with AgentQ:
-- **agentq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, MCP tool reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails. It routes to the phase skill that matches the task's status
-- **The phase skills**, one per role: **agentq-refine** (turns a draft into a ready task), **agentq-plan** (writes or revises the plan), **agentq-plan-review** (critiques a plan), **agentq-code** (implements in the task's worktree), **agentq-verify** (runs the verification commands), **agentq-review** (reviews the commits) and **agentq-pr** (pushes the branch and opens the pull request). The plan-review, verify and review skills work from an independent brief
-- **agentq-create-task** — Instructions for creating well-structured tasks through the MCP tools with project discovery, task elaboration, and acceptance criteria generation
-- **agentq-archive** — Archives complete tasks with the `archive_task` MCP tool (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
+Agent instruction files that define the exact protocol for interacting with Moonlight Task Queue:
+- **mtq-claim** — Full protocol: claim → work → submit → repeat. Includes identity info, MCP tool reference, phase intelligence table, working directory rules, worktree management, git safety rules, message format templates, autonomy guidelines, and strict guardrails. It routes to the phase skill that matches the task's status
+- **The phase skills**, one per role: **mtq-refine** (turns a draft into a ready task), **mtq-plan** (writes or revises the plan), **mtq-plan-review** (critiques a plan), **mtq-code** (implements in the task's worktree), **mtq-verify** (runs the verification commands), **mtq-review** (reviews the commits) and **mtq-pr** (pushes the branch and opens the pull request). The plan-review, verify and review skills work from an independent brief
+- **mtq-create-task** — Instructions for creating well-structured tasks through the MCP tools with project discovery, task elaboration, and acceptance criteria generation
+- **mtq-archive** — Archives complete tasks with the `archive_task` MCP tool (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
 - Agent skills are installed to multiple AI tool configs (opencode, claude, codex, kimi, junie) via a single install command
 
 ### Installer
 Scripts for one-click setup:
-- **MCP setup** — `bun run install:mcp` registers the AgentQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) on macOS, Linux and Windows; safe to run again
-- **Skills installer** — Syncs the `agentq-*` skills into every supported agent config directory: copies the repo's skills and removes `agentq-*` folders the repo no longer ships
+- **MCP setup** — `bun run install:mcp` registers the Moonlight Task Queue MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) on macOS, Linux and Windows; safe to run again
+- **Skills installer** — Syncs the `mtq-*` skills into every supported agent config directory: copies the repo's skills and removes `mtq-*` folders the repo no longer ships
 
 ---
 
@@ -185,7 +185,7 @@ A coding agent that claims and works on tasks. Contains:
 ### Runner
 A worker inside the web server that claims tasks and launches a coding tool headless (see [runner.md](runner.md)). Contains:
 - **Identity**: UUID, name
-- **Tool**: `claude`, `codex`, `opencode`, `gemini` or `custom`, with a model, an effort level and extra arguments (a custom argv only with `AGENTQ_ALLOW_CUSTOM_RUNNERS=1`)
+- **Tool**: `claude`, `codex`, `opencode`, `gemini` or `custom`, with a model, an effort level and extra arguments (a custom argv only with `MTQ_ALLOW_CUSTOM_RUNNERS=1`)
 - **Scope**: one or more roles, and optionally one project
 - **Execution**: concurrency, poll interval, permission mode (`safe` or `full`) and whether it is enabled
 
@@ -224,7 +224,7 @@ A record of a task status transition. Contains:
 
 ### States (23 total)
 
-The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). Where a submission sends the task is decided by the autonomy policy in `packages/shared/src/policy.ts` (see [policy.md](policy.md)); the README draws the states and their edges. The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee, and answers `409` in a status the catalog marks not editable (while an agent holds the task, or once it has a PR open, is complete or canceled). Once a plan is approved the acceptance criteria are frozen with it: changing them needs the task back in planning. The web UI reads the same catalog (`@agentq/shared/catalog`).
+The state machine lives in one place: `packages/shared/src/catalog.ts` (statuses, what each means, claim rules, allowed edges) and `packages/shared/src/workflow.ts` (`transitionTask`, the only function that changes a status). Where a submission sends the task is decided by the autonomy policy in `packages/shared/src/policy.ts` (see [policy.md](policy.md)); the README draws the states and their edges. The MCP server, the web API and the runner all call the workflow; `PUT /api/tasks/:id` cannot change status, history, conversation, contexts or the assignee, and answers `409` in a status the catalog marks not editable (while an agent holds the task, or once it has a PR open, is complete or canceled). Once a plan is approved the acceptance criteria are frozen with it: changing them needs the task back in planning. The web UI reads the same catalog (`@mtq/shared/catalog`).
 
 The task lifecycle moves through these states:
 
@@ -268,7 +268,7 @@ The task lifecycle moves through these states:
 
 **split** → The plan split the task into subtasks; it completes when they all finish (at least one completed). If every subtask was canceled it goes to `needs_human`.
 
-**needs_human** → The task stopped with a question only a person can answer. It gets there when an agent called `report_blocker` (push rejected, missing credentials, contradictory task); when a limit was hit (plan critiques or AI reviews that keep asking for changes, failed verifications or weakened tests, a reviewer reopening a finding the coder answered, twice); when a critic or reviewer returned a `needs_human` verdict, or the plan has a blocking open question; when the pull request was closed without merging, or the commit pushed is not the approved one; when a runner job ended three times in a row without submitting (`AGENTQ_MAX_REVERTS`); when a task it starts after was canceled or deleted; or when every subtask of a split task was canceled. [policy.md](policy.md#escalations) lists each trigger. The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next: the statuses offered depend on the phase it was blocked in (`RESOLVE_TARGETS` in the catalog).
+**needs_human** → The task stopped with a question only a person can answer. It gets there when an agent called `report_blocker` (push rejected, missing credentials, contradictory task); when a limit was hit (plan critiques or AI reviews that keep asking for changes, failed verifications or weakened tests, a reviewer reopening a finding the coder answered, twice); when a critic or reviewer returned a `needs_human` verdict, or the plan has a blocking open question; when the pull request was closed without merging, or the commit pushed is not the approved one; when a runner job ended three times in a row without submitting (`MTQ_MAX_REVERTS`); when a task it starts after was canceled or deleted; or when every subtask of a split task was canceled. [policy.md](policy.md#escalations) lists each trigger. The task stores a `blocker` (reason, question, phase) and nothing claims it until a person answers and picks where it goes next: the statuses offered depend on the phase it was blocked in (`RESOLVE_TARGETS` in the catalog).
 
 ### User Actions
 - Approve plan, request plan changes (plan findings can be ticked to reopen them)
