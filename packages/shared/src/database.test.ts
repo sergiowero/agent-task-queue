@@ -22,6 +22,7 @@ import {
   withTransaction,
   getMigrationStatus,
   getDbPath,
+  getActivityEvents,
   getAgents,
   getRunners,
   resetDb,
@@ -491,6 +492,7 @@ describe("Migration Status", () => {
       "028_message_types",
       "029_task_approval",
       "029_task_commits",
+      "033_lease_expired_events",
     ]) {
       expect(names).toContain(n);
     }
@@ -715,6 +717,50 @@ describe("028_message_types", () => {
 
       rollbackMigration("028_message_types");
       expect(getTaskById(task.id)!.conversation.map((e) => e.messageType)).toEqual(["plan", "plan", "review", "review", "user"]);
+    } finally {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = previous;
+      // Windows may keep the file locked a moment after close.
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+});
+
+// File-backed too (see above): re-runs the migration on data written in the old form.
+describe("033_lease_expired_events", () => {
+  it("relabels the expired claims that were logged as runner reverts, and only those", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentq-lease-"));
+    const previous = process.env.AGENTQ_DB_PATH;
+    try {
+      resetDb();
+      process.env.AGENTQ_DB_PATH = join(dir, "agentq.db");
+      rollbackMigration("033_lease_expired_events");
+      const projectId = "lease-" + Date.now();
+      createProject({ id: projectId, displayName: "Lease", workingDirectory: "/tmp/lease" });
+      const task = createTask({ title: "legacy", description: "d", projectId });
+      const log = (eventType: string, actor: string, details: string) =>
+        addActivity(task.id, eventType, actor, details);
+      log("task_reverted", "runner", "The agent session that claimed this task showed no activity for 90 min; its claim expired and the task went back to the queue.");
+      log("task_reverted", "runner", "The agent exited with code 1 without submitting.");
+      log("task_reverted", "user", "The agent session that claimed this task showed no activity for 90 min; typed by hand.");
+      const seen = () =>
+        getActivityEvents({ taskId: task.id })
+          .sort((a, b) => a.id - b.id)
+          .map((e) => [e.eventType, e.actor]);
+
+      resetDb(); // reopening runs the pending migration
+      expect(seen()).toEqual([
+        ["lease_expired", "system:sweeper"],
+        ["task_reverted", "runner"],
+        ["task_reverted", "user"],
+      ]);
+
+      rollbackMigration("033_lease_expired_events");
+      expect(seen()).toEqual([
+        ["task_reverted", "runner"],
+        ["task_reverted", "runner"],
+        ["task_reverted", "user"],
+      ]);
     } finally {
       resetDb();
       process.env.AGENTQ_DB_PATH = previous;

@@ -606,6 +606,30 @@ describe("workflow actions", () => {
     expect(resolveBlocker(task.id, { answer: "fixed the tool", targetStatus: TaskStatus.PlanRequested }).revertStreak).toBe(0);
   });
 
+  it("a runner's lost job is a task_reverted by the runner; the caller can name another event and actor", () => {
+    const task = newTask();
+    const releases = () =>
+      getActivityEvents({ taskId: task.id })
+        .filter((e) => ["task_reverted", "lease_expired", "task_blocked"].includes(e.eventType))
+        .sort((a, b) => a.id - b.id)
+        .map((e) => [e.eventType, e.actor]);
+
+    claimNextTask({ roles: ["plan"], agent: planner, projectId });
+    expect(revertClaim(task.id, "process exited")!.history.at(-1)).toMatchObject({ actor: "runner" });
+    claimNextTask({ roles: ["plan"], agent: planner, projectId });
+    const expired = revertClaim(task.id, "silent", { actor: "system:sweeper", event: "lease_expired" })!;
+    expect(expired.status).toBe(TaskStatus.PlanRequested);
+    expect(expired.history.at(-1)).toMatchObject({ actor: "system:sweeper" });
+    expect(releases()).toEqual([["task_reverted", "runner"], ["lease_expired", "system:sweeper"]]);
+
+    // Expiries count towards the streak too; the one that stops the retries is the sweeper's block.
+    claimNextTask({ roles: ["plan"], agent: planner, projectId });
+    const blocked = revertClaim(task.id, "silent again", { actor: "system:sweeper", event: "lease_expired" })!;
+    expect(blocked.status).toBe(TaskStatus.NeedsHuman);
+    expect(blocked.blocker).toMatchObject({ raisedBy: "system:sweeper", phase: "plan" });
+    expect(releases().at(-1)).toEqual(["task_blocked", "system:sweeper"]);
+  });
+
   it("a submit resets the revert streak", () => {
     newTask();
     let claimed = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
@@ -831,6 +855,8 @@ describe("autonomy L2: reviews that decide", () => {
     const builtin = { toolName: "agentq-verifier", version: "1", model: "none", sessionId: "builtin:verifier" };
 
     const first = verifiable();
+    // Code the verifier will check is not "skipped".
+    expect(getActivityEvents({ taskId: first }).map((e) => e.eventType)).not.toContain("verification_skipped");
     expect(claimNextTask({ roles: ["code", "verify"], agent: coder, projectId, runnerId: "both" })).toBeNull();
     expect(claimNextTask({ roles: ["verify"], agent: reviewer, projectId })!.task.id).toBe(first);
 
@@ -884,6 +910,11 @@ describe("autonomy L2: reviews that decide", () => {
     const released = getTaskById(task.id)!;
     expect(released.status).toBe(TaskStatus.ReadyForCode);
     expect(released.leaseExpiresAt).toBeNull();
+    // An expiry is the sweeper's own event: only a runner's lost job is a task_reverted by the runner.
+    expect(released.history.at(-1)).toMatchObject({ actor: "system:sweeper" });
+    const events = getActivityEvents({ taskId: task.id });
+    expect(events.find((e) => e.eventType === "lease_expired")).toMatchObject({ actor: "system:sweeper" });
+    expect(events.map((e) => e.eventType)).not.toContain("task_reverted");
 
     const byRunner = claimNextTask({ roles: ["code"], agent: coder, projectId, runnerId: "r1" })!;
     expect(byRunner.task.leaseExpiresAt).toBeNull();
@@ -898,6 +929,132 @@ describe("autonomy L2: reviews that decide", () => {
     const task = getTaskById(id)!;
     expect(task.status).toBe(TaskStatus.WaitingCodeReview);
     expect(task.history.at(-1)!.actor).toBe("system:sweeper");
+  });
+
+  it("code that goes on to review unverified is logged as verification_skipped", () => {
+    const id = coded();
+    expect(getTaskById(id)!.verification).toMatchObject({ skipped: true });
+    const skipped = getActivityEvents({ taskId: id }).filter((e) => e.eventType === "verification_skipped");
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0].details).toContain("no commands configured");
+  });
+});
+
+describe("the sweeper's routing", () => {
+  const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "sw-planner" };
+  const coder = { toolName: "Coder", version: "1", model: "c", sessionId: "sw-coder" };
+  const minutes = (n: number) => new Date(Date.now() + n * 60_000);
+  const created: string[] = [];
+
+  afterEach(() => {
+    for (const id of created) {
+      try { deleteTask(id); } catch { softDeleteTask(id); }
+    }
+    created.length = 0;
+  });
+
+  /** A project of its own, so a claim can only return this test's task. */
+  function fresh(autonomy: 0 | 1 | 2 | 3, policy: Parameters<typeof createProject>[0]["policy"] = {}) {
+    const id = `sweep-${Math.random().toString(36).slice(2)}`;
+    createProject({ id, displayName: "Sweep", workingDirectory: "/tmp/sweep", autonomy, policy });
+    return id;
+  }
+
+  /** A plan submitted under an autonomy that sends it to an AI critic. */
+  function planSubmitted(projectId: string) {
+    const task = createTask({ title: "plan critique", description: "d", projectId, requiresPlan: true });
+    created.push(task.id);
+    const c = claimNextTask({ roles: ["plan"], agent: planner, projectId })!;
+    expect(c.task.id).toBe(task.id);
+    expect(submitPlan(task.id, { message: "## Plan", claimToken: c.claimToken }).newStatus).toBe(TaskStatus.PlanReviewRequested);
+    return task.id;
+  }
+
+  it("a plan critique nobody eligible picks up goes to a person after reviewStarvationMin", () => {
+    const pid = fresh(2);
+    const id = planSubmitted(pid);
+    expect(sweepQueue(new Date()).starved).not.toContain(id);
+    // Nobody critiques a plan their own conversation wrote.
+    expect(claimNextTask({ roles: ["plan_review"], agent: planner, projectId: pid })).toBeNull();
+
+    expect(sweepQueue(minutes(21)).starved).toContain(id);
+    const task = getTaskById(id)!;
+    expect(task.status).toBe(TaskStatus.WaitingPlanReview);
+    expect(task.history.at(-1)).toMatchObject({ pre_status: TaskStatus.PlanReviewRequested, actor: "system:sweeper" });
+    expect(task.conversation.at(-1)).toMatchObject({ messageType: "system" });
+    expect(task.conversation.at(-1)!.message).toContain("plan critique");
+    expect(task.conversation.at(-1)!.message).toContain("`plan_review` role");
+    expect(getActivityEvents({ taskId: id }).some((e) => e.eventType === "review_starved")).toBe(true);
+    // The person the plan went to can approve it.
+    expect(approvePlan(id).status).toBe(TaskStatus.ReadyForCode);
+  });
+
+  it("reviewStarvationMin 0 never hands a plan critique over", () => {
+    const pid = fresh(2, { reviewStarvationMin: 0 });
+    const id = planSubmitted(pid);
+    expect(sweepQueue(minutes(24 * 60)).starved).not.toContain(id);
+    expect(getTaskById(id)!.status).toBe(TaskStatus.PlanReviewRequested);
+  });
+
+  it.each([
+    [0, TaskStatus.WaitingCodeReview],
+    [2, TaskStatus.CodeReviewRequested],
+  ] as const)("at L%d code the verifier never picked up goes to review, unverified, after five minutes", (autonomy, gate) => {
+    const pid = fresh(autonomy);
+    const task = createTask({ title: "verify me", description: "d", projectId: pid, acceptanceCriteria: ["works $ bun test works"] });
+    created.push(task.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(task.id);
+    try {
+      setAppState("verifier_heartbeat", new Date().toISOString());
+      expect(submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken }).newStatus).toBe(TaskStatus.VerifyRequested);
+
+      // Not five minutes yet, or the verifier is alive: the code keeps waiting for it.
+      expect(sweepQueue(minutes(3)).unverified).not.toContain(task.id);
+      const alive = minutes(6);
+      setAppState("verifier_heartbeat", alive.toISOString());
+      expect(sweepQueue(alive).unverified).not.toContain(task.id);
+      expect(getTaskById(task.id)!.status).toBe(TaskStatus.VerifyRequested);
+
+      setAppState("verifier_heartbeat", new Date(0).toISOString());
+      expect(sweepQueue(minutes(6)).unverified).toContain(task.id);
+    } finally {
+      setAppState("verifier_heartbeat", new Date(0).toISOString());
+    }
+    const swept = getTaskById(task.id)!;
+    expect(swept.status).toBe(gate);
+    expect(swept.history.at(-1)).toMatchObject({ pre_status: TaskStatus.VerifyRequested, actor: "system:sweeper" });
+    expect(swept.verification).toMatchObject({ skipped: true, passed: false, evidenceIds: [] });
+    expect(swept.verification!.note).toContain("verifier is not running");
+    expect(getActivityEvents({ taskId: task.id }).filter((e) => e.eventType === "verification_skipped")).toHaveLength(1);
+  });
+
+  it.each([
+    [0, TaskStatus.WaitingCodeReview],
+    [2, TaskStatus.CodeReviewRequested],
+  ] as const)("at L%d code no verifier agent took goes to review, unverified, after reviewStarvationMin and not five minutes", (autonomy, gate) => {
+    const pid = fresh(autonomy, { verifier: "agent" });
+    const task = createTask({ title: "verify me", description: "d", projectId: pid });
+    created.push(task.id);
+    const c = claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!;
+    expect(c.task.id).toBe(task.id);
+    // The project chose an agent: the code waits for one, with no commands and whatever the built-in verifier does.
+    expect(submitCode(task.id, { message: "c", worktree: "/w", claimToken: c.claimToken }).newStatus).toBe(TaskStatus.VerifyRequested);
+    // Waiting for a verifier is not skipping the verification: that is only logged once the code goes on without one.
+    expect(getActivityEvents({ taskId: task.id }).map((e) => e.eventType)).not.toContain("verification_skipped");
+
+    expect(sweepQueue(minutes(6)).unverified).not.toContain(task.id);
+    expect(sweepQueue(minutes(19)).unverified).not.toContain(task.id);
+    expect(getTaskById(task.id)!.status).toBe(TaskStatus.VerifyRequested);
+    expect(sweepQueue(minutes(21)).unverified).toContain(task.id);
+
+    const swept = getTaskById(task.id)!;
+    expect(swept.status).toBe(gate);
+    expect(swept.history.at(-1)).toMatchObject({ pre_status: TaskStatus.VerifyRequested, actor: "system:sweeper" });
+    expect(swept.verification).toMatchObject({ skipped: true, passed: false });
+    expect(swept.verification!.note).toContain("no verifier agent took it in 20 min");
+    expect(swept.conversation.at(-1)!.message).toContain("`verify` role");
+    expect(getActivityEvents({ taskId: task.id }).filter((e) => e.eventType === "verification_skipped")).toHaveLength(1);
   });
 });
 

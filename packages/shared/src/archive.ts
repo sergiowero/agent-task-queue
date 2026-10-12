@@ -5,19 +5,28 @@ import {
   getActivityEvents,
   getAgentById,
   getProjectById,
+  getSubtasks,
   getTaskById,
   setTaskArchive,
   slugify,
 } from "./database.js";
-import { getFindings } from "./records.js";
+import { AUTONOMY_LEVELS, HUMAN_ACTOR } from "./catalog.js";
+import { resolvePolicy } from "./policy.js";
+import { getEvidence, getFindings, getHandoffs } from "./records.js";
 import { resolveProfile } from "./profile.js";
 import type {
   AcceptanceCriterion,
   ActivityEvent,
   Agent,
+  Approval,
+  ApprovedPlan,
   ConversationEntry,
+  Evidence,
   Finding,
+  Handoff,
+  LastReview,
   Project,
+  PullRequest,
   StatusHistoryEntry,
   Task,
 } from "./types.js";
@@ -45,16 +54,21 @@ export interface ArchiveRunnerJob {
 /** One claim of the task by an agent, from the claim until the task left that status. */
 export interface AgentSession {
   agentId: string;
-  /** Active status the claim moved the task to: planning, coding, reviewing or merging. */
+  /**
+   * Active status the claim moved the task to: refining, planning, plan_reviewing,
+   * coding, verifying, reviewing or merging.
+   */
   status: string;
   claimedAt: string;
   endedAt: string | null;
-  /** Status the task moved to when the session ended, e.g. waiting_code_review. */
+  /** Status the policy sent the task to when the session ended, e.g. plan_review_requested or approved. */
   endStatus: string | null;
   /** Index in task.conversation of the claim entry. */
   claimIndex: number;
-  /** Index in task.conversation of the plan/code/review/merge submission, if any. */
+  /** Index in task.conversation of the session's submission (plan, critique, code, verification, review, PR...), if any. */
   submissionIndex: number | null;
+  /** What the submission is called ("Plan critique submitted", "Verification failed"...); null when the session submitted nothing. */
+  submitted: string | null;
 }
 
 export interface MergeRecord {
@@ -79,8 +93,14 @@ export interface ArchiveDocumentsInput {
   /** Optional overview written by an agent, placed at the top of the summary. */
   overview?: string;
   runnerJobs?: ArchiveRunnerJob[];
-  /** Review findings of the task (plan and code reviews). */
+  /** Review findings of the task (plan and code reviews), with their answers. */
   findings?: Finding[];
+  /** Evidence rows: commands the coder and the verifier ran, and manual checks. */
+  evidence?: Evidence[];
+  /** Notes each phase left for the next, and the answers people gave. */
+  handoffs?: Handoff[];
+  /** The subtasks the task was split into. */
+  subtasks?: Task[];
 }
 
 export interface ArchiveDocuments {
@@ -111,11 +131,12 @@ export interface ArchiveTaskResult {
   pullRequests: string[];
 }
 
-/** One criterion for the archive: status mark, id, text and how it was checked. */
-function criterionLine(c: AcceptanceCriterion): string {
+/** One criterion for the archive: status mark, id, text and how it was checked (and the evidence, when asked). */
+function criterionLine(c: AcceptanceCriterion, withEvidence = false): string {
   const mark = { met: "✅", failed: "❌", waived: "➖", pending: "⬜" }[c.status] ?? "⬜";
   const how = c.verify.command ? ` — \`${c.verify.command}\`` : c.verify.kind !== "review" ? ` — ${c.verify.kind}` : "";
-  return `${mark} **${c.id}** ${c.text}${how}`;
+  const proof = withEvidence && c.evidenceIds.length ? ` · evidence ${c.evidenceIds.join(", ")}` : "";
+  return `${mark} **${c.id}** ${c.text}${how}${proof}`;
 }
 
 // ─── Labels ────────────────────────────────────────────────────────────
@@ -151,28 +172,32 @@ export function archiveStatusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status.replace(/_/g, " ");
 }
 
-const PHASE_LABELS: Record<string, string> = {
-  planning: "Planning",
-  coding: "Coding",
-  reviewing: "Review",
-  merging: "Merge",
+interface SessionPhase {
+  phase: string;
+  type: string;
+  submitted: string;
+}
+
+/**
+ * The active statuses a claim moves a task to, in flow order: the phase each one
+ * works, the conversation type its submission is written with, and what that
+ * submission is called. Where the task goes next is not fixed by the phase (the
+ * autonomy level, the risk and the verdict route it), so a session's outcome
+ * names the status it really ended in.
+ */
+const SESSION_PHASES: Record<string, SessionPhase> = {
+  refining: { phase: "Refinement", type: "refine", submitted: "Draft refined" },
+  planning: { phase: "Planning", type: "plan", submitted: "Plan submitted" },
+  plan_reviewing: { phase: "Plan critique", type: "plan_review", submitted: "Plan critique submitted" },
+  coding: { phase: "Coding", type: "code", submitted: "Code submitted" },
+  verifying: { phase: "Verification", type: "verify", submitted: "Verification reported" },
+  reviewing: { phase: "Review", type: "review", submitted: "Review submitted" },
+  merging: { phase: "Merge", type: "merge", submitted: "PR opened" },
 };
 
-/** Conversation message type each active status is submitted with. */
-const SUBMISSION_TYPE: Record<string, string> = {
-  planning: "plan",
-  coding: "code",
-  reviewing: "review",
-  merging: "merge",
-};
-
-/** Where each active status goes when its agent submits. */
-const SUBMITTED_TO: Record<string, { status: string; label: string }> = {
-  planning: { status: TaskStatus.WaitingPlanReview, label: "Plan submitted" },
-  coding: { status: TaskStatus.WaitingCodeReview, label: "Code submitted" },
-  reviewing: { status: TaskStatus.WaitingCodeReview, label: "Review submitted" },
-  merging: { status: TaskStatus.PrOpen, label: "PR opened" },
-};
+function phaseLabel(status: string): string {
+  return SESSION_PHASES[status]?.phase ?? archiveStatusLabel(status);
+}
 
 const MESSAGE_TYPE_LABELS: Record<string, string> = {
   user: "User",
@@ -181,9 +206,24 @@ const MESSAGE_TYPE_LABELS: Record<string, string> = {
   plan: "Plan",
   plan_review: "Plan critique",
   code: "Code submission",
+  verify: "Verification",
   review: "Review",
   merge: "Merge",
   system: "System",
+};
+
+/** The phases a handoff can come from; a person's answer or a claim note is not one of the agents' phases. */
+const HANDOFF_PHASE_LABELS: Record<string, string> = {
+  refine: "Refinement",
+  plan: "Plan",
+  plan_review: "Plan critique",
+  code: "Code",
+  verify: "Verification",
+  review: "Review",
+  merge: "Merge",
+  human: "Person",
+  claim: "Claim note",
+  legacy: "Earlier note",
 };
 
 // ─── Markdown helpers ──────────────────────────────────────────────────
@@ -354,9 +394,22 @@ export function mergeRecordOf(task: Task): MergeRecord | null {
 const CLAIM_RE = /^Claimed task\. Transitioning to ([a-z_]+)\./;
 
 /**
+ * What a submission is called. A verification says how it went: its report starts
+ * with the result, or says the verifier could not run.
+ */
+function submissionLabel(phase: SessionPhase, entry: ConversationEntry): string {
+  if (phase.type !== "verify") return phase.submitted;
+  const result = entry.message.match(/^## Verification (passed|skipped|failed)\b/)?.[1];
+  if (result) return `Verification ${result}`;
+  return /could not run/.test(entry.message) ? "Verification could not run" : phase.submitted;
+}
+
+/**
  * Every claim of the task, read from the conversation (claims are recorded
  * there by the agent id) and closed by the status history: a session ends at
- * the first transition out of the status the claim moved the task to.
+ * the first transition out of the status the claim moved the task to. What the
+ * session submitted is the first message of that phase's type before the next
+ * claim; the task's next status is whatever the policy routed it to.
  */
 export function extractAgentSessions(task: Task): AgentSession[] {
   const conversation = task.conversation;
@@ -364,13 +417,26 @@ export function extractAgentSessions(task: Task): AgentSession[] {
     const match = entry.message.match(CLAIM_RE);
     return match ? [{ entry, index, status: match[1] }] : [];
   });
+  /** History index of the latest claim into each status found so far. */
+  const claimed = new Map<string, number>();
 
   return claims.map(({ entry, index, status }, k) => {
-    const end = task.history.find((h) => h.pre_status === status && h.timestamp >= entry.timestamp);
+    // The claim wrote its history entry with the timestamp of its conversation entry. The session ends at the
+    // first transition out of the status after it: comparing timestamps alone would give a claim made in the
+    // same millisecond as the previous session's end that session's end.
+    const entered = task.history.findIndex(
+      (h, i) => i > (claimed.get(status) ?? -1) && h.new_status === status && h.timestamp === entry.timestamp,
+    );
+    if (entered >= 0) claimed.set(status, entered);
+    const end =
+      entered >= 0
+        ? task.history.slice(entered + 1).find((h) => h.pre_status === status)
+        : task.history.find((h) => h.pre_status === status && h.timestamp >= entry.timestamp);
     const nextClaim = claims[k + 1]?.index ?? conversation.length;
+    const phase = SESSION_PHASES[status];
     let submissionIndex: number | null = null;
-    for (let j = index + 1; j < nextClaim; j++) {
-      if (conversation[j].messageType === SUBMISSION_TYPE[status]) {
+    for (let j = index + 1; phase && j < nextClaim; j++) {
+      if (conversation[j].messageType === phase.type) {
         submissionIndex = j;
         break;
       }
@@ -383,17 +449,19 @@ export function extractAgentSessions(task: Task): AgentSession[] {
       endStatus: end?.new_status ?? null,
       claimIndex: index,
       submissionIndex,
+      submitted: phase && submissionIndex !== null ? submissionLabel(phase, conversation[submissionIndex]) : null,
     };
   });
 }
 
+/** How a session ended: what it submitted and where the policy sent the task, or why it let go. */
 function sessionOutcome(session: AgentSession): string {
   if (!session.endStatus) return "No end recorded";
-  const submitted = SUBMITTED_TO[session.status];
-  if (submitted && submitted.status === session.endStatus) return submitted.label;
+  const to = archiveStatusLabel(session.endStatus);
+  if (session.submitted) return `${session.submitted} → ${to}`;
   if (session.endStatus === TaskStatus.Canceled) return "Task canceled";
   if (session.endStatus === TaskStatus.NeedsHuman) return "Blocked (needs human)";
-  return `Released without submitting (back to ${archiveStatusLabel(session.endStatus)})`;
+  return `Released without submitting (back to ${to})`;
 }
 
 function completedAt(task: Task): string | null {
@@ -413,11 +481,13 @@ function iterationsLine(task: Task): string | null {
   const count = (type: string) => task.conversation.filter((e) => e.messageType === type).length;
   const into = (status: string) => task.history.filter((h) => h.new_status === status).length;
   const parts = [
+    count("refine") && plural(count("refine"), "refinement"),
     count("plan") && plural(count("plan"), "plan"),
     count("plan_review") && plural(count("plan_review"), "plan critique"),
     into(TaskStatus.PlanChangesRequested) &&
       plural(into(TaskStatus.PlanChangesRequested), "plan change request"),
     count("code") && plural(count("code"), "code submission"),
+    count("verify") && plural(count("verify"), "verification"),
     count("review") && plural(count("review"), "AI review"),
     into(TaskStatus.ChangesRequested) &&
       plural(into(TaskStatus.ChangesRequested), "code change request"),
@@ -441,6 +511,232 @@ function projectLine(project: Project | null): string {
 
 function authorAndTime(entry: ConversationEntry): string {
   return `${inlineCode(entry.authorName)} · ${formatTimestamp(entry.timestamp)}`;
+}
+
+// ─── The flow's records ────────────────────────────────────────────────
+
+/** How many findings the reviews raised and where they ended up: "3 (2 verified, 1 open)". */
+function findingsText(findings: Finding[]): string {
+  const counts = (["verified", "fixed", "wontfix", "open"] as const)
+    .map((status) => [status, findings.filter((f) => f.status === status).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([status, n]) => `${n} ${status === "wontfix" ? "won't fix" : status}`);
+  return `${findings.length} (${counts.join(", ")})`;
+}
+
+/** The first 12 characters of a commit, as code. */
+function commitCode(sha: string | null | undefined): string {
+  return sha ? inlineCode(sha.slice(0, 12)) : "—";
+}
+
+function riskText(task: Task): string {
+  return task.riskReasons.length ? `${task.risk}: ${task.riskReasons.join("; ")}` : task.risk;
+}
+
+/** The level the task ran at: its own override, else its project's. */
+function autonomyText(task: Task, project: Project | null): string {
+  return AUTONOMY_LEVELS[resolvePolicy(project, task).level].label;
+}
+
+/** Who approved the plan and when: a person, or the critic (its agent id). */
+function planApprovalText(plan: ApprovedPlan): string {
+  const who = plan.approvedBy === HUMAN_ACTOR ? "a person" : "the plan critic";
+  return `${who} (${inlineCode(plan.approvedBy)}) · ${formatTimestamp(plan.at)}`;
+}
+
+/** Who approved the code, which commit and when: a person, or the AI reviewer. */
+function codeApprovalText(approval: Approval): string {
+  const who = approval.human
+    ? `a person (${inlineCode(approval.by)})`
+    : `the AI reviewer (${inlineCode(approval.by)}, review ${approval.round})`;
+  return `${who}${approval.sha ? ` on ${commitCode(approval.sha)}` : ""} · ${formatTimestamp(approval.at)}`;
+}
+
+/** The latest AI verdict; a code submission after it makes it about earlier code. */
+function reviewText(review: LastReview): string {
+  return (
+    `**${review.verdict}** in round ${review.round} by ${inlineCode(review.by)}` +
+    (review.sha ? ` on ${commitCode(review.sha)}` : "") +
+    ` · ${formatTimestamp(review.at)}` +
+    (review.stale ? " (the code was submitted again after it)" : "")
+  );
+}
+
+/** The evidence of the task's latest verification (older records: every row of its round). */
+function latestVerificationEvidence(task: Task, evidence: Evidence[]): Evidence[] {
+  const v = task.verification;
+  if (!v) return [];
+  const ids = v.evidenceIds ? new Set(v.evidenceIds) : null;
+  return evidence.filter((e) => (ids ? ids.has(e.id) : e.round === v.round));
+}
+
+/**
+ * How the latest submission was verified, as the PR body says it: passed, failed
+ * or not verified (with why), the commands behind it, and any test tampering.
+ * Null for a task that was never verified (older tasks).
+ */
+function verificationLines(task: Task, evidence: Evidence[]): string[] | null {
+  const v = task.verification;
+  if (!v) return null;
+  const lines = [
+    v.skipped
+      ? orNone(v.note, "Not verified.")
+      : `${v.passed ? "✅ Passed" : "❌ Failed"} (round ${v.round})${v.verifiedSha ? ` on ${commitCode(v.verifiedSha)}` : ""}.`,
+  ];
+  const ran = latestVerificationEvidence(task, evidence);
+  if (ran.length) lines.push("");
+  for (const e of ran) {
+    const mark = e.skipped ? "⏭" : e.exitCode === 0 ? "✅" : "❌";
+    const what = e.command ? inlineCode(e.command) : e.summary.split("\n")[0];
+    lines.push(
+      `- ${mark} ${what}${e.criterionId ? ` (${e.criterionId})` : ""}` +
+        (e.flaky ? " — flaky, passed on retry" : "") +
+        (e.skipped && e.command ? ` — ${e.summary.split("\n")[0]}` : ""),
+    );
+  }
+  if (v.tampering.length) lines.push("", "Test tampering found:", ...v.tampering.map((t) => `- ${t}`));
+  return lines;
+}
+
+function evidenceTable(evidence: Evidence[]): string {
+  return table(
+    ["Id", "Round", "Criterion", "Kind", "Command", "Exit code", "Produced by", "Notes", "Output"],
+    evidence.map((e) => [
+      inlineCode(e.id),
+      String(e.round),
+      e.criterionId ?? "—",
+      e.kind,
+      e.command ? inlineCode(e.command) : "—",
+      e.exitCode === null ? "—" : String(e.exitCode),
+      inlineCode(e.producedBy),
+      [e.skipped ? "skipped" : "", e.flaky ? "flaky" : "", e.logPath ? `log ${inlineCode(e.logPath)}` : ""].filter(Boolean).join(", ") || "—",
+      orNone(e.summary),
+    ]),
+  );
+}
+
+function handoffList(items: string[]): string {
+  return items.length ? items.map((item) => `- ${item}`).join("\n") : "—";
+}
+
+function handoffTable(handoffs: Handoff[]): string {
+  return table(
+    ["Phase", "Round", "Agent", "When", "Summary", "Decisions", "Risks", "Next"],
+    handoffs.map((h) => [
+      HANDOFF_PHASE_LABELS[h.phase] ?? h.phase,
+      String(h.round),
+      inlineCode(h.agentId),
+      formatTimestamp(h.createdAt),
+      h.summary,
+      handoffList(h.decisions),
+      handoffList(h.risks),
+      handoffList(h.next),
+    ]),
+  );
+}
+
+const COMMIT_PHASE_LABELS: Record<string, string> = {
+  code: "Code submitted",
+  verify: "Verified",
+  pr: "Pull request head",
+};
+
+function commitTable(commits: Task["commits"]): string {
+  return table(
+    ["Round", "Phase", "Commit", "Branch", "When"],
+    commits.map((c) => [
+      String(c.round),
+      COMMIT_PHASE_LABELS[c.phase] ?? c.phase,
+      inlineCode(c.sha),
+      c.branch ? inlineCode(c.branch) : "—",
+      formatTimestamp(c.at),
+    ]),
+  );
+}
+
+function subtaskTable(subtasks: Task[]): string {
+  return table(
+    ["Id", "Title", "Status", "Pull request"],
+    subtasks.map((c) => [
+      inlineCode(c.id),
+      c.title,
+      archiveStatusLabel(c.status),
+      c.pullRequest?.url ? `<${c.pullRequest.url}>` : "—",
+    ]),
+  );
+}
+
+function pullRequestFacts(pr: PullRequest): string[] {
+  const merged = pr.mergedAt ? ` (${formatTimestamp(pr.mergedAt)}${pr.mergedBy ? ` by ${inlineCode(pr.mergedBy)}` : ""})` : "";
+  const list = (names: string[] | undefined) => (names?.length ? names.map(inlineCode).join(", ") : "none");
+  return [
+    `- **URL:** ${pr.url ? `<${pr.url}>` : "—"}`,
+    `- **Number:** ${pr.number === null ? "—" : `#${pr.number}`}`,
+    `- **State:** ${pr.state}${merged}`,
+    `- **Base branch:** ${codeOrNone(pr.base)}`,
+    `- **Head branch:** ${codeOrNone(pr.branch)}`,
+    `- **Head commit:** ${codeOrNone(pr.headSha)}`,
+    `- **Authors:** ${orNone(pr.authors)}`,
+    `- **Checks:** ${pr.checks ?? "—"}${pr.checkedAt ? ` (${formatTimestamp(pr.checkedAt)})` : ""}`,
+    `- **Changes requested by:** ${list(pr.changesRequestedBy)}`,
+    `- **Ever asked for changes:** ${list(pr.changesEverRequestedBy)}`,
+  ];
+}
+
+/** One visit of the task to a person: who sent it, from which status, and how it came back. */
+export interface BlockerVisit {
+  at: string;
+  from: string;
+  by: string | null;
+  resolvedAt: string | null;
+  to: string | null;
+  resolvedBy: string | null;
+  /** What the person wrote when sending it on; null when they wrote nothing. */
+  answer: string | null;
+}
+
+/**
+ * Every time the task went to a person (`needs_human`), read from the status history.
+ * The person's answer is the message written with the transition that sent it on,
+ * so it has that transition's timestamp.
+ */
+export function blockerVisits(task: Task): BlockerVisit[] {
+  return task.history.flatMap((h, i) => {
+    if (h.new_status !== TaskStatus.NeedsHuman) return [];
+    const back = task.history.slice(i + 1).find((x) => x.pre_status === TaskStatus.NeedsHuman);
+    // Another message of a person can share the millisecond: the answer is the one that resolves the blocker.
+    const answer = task.conversation
+      .filter((e) => back && e.timestamp === back.timestamp && e.messageType === "user")
+      .map((e) => e.message.match(/^\*\*Blocker resolved\*\*[^\n]*\n+([\s\S]+)$/)?.[1].trim())
+      .find(Boolean);
+    return [
+      {
+        at: h.timestamp,
+        from: h.pre_status,
+        by: h.actor ?? null,
+        resolvedAt: back?.timestamp ?? null,
+        to: back?.new_status ?? null,
+        resolvedBy: back?.actor ?? null,
+        answer: answer || null,
+      },
+    ];
+  });
+}
+
+function blockerTable(visits: BlockerVisit[]): string {
+  return table(
+    ["#", "Sent to a person", "From", "By", "Answered", "Sent on to", "By", "Answer"],
+    visits.map((v, i) => [
+      String(i + 1),
+      formatTimestamp(v.at),
+      archiveStatusLabel(v.from),
+      v.by ? inlineCode(v.by) : "—",
+      formatTimestamp(v.resolvedAt),
+      v.to ? archiveStatusLabel(v.to) : "—",
+      v.resolvedBy ? inlineCode(v.resolvedBy) : "—",
+      orNone(v.answer),
+    ]),
+  );
 }
 
 // ─── Documents ─────────────────────────────────────────────────────────
@@ -473,13 +769,19 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     `- **Project:** ${projectLine(project)}`,
     `- **Status:** ${archiveStatusLabel(task.status)}`,
     `- **Priority:** P${task.priority}`,
+    `- **Autonomy:** ${autonomyText(task, project)}`,
+    `- **Risk:** ${riskText(task)}`,
+    ...(task.parentId ? [`- **Parent task:** ${inlineCode(task.parentId)}`] : []),
     `- **Branch:** ${branch}`,
     `- **Merge target:** ${inlineCode(task.mergeBranch)}`,
     `- **Pull request:** ${pullRequestList(pullRequests)}`,
     `- **Commit:** ${codeOrNone(merge?.commit)}`,
     `- **Authors:** ${orNone(merge?.authors)}`,
+    ...(task.approvedPlan ? [`- **Plan approved by:** ${planApprovalText(task.approvedPlan)}`] : []),
+    ...(task.approval ? [`- **Code approved by:** ${codeApprovalText(task.approval)}`] : []),
     `- **Agents:** ${agentIds.length ? agentIds.map(inlineCode).join(", ") : "—"}`,
     ...(iterations ? [`- **Iterations:** ${iterations}`] : []),
+    ...(input.findings?.length ? [`- **Findings:** ${findingsText(input.findings)}`] : []),
     `- **Created:** ${formatTimestamp(task.createdAt)}`,
     `- **Completed:** ${formatTimestamp(done)}` +
       (done ? ` (lead time ${durationBetween(task.createdAt, done)})` : ""),
@@ -505,20 +807,42 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     "## What was done",
   );
 
+  // The phases the task went through, in flow order: which of them ran depends on the autonomy level.
   const sections: Array<[string, string]> = [
+    ["Refinement", "refine"],
     ["Plan", "plan"],
+    ["Plan critique", "plan_review"],
     ["Implementation", "code"],
+    ["Verification", "verify"],
     ["Review", "review"],
     ["Merge", "merge"],
   ];
   let wroteAny = false;
   for (const [title, type] of sections) {
+    if (type === "verify") {
+      // The task's latest record, not a report: code submitted again and never verified must not
+      // show the report of an earlier round as its result.
+      const lines = verificationLines(task, input.evidence ?? []);
+      if (lines) {
+        wroteAny = true;
+        out.push("", `### ${title}`, "", ...lines);
+      }
+      continue;
+    }
     const entries = task.conversation.filter((e) => e.messageType === type);
     const latest = entries[entries.length - 1];
     if (!latest) continue;
     wroteAny = true;
+    if (type === "plan" && task.approvedPlan) {
+      // The plan that was approved is the one that was built, however many rounds it took to get there.
+      const rounds = entries.length > 1 ? ` · ${plural(entries.length, "plan")} submitted` : "";
+      out.push("", `### ${title}`, "", `_Approved by ${planApprovalText(task.approvedPlan)}${rounds}_`, "");
+      out.push(embedMarkdown(task.approvedPlan.markdown, 4));
+      continue;
+    }
     const rounds = entries.length > 1 ? ` · latest of ${entries.length}` : "";
     out.push("", `### ${title}`, "", `_${authorAndTime(latest)}${rounds}_`, "");
+    if (type === "review" && task.lastReview) out.push(`Latest AI verdict: ${reviewText(task.lastReview)}.`, "");
     // "PR opened: <url>. Branch: …, Commit: …, Authors: …, Message: <markdown>" (older
     // tasks: "Merge submitted. …") reads better as facts followed by the agent's message.
     const mergeBody = type === "merge" ? latest.message.match(/, Message: ([\s\S]*)$/) : null;
@@ -539,6 +863,8 @@ function renderSummary(input: ArchiveDocumentsInput): string {
     out.push("", "_No plan, code, review or merge submissions were recorded._");
   }
 
+  if (input.subtasks?.length) out.push("", "## Subtasks", "", subtaskTable(input.subtasks));
+
   out.push("", "## Agents", "");
   if (sessions.length) {
     out.push(
@@ -546,7 +872,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
         ["#", "Phase", "Agent", "Claimed", "Duration", "Outcome"],
         sessions.map((s, i) => [
           String(i + 1),
-          PHASE_LABELS[s.status] ?? archiveStatusLabel(s.status),
+          phaseLabel(s.status),
           inlineCode(s.agentId),
           formatTimestamp(s.claimedAt),
           durationBetween(s.claimedAt, s.endedAt),
@@ -588,6 +914,11 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     `- **Status:** ${archiveStatusLabel(task.status)}`,
     `- **Priority:** P${task.priority}`,
     `- **Requires plan:** ${task.requiresPlan ? "Yes" : "No"}`,
+    `- **Type:** ${task.type}`,
+    `- **Risk:** ${riskText(task)}`,
+    `- **Autonomy:** ${autonomyText(task, project)}${task.autonomy === null ? "" : " (set on the task)"}`,
+    ...(task.parentId ? [`- **Parent task:** ${inlineCode(task.parentId)}`] : []),
+    ...(task.blockedBy.length ? [`- **Starts after:** ${task.blockedBy.map(inlineCode).join(", ")}`] : []),
     `- **Recommended branch:** ${codeOrNone(task.recommendedBranch)}`,
     `- **Working branch:** ${codeOrNone(task.realBranch)}`,
     `- **Merge target:** ${inlineCode(task.mergeBranch)}`,
@@ -614,10 +945,18 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     "",
     task.guardrails.length ? task.guardrails.map((g, i) => `${i + 1}. ${g}`).join("\n") : "_None._",
     "",
+    "## Non-goals",
+    "",
+    task.nonGoals.length ? task.nonGoals.map((g) => `- ${g}`).join("\n") : "_None._",
+    "",
+    "## References",
+    "",
+    task.references.length ? task.references.map((r) => `- ${r.label}: ${r.target}`).join("\n") : "_None._",
+    "",
     "## Acceptance criteria",
     "",
     task.acceptanceCriteria.length
-      ? task.acceptanceCriteria.map((c) => `- ${criterionLine(c)}`).join("\n")
+      ? task.acceptanceCriteria.map((c) => `- ${criterionLine(c, true)}`).join("\n")
       : "_None._",
     "",
     "## Context notes",
@@ -632,6 +971,34 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     out.push("", "_None._");
   }
 
+  // Approved plan
+  out.push("", "## Approved plan", "");
+  const plan = task.approvedPlan;
+  if (plan) {
+    out.push(`Approved by ${planApprovalText(plan)}.`, "", embedMarkdown(plan.markdown, 3));
+    if (plan.validation) {
+      out.push("", "### Validation plan", "");
+      out.push(
+        plan.validation.items.length
+          ? table(
+              ["Criterion", "How", "Command", "New tests"],
+              plan.validation.items.map((item) => [
+                item.criterionId,
+                item.how,
+                item.command ? inlineCode(item.command) : "—",
+                item.newTests?.length ? item.newTests.map(inlineCode).join(", ") : "—",
+              ]),
+            )
+          : "_No per-criterion checks._",
+      );
+      if (plan.validation.regressionCommands.length) {
+        out.push("", `Regression commands: ${plan.validation.regressionCommands.map(inlineCode).join(", ")}.`);
+      }
+    }
+  } else {
+    out.push("_No plan was approved._");
+  }
+
   // Agents
   out.push("", "## Agent history", "", "### Agents", "");
   const agentIds = uniqueAgentIds(sessions);
@@ -643,7 +1010,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
         agentIds.map((id) => {
           const agent = byId.get(id);
           const claims = sessions.filter((s) => s.agentId === id);
-          const phases = [...new Set(claims.map((s) => PHASE_LABELS[s.status] ?? s.status))];
+          const phases = [...new Set(claims.map((s) => phaseLabel(s.status)))];
           return [
             inlineCode(id),
             agent?.toolName ?? "—",
@@ -671,7 +1038,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
         ["#", "Phase", "Agent", "Claimed", "Ended", "Duration", "Outcome", "Submission"],
         sessions.map((s, i) => [
           String(i + 1),
-          PHASE_LABELS[s.status] ?? archiveStatusLabel(s.status),
+          phaseLabel(s.status),
           inlineCode(s.agentId),
           formatTimestamp(s.claimedAt),
           formatTimestamp(s.endedAt),
@@ -728,23 +1095,82 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     out.push("_No status changes were recorded._");
   }
 
+  // Blockers
+  const visits = blockerVisits(task);
+  if (visits.length) {
+    out.push(
+      "",
+      "## Blockers and answers",
+      "",
+      "Every time the task went to a person. What was asked is in the conversation at that time.",
+      "",
+      blockerTable(visits),
+    );
+  }
+
+  // Verification
+  const evidence = input.evidence ?? [];
+  const verification = verificationLines(task, evidence);
+  if (verification || evidence.length) {
+    out.push("", "## Verification", "", ...(verification ?? ["_Not verified by AgentQ._"]));
+    if (task.diffStats) {
+      out.push("", `Diff: ${task.diffStats.files} files, +${task.diffStats.insertions} −${task.diffStats.deletions}.`);
+    }
+    if (evidence.length) out.push("", "### Evidence", "", evidenceTable(evidence));
+  }
+
   // Review findings
   const findings = input.findings ?? [];
   if (findings.length) {
-    out.push("", "## Review findings", "");
+    out.push(
+      "",
+      "## Review findings",
+      "",
+      "Ids: `P` plan critique, `R` code review, `H` a person. The answer is what the planner or the coder replied; " +
+        "verified means a reviewer checked it.",
+      "",
+    );
     out.push(
       table(
-        ["Id", "Severity", "Status", "Where", "Finding"],
+        ["Id", "Phase", "Severity", "Status", "Where", "Raised by", "Finding", "Answer"],
         findings.map((f) => [
           inlineCode(f.id),
+          f.phase === "plan" ? "Plan" : "Code",
           f.severity,
           f.status + (f.reopenCount ? ` (reopened ×${f.reopenCount})` : ""),
           f.file ? inlineCode(f.line ? `${f.file}:${f.line}` : f.file) : "—",
-          f.text.replace(/\s+/g, " ") + (f.resolution ? ` — _${f.resolution.replace(/\s+/g, " ")}_` : ""),
+          inlineCode(f.raisedBy),
+          f.text.replace(/\s+/g, " "),
+          f.resolution ? f.resolution.replace(/\s+/g, " ") : "—",
         ]),
       ),
     );
   }
+
+  // Review and approval
+  out.push(
+    "",
+    "## Review and approval",
+    "",
+    `- **Plan critiques:** ${task.planRound}`,
+    `- **AI reviews:** ${task.codeRound}`,
+    ...(task.lastReview ? [`- **Latest AI verdict:** ${reviewText(task.lastReview)}`] : []),
+    ...(task.approval ? [`- **Code approved by:** ${codeApprovalText(task.approval)}`] : ["- **Code approved by:** —"]),
+  );
+
+  // Pull request and commits
+  if (task.pullRequest) out.push("", "## Pull request", "", ...pullRequestFacts(task.pullRequest));
+  if (task.commits.length) {
+    out.push("", "## Commits", "", "Every commit the work went through, oldest first.", "", commitTable(task.commits));
+  }
+
+  // Handoffs
+  const handoffs = input.handoffs ?? [];
+  if (handoffs.length) {
+    out.push("", "## Handoffs", "", "Notes each phase left for the next, and the answers people gave, oldest first.", "", handoffTable(handoffs));
+  }
+
+  if (input.subtasks?.length) out.push("", "## Subtasks", "", subtaskTable(input.subtasks));
 
   // Conversation
   out.push("", "## Conversation", "");
@@ -785,9 +1211,9 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     "## Raw data",
     "",
     "<details>",
-    "<summary>Task and project as stored in AgentQ</summary>",
+    "<summary>Task, project, findings, evidence and handoffs as stored in AgentQ</summary>",
     "",
-    fenced(JSON.stringify({ task, project }, null, 2), "json"),
+    fenced(JSON.stringify({ task, project, findings, evidence, handoffs }, null, 2), "json"),
     "",
     "</details>",
   );
@@ -874,6 +1300,9 @@ export function archiveTask(taskId: string, options: ArchiveTaskOptions = {}): A
     overview: options.overview,
     runnerJobs: options.runnerJobs,
     findings: getFindings(task.id),
+    evidence: getEvidence(task.id),
+    handoffs: getHandoffs(task.id),
+    subtasks: getSubtasks(task.id),
   });
 
   const summaryPath = join(directory, summaryFile);

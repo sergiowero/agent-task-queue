@@ -727,7 +727,6 @@ export const BLOCKING_SEVERITIES: Severity[] = ["blocker", "major"];
 /** Activity event types written by the workflow, with a short human label. */
 export const EVENT_TYPES: Record<string, string> = {
   task_created: "Task created",
-  task_claimed: "Claimed",
   plan_submitted: "Plan submitted",
   code_submitted: "Code submitted",
   review_submitted: "Review submitted",
@@ -767,6 +766,13 @@ export const EVENT_TYPES: Record<string, string> = {
   archive_failed: "Archive failed",
   comment_added: "Comment",
 };
+
+/**
+ * Event types nothing writes any more (the PR flow replaced them): old rows
+ * still carry them, so they keep their label. Every other type in EVENT_TYPES
+ * has a writer (a test checks it).
+ */
+export const LEGACY_EVENT_TYPES: readonly string[] = ["merge_submitted"];
 
 /** Actors whose events count as human decisions. */
 export const HUMAN_ACTOR = "user";

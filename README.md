@@ -55,7 +55,7 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 | **Atomic claims** | Claims run in a SQLite transaction. Two agents never get the same task. |
 | **Live Kanban dashboard** | React board and a **Needs you** inbox, decision screens for escalated plans and reviews, task details with conversation, handoffs and history, runners with live logs, agents, flow metrics and per-project settings, all updated over SSE. |
 | **Safe by default** | Runners use an allow-list of tools and commands. The PR phase means push + `gh pr create`, never a local merge or a force-push. |
-| **Archive to Markdown** | Finished tasks are saved into the repo as a summary and a full record: plan, code notes, review, PR, agents and timeline. |
+| **Archive to Markdown** | Finished tasks are saved into the repo as a summary and a full record of the flow they took: the approved plan, verification with its evidence, reviews and approvals, the PR, handoffs, agents and timeline. |
 | **Local-first** | A single SQLite file at `~/.agentq/agentq.db`. Your code and your tasks stay on your machine. |
 
 ## How it works

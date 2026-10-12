@@ -1,8 +1,12 @@
 import { describe, it, expect } from "bun:test";
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
 import {
   ALL_STATUSES,
   CLAIM_RULES,
   DEFAULT_ROLES,
+  EVENT_TYPES,
+  LEGACY_EVENT_TYPES,
   REVERT_FALLBACK,
   RESOLVE_TARGETS,
   ROLES,
@@ -169,5 +173,29 @@ describe("identities for separation of duties", () => {
       expect(sessionIdentity("claude", id)).toBeNull();
     }
     for (const id of ["session-mcp", "abc", "0b1c", "7d9e2c4a-1f"]) expect(isPlaceholderSessionId(id)).toBe(false);
+  });
+});
+
+describe("activity events", () => {
+  /** Source files (not tests) under a package's src/, the ones that can write activity. */
+  function sources(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return sources(path);
+      return /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".test.ts") && entry.name !== "catalog.ts" ? [path] : [];
+    });
+  }
+
+  it("every declared event type has a writer, except the legacy ones old rows still carry", () => {
+    const packages = join(import.meta.dir, "..", "..");
+    const code = ["shared", "web", "mcp"].flatMap((name) => sources(join(packages, name, "src"))).map((file) => readFileSync(file, "utf8")).join("\n");
+    for (const type of Object.keys(EVENT_TYPES)) {
+      expect({ type, written: LEGACY_EVENT_TYPES.includes(type) || code.includes(`"${type}"`) }).toEqual({ type, written: true });
+    }
+    // A legacy type is still labelled (the portal shows old rows) and nothing writes it.
+    for (const type of LEGACY_EVENT_TYPES) {
+      expect(EVENT_TYPES[type]).toBeTruthy();
+      expect({ type, written: code.includes(`"${type}"`) }).toEqual({ type, written: false });
+    }
   });
 });

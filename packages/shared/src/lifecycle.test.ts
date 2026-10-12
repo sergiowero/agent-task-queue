@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { createProject, getSubtasks, getTaskById, patchTask, softDeleteTask } from "./database.js";
+import { createProject, getActivityEvents, getSubtasks, getTaskById, patchTask, softDeleteTask } from "./database.js";
 import { TaskStatus, criteriaEditable, inboxReason } from "./catalog.js";
 import { forceStatus } from "./testing.js";
 import {
@@ -121,6 +121,15 @@ function splitting(projectId: string) {
   return { parent, first, second, claimToken: c.claimToken };
 }
 
+/** The task's plan approval released its subtasks: it logs one task_split naming them. */
+function expectSplitEvent(parentId: string, subtasks: number) {
+  const events = getActivityEvents({ taskId: parentId }).filter((e) => e.eventType === "task_split");
+  expect(events).toHaveLength(1);
+  expect(events[0].actor).toBe("system");
+  expect(events[0].details).toStartWith(`${subtasks} subtask${subtasks === 1 ? "" : "s"}: `);
+  for (const child of getSubtasks(parentId).filter((c) => c.status !== TaskStatus.Canceled)) expect(events[0].details).toContain(child.id);
+}
+
 describe("a plan sent on by resolving its blocker", () => {
   it("a blocking question answered with Ready for code approves the plan and releases its subtasks", () => {
     const pid = project();
@@ -137,6 +146,7 @@ describe("a plan sent on by resolving its blocker", () => {
     expect(resolved.status).toBe(TaskStatus.Split);
     expect(resolved.approvedPlan).toMatchObject({ markdown: "## Split", approvedBy: "user", validation: { regressionCommands: ["bun test all"] } });
     expect(getSubtasks(parent.id).every((c) => !c.held)).toBe(true);
+    expectSplitEvent(parent.id, 2);
     expect(claimNextTask({ roles: ["code"], agent: coder, projectId: pid })!.task.id).toBe(first.id);
   });
 
@@ -152,6 +162,22 @@ describe("a plan sent on by resolving its blocker", () => {
     const resolved = resolveBlocker(task.id, { answer: "yes", targetStatus: TaskStatus.ReadyForCode });
     expect(resolved.status).toBe(TaskStatus.ReadyForCode);
     expect(resolved.approvedPlan).toMatchObject({ markdown: "## Plan", approvedBy: "user" });
+  });
+
+  it("a critic approving a low-risk plan with subtasks splits the task too", () => {
+    const pid = project({ autonomy: 2 });
+    const task = createTaskForProject({ title: "critic splits", description: DESCRIPTION, projectId: pid, requiresPlan: true, risk: "low" });
+    const p = claimNextTask({ roles: ["plan"], agent: planner, projectId: pid })!;
+    createSubtask(task.id, { title: "Backend", description: DESCRIPTION, claimToken: p.claimToken });
+    submitPlan(task.id, { message: "## Split", claimToken: p.claimToken });
+    const r = claimNextTask({ roles: ["plan_review"], agent: critic, projectId: pid })!;
+    submitPlanReview(task.id, { verdict: "approve", message: "fine", claimToken: r.claimToken });
+
+    const split = getTaskById(task.id)!;
+    expect(split.status).toBe(TaskStatus.Split);
+    expect(split.approvedPlan).toMatchObject({ approvedBy: r.agent.id });
+    expect(getSubtasks(task.id).every((c) => !c.held)).toBe(true);
+    expectSplitEvent(task.id, 1);
   });
 
   it("a re-plan without subtasks goes to coding; the dropped subtasks of the old plan stay out", () => {
@@ -173,6 +199,8 @@ describe("a plan sent on by resolving its blocker", () => {
     cancelTask(first.id);
     expect(getTaskById(second.id)!.status).toBe(TaskStatus.ReadyForCode);
     expect(approvePlan(parent.id).status).toBe(TaskStatus.Split);
+    // The canceled subtask is not one the task waits for.
+    expectSplitEvent(parent.id, 1);
     expect(getTaskById(second.id)).toMatchObject({ status: TaskStatus.NeedsHuman, held: false });
     expect(getTaskById(second.id)!.blocker!.reason).toContain("which was canceled");
   });

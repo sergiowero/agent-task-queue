@@ -33,9 +33,11 @@ export function sweepQueue(now: Date = new Date()): SweepResult {
     const task = getTaskById(id);
     if (!task) continue;
     const minutes = policyFor(task).leaseMin;
+    // Its own event and actor: only a runner's lost job is a runner revert (see computeMetrics).
     const reverted = revertClaim(
       id,
       `The agent session that claimed this task showed no activity for ${minutes} min; its claim expired and the task went back to the queue.`,
+      { actor: "system:sweeper", event: "lease_expired" },
     );
     if (reverted) result.expired.push(id);
   }

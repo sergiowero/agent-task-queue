@@ -643,6 +643,18 @@ const MIGRATIONS: Migration[] = [
       try { d.exec("UPDATE tasks SET commits = '[]'"); } catch {}
     },
   },
+  {
+    // The sweeper logged an expired claim as a runner's revert (task_reverted, by "runner"), which the
+    // flow metrics count against the runners. It has its own event now; this relabels the old rows.
+    name: "033_lease_expired_events",
+    up: (d) =>
+      d.exec(
+        `UPDATE activity SET event_type = 'lease_expired', actor = 'system:sweeper'
+         WHERE event_type = 'task_reverted' AND actor = 'runner'
+           AND details LIKE 'The agent session that claimed this task showed no activity for %'`,
+      ),
+    down: (d) => d.exec("UPDATE activity SET event_type = 'task_reverted', actor = 'runner' WHERE event_type = 'lease_expired'"),
+  },
 ];
 
 type MessageType = NonNullable<ConversationEntry["messageType"]>;
