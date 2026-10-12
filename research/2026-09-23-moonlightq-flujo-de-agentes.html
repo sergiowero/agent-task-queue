@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Auditoría del flujo Moonlight Task Queue</title>
+    <title>Auditoría del flujo MoonlightQ</title>
     <meta
       name="description"
-      content="Análisis del flujo plan → código → revisión → merge de Moonlight Task Queue y plan para que los agentes se verifiquen entre sí con el humano en el bucle."
+      content="Análisis del flujo plan → código → revisión → merge de MoonlightQ y plan para que los agentes se verifiquen entre sí con el humano en el bucle."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -23,10 +23,10 @@
 <!-- report-css:end -->
     <!-- report-js:start -->
 <script>
-// Moonlight Task Queue research reports: theme toggle + table-of-contents highlight.
+// MoonlightQ research reports: theme toggle + table-of-contents highlight.
 // Plain script (no modules) so reports work from file:// with no server.
 (function () {
-  var KEY = "mtq-report-theme";
+  var KEY = "moonlightq-report-theme";
   var root = document.documentElement;
 
   function readTheme() {
@@ -108,13 +108,13 @@
     <div class="r-page">
       <header class="r-header">
         <div class="r-header__bar">
-          <span class="r-brand"><span class="r-brand__mark">AQ</span>Moonlight Task Queue · Investigación</span>
+          <span class="r-brand"><span class="r-brand__mark">AQ</span>MoonlightQ · Investigación</span>
           <button type="button" class="r-btn" data-theme-toggle id="theme-toggle">Tema oscuro</button>
         </div>
         <p class="r-eyebrow">Auditoría de flujo · 23 sep 2026</p>
         <h1 class="r-h1">Menos puertas humanas, más evidencia de agentes</h1>
         <p class="r-lead">
-          Cómo funciona hoy el flujo plan → código → revisión → merge de Moonlight Task Queue, si cumple su objetivo de acelerar a
+          Cómo funciona hoy el flujo plan → código → revisión → merge de MoonlightQ, si cumple su objetivo de acelerar a
           los desarrolladores con el humano en el bucle, dónde se atasca, y un plan concreto para que los agentes se
           verifiquen entre sí y el humano solo decida lo que importa.
         </p>
@@ -262,7 +262,7 @@
                 <span class="r-arrow" aria-hidden="true">→</span>
                 <div class="r-step r-step--human" role="listitem">
                   <span class="r-step__actor">Humano</span><span class="r-step__name">Fusionar PR</span>
-                  <span class="r-step__note">en GitHub, fuera de Moonlight Task Queue</span>
+                  <span class="r-step__note">en GitHub, fuera de MoonlightQ</span>
                 </div>
                 <span class="r-arrow" aria-hidden="true">→</span>
                 <div class="r-step r-step--human" role="listitem">
@@ -322,7 +322,7 @@
               <h2 class="r-h2">Dónde se va el tiempo humano</h2>
               <p class="r-lead">
                 Cada clic es además un cambio de contexto: abrir la tarea, leer el plan o la revisión en Markdown y
-                decidir. Y el mismo código se revisa dos veces: en Moonlight Task Queue («Approve code») y en GitHub (el PR).
+                decidir. Y el mismo código se revisa dos veces: en MoonlightQ («Approve code») y en GitHub (el PR).
               </p>
             </div>
             <div class="r-table-wrap">
@@ -396,7 +396,7 @@
                   <code>submit_review</code> no acepta un <code>verdict</code>; la skill dice que el veredicto es «una
                   recomendación» que aplica el usuario. Toda revisión IA termina en una espera humana.
                 </p>
-                <span class="r-ref">packages/shared/src/workflow.ts:344 · skills/mtq-review/SKILL.md:53</span>
+                <span class="r-ref">packages/shared/src/workflow.ts:344 · skills/moonlightq-review/SKILL.md:53</span>
               </article>
               <article class="r-finding">
                 <div class="r-finding__head">
@@ -415,7 +415,7 @@
                   <span class="r-finding__title">El mismo código se revisa dos veces</span>
                 </div>
                 <p class="r-finding__body">
-                  «Approve code» en Moonlight Task Queue y después la revisión y fusión del PR en GitHub. Con «Confirm completion» son
+                  «Approve code» en MoonlightQ y después la revisión y fusión del PR en GitHub. Con «Confirm completion» son
                   tres puertas humanas después del código.
                 </p>
               </article>
@@ -428,7 +428,7 @@
                   <code>submitMerge</code> mueve a <code>merged</code> cuando el PR se abre. El humano confirma
                   <code>complete</code> sin ninguna señal del estado real del PR.
                 </p>
-                <span class="r-ref">packages/shared/src/workflow.ts:362 · skills/mtq-merge/SKILL.md</span>
+                <span class="r-ref">packages/shared/src/workflow.ts:362 · skills/moonlightq-merge/SKILL.md</span>
               </article>
               <article class="r-finding">
                 <div class="r-finding__head">
@@ -454,7 +454,7 @@
                   sistema ni el revisor están obligados a reproducirlas, y no hay comandos de proyecto registrados:
                   <code>Project</code> solo tiene <code>displayName</code> y <code>workingDirectory</code>.
                 </p>
-                <span class="r-ref">packages/shared/src/types.ts:84 · skills/mtq-code/SKILL.md</span>
+                <span class="r-ref">packages/shared/src/types.ts:84 · skills/moonlightq-code/SKILL.md</span>
               </article>
               <article class="r-finding">
                 <div class="r-finding__head">
@@ -462,11 +462,11 @@
                   <span class="r-finding__title">El plan no dice cómo se validará</span>
                 </div>
                 <p class="r-finding__body">
-                  La plantilla de <code>mtq-plan</code> pide pasos, archivos y decisiones, pero no un plan de
+                  La plantilla de <code>moonlightq-plan</code> pide pasos, archivos y decisiones, pero no un plan de
                   validación por criterio de aceptación. El revisor no tiene contra qué comparar y el coder decide solo
                   qué probar.
                 </p>
-                <span class="r-ref">skills/mtq-plan/SKILL.md (Plan Template)</span>
+                <span class="r-ref">skills/moonlightq-plan/SKILL.md (Plan Template)</span>
               </article>
               <article class="r-finding">
                 <div class="r-finding__head">
@@ -553,7 +553,7 @@
                   humano».</strong>
                 </p>
                 <span class="r-ref"
-                  >skills/mtq-merge/SKILL.md:83, 102 · packages/web/src/runner/prompt.ts:156 ·
+                  >skills/moonlightq-merge/SKILL.md:83, 102 · packages/web/src/runner/prompt.ts:156 ·
                   packages/web/src/runner/runner.ts:470</span
                 >
               </article>
@@ -578,11 +578,11 @@
                   <span class="r-finding__title">Las skills instaladas están desactualizadas</span>
                 </div>
                 <p class="r-finding__body">
-                  En esta máquina <code>~/.claude/skills/mtq-claim</code> es la versión 2.0.0 (usa el CLI
-                  <code>mtq</code>, que ya no existe) y el repo va por la 3.1.0 (MCP). Un agente abierto a mano sigue
+                  En esta máquina <code>~/.claude/skills/moonlightq-claim</code> es la versión 2.0.0 (usa el CLI
+                  <code>moonlightq</code>, que ya no existe) y el repo va por la 3.1.0 (MCP). Un agente abierto a mano sigue
                   instrucciones que ya no funcionan y nada lo detecta.
                 </p>
-                <span class="r-ref">~/.claude/skills/mtq-claim/SKILL.md · packages/installer/src/install-skills.ts</span>
+                <span class="r-ref">~/.claude/skills/moonlightq-claim/SKILL.md · packages/installer/src/install-skills.ts</span>
               </article>
               <article class="r-finding">
                 <div class="r-finding__head">
@@ -1291,7 +1291,7 @@
             <h3 class="r-h3">Skills</h3>
             <div class="r-grid-2">
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-plan</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-plan</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Plantilla con tabla «Plan de validación»: criterio · cómo se verifica · comando · tests nuevos.</li>
                   <li>Secciones «Riesgos», «Fuera de alcance» y «Preguntas abiertas» (bloqueante sí o no).</li>
@@ -1300,7 +1300,7 @@
                 </ul>
               </div>
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-plan-review</code> <span class="r-chip r-tone-accent r-chip--plain">Nueva</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-plan-review</code> <span class="r-chip r-tone-accent r-chip--plain">Nueva</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Cada criterio tiene una verificación ejecutable o una razón para que sea manual.</li>
                   <li>El plan cubre los criterios y no se sale del alcance.</li>
@@ -1309,7 +1309,7 @@
                 </ul>
               </div>
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-code</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-code</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Primero los tests del plan de validación; en bugs, un test que falla antes del arreglo.</li>
                   <li>Ejecutar los comandos del proyecto y adjuntar evidencia por criterio.</li>
@@ -1319,7 +1319,7 @@
                 </ul>
               </div>
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-review</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-review</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Primero verificar los hallazgos de la ronda anterior, por id.</li>
                   <li>Revisar contra el plan aprobado y su validación; re-ejecutar los comandos clave.</li>
@@ -1328,7 +1328,7 @@
                 </ul>
               </div>
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-merge</code> → <code>mtq-pr</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-merge</code> → <code>moonlightq-pr</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Fallo de push o de PR → <code>report_blocker</code>, no «parar y avisar».</li>
                   <li>Cuerpo del PR desde el brief: criterios con evidencia, veredicto, riesgos y hallazgos resueltos.</li>
@@ -1336,7 +1336,7 @@
                 </ul>
               </div>
               <div class="r-card r-stack">
-                <div class="flex flex-wrap items-center gap-2"><code>mtq-claim</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
+                <div class="flex flex-wrap items-center gap-2"><code>moonlightq-claim</code> <span class="r-chip r-tone-info r-chip--plain">v4</span></div>
                 <ul class="r-prose r-small" style="margin: 0; padding-left: 1.2em">
                   <li>Enrutar los estados nuevos (plan review, verify, pr).</li>
                   <li>Comparar <code>skillsVersion</code> del servidor con la suya y avisar si difiere.</li>
@@ -1405,7 +1405,7 @@
               <p class="r-eyebrow">Implementación</p>
               <h2 class="r-h2">Hoja de ruta</h2>
               <p class="r-lead">
-                Seis fases en orden de dependencia. Cada punto está escrito para convertirse en una tarea de Moonlight Task Queue:
+                Seis fases en orden de dependencia. Cada punto está escrito para convertirse en una tarea de MoonlightQ:
                 título, archivos y criterios de aceptación. Las fases 0 y 1 son las que quitan clics.
               </p>
             </div>
@@ -1434,7 +1434,7 @@
               </div>
               <div class="r-task">
                 <div class="r-task__title"><span class="r-finding__id">P0.3</span>Estado needs_human y herramienta report_blocker <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
-                <p class="r-ref" style="margin: 0">types.ts · workflow.ts · packages/mcp/src/server.ts · runner/prompt.ts · skills/mtq-merge · web-ui/src/lib/status.ts</p>
+                <p class="r-ref" style="margin: 0">types.ts · workflow.ts · packages/mcp/src/server.ts · runner/prompt.ts · skills/moonlightq-merge · web-ui/src/lib/status.ts</p>
                 <ul>
                   <li><code>report_blocker(taskId, reason, question)</code> mueve a <code>needs_human</code>, guarda <code>blocker</code> y libera la tarea.</li>
                   <li>Acción humana <code>resolve_blocker(answer, targetStatus)</code>; la respuesta queda en la conversación.</li>
@@ -1458,7 +1458,7 @@
               <div class="r-task">
                 <div class="r-task__title"><span class="r-finding__id">P0.6</span>Detección de skills desactualizadas <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
                 <ul>
-                  <li><code>claim_task</code> devuelve <code>skillsVersion</code>; <code>mtq-claim</code> la compara con su <code>metadata.version</code>.</li>
+                  <li><code>claim_task</code> devuelve <code>skillsVersion</code>; <code>moonlightq-claim</code> la compara con su <code>metadata.version</code>.</li>
                   <li>Con la v2 instalada, el agente avisa «ejecuta bun run install:skills» y se detiene.</li>
                 </ul>
               </div>
@@ -1501,7 +1501,7 @@
                 </ul>
               </div>
               <div class="r-task">
-                <div class="r-task__title"><span class="r-finding__id">P1.5</span>Skill mtq-review v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <div class="r-task__title"><span class="r-finding__id">P1.5</span>Skill moonlightq-review v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
                 <ul>
                   <li>Rúbrica de severidad, verificación de hallazgos previos por id y reglas de veredicto.</li>
                 </ul>
@@ -1544,7 +1544,7 @@
                 </ul>
               </div>
               <div class="r-task">
-                <div class="r-task__title"><span class="r-finding__id">P2.5</span>Skills mtq-plan y mtq-code v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
+                <div class="r-task__title"><span class="r-finding__id">P2.5</span>Skills moonlightq-plan y moonlightq-code v4 <span class="r-chip r-tone-neutral r-chip--plain">S</span></div>
                 <ul>
                   <li>Plantilla de validación en el plan; tests primero, evidencia y auto-revisión en el código.</li>
                 </ul>
@@ -1590,7 +1590,7 @@
               <div class="r-task">
                 <div class="r-task__title"><span class="r-finding__id">P4.1</span>Crítica del plan <span class="r-chip r-tone-neutral r-chip--plain">M</span></div>
                 <ul>
-                  <li>Estados <code>plan_review_requested</code> y <code>plan_reviewing</code>, rol <code>plan_reviewer</code>, <code>submit_plan_review</code> y skill <code>mtq-plan-review</code>.</li>
+                  <li>Estados <code>plan_review_requested</code> y <code>plan_reviewing</code>, rol <code>plan_reviewer</code>, <code>submit_plan_review</code> y skill <code>moonlightq-plan-review</code>.</li>
                 </ul>
               </div>
               <div class="r-task">
@@ -1767,9 +1767,9 @@
                   <tr><td class="r-ref">packages/web/src/runner/prompt.ts:109</td><td>Conversación completa en el prompt del runner</td></tr>
                   <tr><td class="r-ref">packages/web/src/runner/prompt.ts:156</td><td>«still submit with a message explaining what blocks you»</td></tr>
                   <tr><td class="r-ref">packages/web/src/runner/runner.ts:470</td><td><code>revertClaim</code> y backoff cuando la herramienta sale sin submit</td></tr>
-                  <tr><td class="r-ref">skills/mtq-review/SKILL.md:53</td><td>El veredicto es «una recomendación»</td></tr>
-                  <tr><td class="r-ref">skills/mtq-merge/SKILL.md:83, 102</td><td>Parar y avisar al usuario si fallan el push o el PR</td></tr>
-                  <tr><td class="r-ref">~/.claude/skills/mtq-claim/SKILL.md</td><td>Versión 2.0.0 (CLI) instalada frente a la 3.1.0 (MCP) del repo</td></tr>
+                  <tr><td class="r-ref">skills/moonlightq-review/SKILL.md:53</td><td>El veredicto es «una recomendación»</td></tr>
+                  <tr><td class="r-ref">skills/moonlightq-merge/SKILL.md:83, 102</td><td>Parar y avisar al usuario si fallan el push o el PR</td></tr>
+                  <tr><td class="r-ref">~/.claude/skills/moonlightq-claim/SKILL.md</td><td>Versión 2.0.0 (CLI) instalada frente a la 3.1.0 (MCP) del repo</td></tr>
                 </tbody>
               </table>
             </div>

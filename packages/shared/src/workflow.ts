@@ -602,7 +602,7 @@ export function requireClaim(taskId: string, status: TaskStatus | TaskStatus[], 
 
 /** Consecutive runs without a submit after which a task stops retrying and asks a person. */
 export function maxReverts(): number {
-  const n = Number(process.env.MTQ_MAX_REVERTS ?? "3");
+  const n = Number(process.env.MOONLIGHTQ_MAX_REVERTS ?? "3");
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
 }
 
@@ -2233,7 +2233,7 @@ export function submitCode(taskId: string, input: SubmitCodeInput = {}): SubmitR
           : verifier === "agent"
             ? "Waiting for a verifier agent (a runner or session with the verify role)."
             : hasCommands
-              ? "Not verified: the built-in verifier is not running (the Moonlight Task Queue web server runs it) and no runner with the verify role can take over."
+              ? "Not verified: the built-in verifier is not running (the MoonlightQ web server runs it) and no runner with the verify role can take over."
               : "Not verified: the project has no commands configured (Projects → Edit → Commands).",
         round,
       );

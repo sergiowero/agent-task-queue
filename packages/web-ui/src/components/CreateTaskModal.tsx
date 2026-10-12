@@ -8,7 +8,7 @@ import {
   type AutonomyLevel,
   type Risk,
   type TaskType,
-} from "@mtq/shared/catalog";
+} from "@moonlightq/shared/catalog";
 import { api } from "../lib/api";
 import {
   AddIcon,

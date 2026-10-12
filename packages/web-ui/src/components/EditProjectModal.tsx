@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { AUTONOMY_LEVELS, type AutonomyLevel } from "@mtq/shared/catalog";
-import { DEFAULT_POLICY, POLICY_RANGES, type VerifierMode } from "@mtq/shared/policy";
-import { DEFAULT_PROFILE, PROFILE_RANGES } from "@mtq/shared/profile";
+import { AUTONOMY_LEVELS, type AutonomyLevel } from "@moonlightq/shared/catalog";
+import { DEFAULT_POLICY, POLICY_RANGES, type VerifierMode } from "@moonlightq/shared/policy";
+import { DEFAULT_PROFILE, PROFILE_RANGES } from "@moonlightq/shared/profile";
 import { api } from "../lib/api";
 import type { PolicySettings, ProjectProfile } from "../lib/api";
 import { Tabs } from "./Tabs";
@@ -395,7 +395,7 @@ export function EditProjectModal({ project, onClose, initialTab = "general", det
               label="Auto-merge green, low-risk pull requests"
               description={
                 autonomy === 3
-                  ? "Moonlight Task Queue merges a PR by itself when its task is low risk, every check is green, no reviewer asks for changes and its head is the approved commit. Anything else waits for you."
+                  ? "MoonlightQ merges a PR by itself when its task is low risk, every check is green, no reviewer asks for changes and its head is the approved commit. Anything else waits for you."
                   : "Only at level 3 (Autonomous): choose that level to turn it on."
               }
             />

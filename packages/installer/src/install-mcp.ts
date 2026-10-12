@@ -1,15 +1,15 @@
 import { homedir } from "os";
 import { delimiter, resolve } from "path";
-import { mcpServerLaunch } from "@mtq/mcp";
-import { getDbPath } from "@mtq/shared";
+import { mcpServerLaunch } from "@moonlightq/mcp";
+import { getDbPath } from "@moonlightq/shared";
 import { manualEntry, registerAll } from "./mcp-setup.js";
 
 /**
- * Registers the Moonlight Task Queue MCP server with every installed coding tool (Claude Code,
+ * Registers the MoonlightQ MCP server with every installed coding tool (Claude Code,
  * Codex, OpenCode, Gemini CLI, GitHub Copilot CLI and GitHub Copilot in VS Code).
  * Safe to run again: up-to-date entries are left alone.
  *
- *   bun run install:mcp              # database from MTQ_DB_PATH, default ~/.mtq/mtq.db
+ *   bun run install:mcp              # database from MOONLIGHTQ_DB_PATH, default ~/.moonlightq/moonlightq.db
  *   bun run install:mcp --db <path>  # another database
  */
 

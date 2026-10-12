@@ -149,7 +149,7 @@ export function AgentsPage() {
       <PageHeader
         icon={AgentsIcon}
         title="Agents"
-        description="Coding agents that claimed tasks through the Moonlight Task Queue MCP server or a runner."
+        description="Coding agents that claimed tasks through the MoonlightQ MCP server or a runner."
         meta={!isLoading && <CountPill>{agentsRes?.total ?? agents.length}</CountPill>}
         actions={
           <>

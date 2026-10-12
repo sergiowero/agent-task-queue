@@ -4,7 +4,7 @@
  * goes to a person, a new change request sends the task back to the coder, and
  * under L3 a green, low-risk PR can merge itself.
  */
-import type { ProjectProfile, PullRequest, Task } from "@mtq/shared";
+import type { ProjectProfile, PullRequest, Task } from "@moonlightq/shared";
 import {
   TaskStatus,
   addActivity,
@@ -22,7 +22,7 @@ import {
   requestPrChanges,
   resolveProfile,
   sameCommit,
-} from "@mtq/shared";
+} from "@moonlightq/shared";
 
 export interface GhResult {
   exitCode: number;
@@ -33,9 +33,9 @@ export interface GhResult {
 /** Runs `gh` with these arguments; async, so a slow GitHub never blocks the web server. */
 export type GhRunner = (args: string[], cwd: string) => Promise<GhResult>;
 
-/** Milliseconds one `gh` call may run before it is killed (MTQ_PR_SYNC_TIMEOUT_SEC, default 30 s). */
+/** Milliseconds one `gh` call may run before it is killed (MOONLIGHTQ_PR_SYNC_TIMEOUT_SEC, default 30 s). */
 export function ghTimeoutMs(): number {
-  const sec = Number(process.env.MTQ_PR_SYNC_TIMEOUT_SEC ?? "30");
+  const sec = Number(process.env.MOONLIGHTQ_PR_SYNC_TIMEOUT_SEC ?? "30");
   return (Number.isFinite(sec) && sec > 0 ? sec : 30) * 1000;
 }
 
@@ -288,7 +288,7 @@ export async function syncPullRequests(opts: { gh?: GhRunner; now?: Date } = {})
       if (merge.exitCode === 0) {
         addActivity(task.id, "pr_auto_merged", "system", pr.url ?? ref);
         if (stillOpen(task.id)) {
-          completeFromPullRequest(task.id, { ...pr, state: "merged", mergedAt: now, mergedBy: "mtq-auto-merge" });
+          completeFromPullRequest(task.id, { ...pr, state: "merged", mergedAt: now, mergedBy: "moonlightq-auto-merge" });
           result.autoMerged.push(task.id);
           archiveIfAuto(task.id, { pullRequests: pr.url ? [pr.url] : [] });
         }
@@ -313,7 +313,7 @@ export class PrSync {
 
   constructor(
     private readonly broadcast: (event: string, data: unknown) => void = () => {},
-    private readonly intervalMs = Math.max(30, Number(process.env.MTQ_PR_SYNC_SEC ?? "180") || 180) * 1000,
+    private readonly intervalMs = Math.max(30, Number(process.env.MOONLIGHTQ_PR_SYNC_SEC ?? "180") || 180) * 1000,
     private readonly gh: GhRunner = defaultGh,
     available = !!Bun.which("gh"),
   ) {
@@ -357,7 +357,7 @@ export class PrSync {
 
   /**
    * What the portal shows: `available` (gh installed) and `enabled` (the periodic
-   * sync is running; false with MTQ_PR_SYNC=0 even when gh is there). Unless
+   * sync is running; false with MOONLIGHTQ_PR_SYNC=0 even when gh is there). Unless
    * both are true nothing completes a merged task by itself.
    */
   state() {

@@ -3,11 +3,11 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { claudeHome, codexHome, opencodeHome, type ToolEnv } from "./tool-paths.js";
 
-/** The repo's `skills/` folder: the source of truth for every Moonlight Task Queue skill. */
+/** The repo's `skills/` folder: the source of truth for every MoonlightQ skill. */
 export const SKILLS_DIR = resolve(import.meta.dir, "../../../skills");
 
-/** Every Moonlight Task Queue skill folder starts with this; the installer owns folders with this prefix. */
-export const SKILL_PREFIX = "mtq-";
+/** Every MoonlightQ skill folder starts with this; the installer owns folders with this prefix. */
+export const SKILL_PREFIX = "moonlightq-";
 
 /**
  * Oldest skills bundle the server still works with. Agents that report an older
@@ -73,7 +73,7 @@ export function skillsManifest(dir: string = SKILLS_DIR): Record<string, string 
   return Object.fromEntries(listSkills(dir).map((name) => [name, readSkill(name, dir)?.version ?? null]));
 }
 
-/** Version of the whole bundle (every mtq-* skill carries the same one; a test enforces it). */
+/** Version of the whole bundle (every moonlightq-* skill carries the same one; a test enforces it). */
 export function skillsBundleVersion(dir: string = SKILLS_DIR): string | null {
   return readSkill(`${SKILL_PREFIX}claim`, dir)?.version ?? null;
 }
@@ -89,7 +89,7 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Version of the mtq-claim skill installed for each tool (null when not installed). */
+/** Version of the moonlightq-claim skill installed for each tool (null when not installed). */
 export function installedSkillVersions(env: ToolEnv = process.env, home: string = homedir()): Record<string, string | null> {
   return Object.fromEntries(
     Object.entries(toolSkillDirs(env, home)).map(([tool, dir]) => [tool, skillsBundleVersion(dir)]),

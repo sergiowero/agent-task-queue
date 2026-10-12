@@ -1,15 +1,15 @@
 ---
-name: mtq-plan-review
-description: Plan-critique phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the mtq-claim router sends you here). Works from an independent brief without the planner's handoff notes or the conversation: reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_plan_review, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
+name: moonlightq-plan-review
+description: Plan-critique phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the moonlightq-claim router sends you here). Works from an independent brief without the planner's handoff notes or the conversation: reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_plan_review, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Plan Review Skill
+# MoonlightQ Plan Review Skill
 
-Follow this skill when you hold a task claimed from `plan_review_requested` (its status is now `plan_reviewing`). You are the plan's critic: a second opinion, ideally from a different model than the planner. The cross-cutting rules in `mtq-claim` still apply.
+Follow this skill when you hold a task claimed from `plan_review_requested` (its status is now `plan_reviewing`). You are the plan's critic: a second opinion, ideally from a different model than the planner. The cross-cutting rules in `moonlightq-claim` still apply.
 
 ## Independent Critique
 

@@ -1,5 +1,5 @@
 {
-  "name": "@mtq/installer",
+  "name": "@moonlightq/installer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
     "install:skills": "bun run src/install-skills.ts"
   },
   "dependencies": {
-    "@mtq/mcp": "workspace:*",
-    "@mtq/shared": "workspace:*"
+    "@moonlightq/mcp": "workspace:*",
+    "@moonlightq/shared": "workspace:*"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

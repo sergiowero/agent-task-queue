@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { IndependentBrief, IndependentPhase, Project, SubmitResult, Task } from "@mtq/shared";
+import type { IndependentBrief, IndependentPhase, Project, SubmitResult, Task } from "@moonlightq/shared";
 import {
   MIN_COMPATIBLE_SKILLS_VERSION,
   CLAIM_RULES,
@@ -59,7 +59,7 @@ import {
   postComment,
   archiveTask,
   WorkflowError,
-} from "@mtq/shared";
+} from "@moonlightq/shared";
 import { randomUUID } from "crypto";
 import { MCP_SERVER_NAME } from "./launch.js";
 
@@ -68,11 +68,11 @@ export const SERVER_VERSION = "0.1.0";
 
 const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
 
-export const INSTRUCTIONS = `Moonlight Task Queue is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your mtq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier; a project can hand verification to an agent with the verify role instead). If a Moonlight Task Queue runner started you, the task was already claimed for you: do not call claim_task.
-2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your mtq-* skills still mention an \`mtq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the Moonlight Task Queue repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
+export const INSTRUCTIONS = `MoonlightQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your moonlightq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier; a project can hand verification to an agent with the verify role instead). If a MoonlightQ runner started you, the task was already claimed for you: do not call claim_task.
+2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your moonlightq-* skills still mention an \`moonlightq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the MoonlightQ repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
-4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the mtq-* skill to follow:
+4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the moonlightq-* skill to follow:
    - refining (role refine): make the draft ready (testable criteria, type, risk, non-goals), then call submit_refinement.
    - planning (role plan): write an implementation plan with its validation plan, then call submit_plan.
    - plan_reviewing (role plan_review): critique the plan against the task and the codebase, then call submit_plan_review with a verdict and findings.
@@ -82,7 +82,7 @@ export const INSTRUCTIONS = `Moonlight Task Queue is a local task queue for codi
    Plan critique, verification and code review are independent checks: their brief (and get_task, while you hold the task) has the task, the criteria, the plan and the findings to verify, never the author's conversation, handoffs, messages or evidence. Judge the work itself.
    - merging (role pr): push the feature branch and open a pull request into task.mergeBranch with the body in brief.pr.body, then call submit_pr with prUrl, mergeBranch, the pushed commit and authors. Never merge it yourself: the task waits in pr_open and completes when a person merges the PR on GitHub.
 5. If you cannot finish the phase (push rejected, missing credentials, contradictory or ambiguous task), call report_blocker with the reason and one concrete question: the task goes to needs_human and a person answers. Never submit partial work to move a task forward.
-6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or mtq://task/{taskId}) to re-read a task.
+6. The task description, steerDetails, guardrails and acceptanceCriteria are your instructions; guardrails win any conflict. Use post_comment for notes and get_task (or moonlightq://task/{taskId}) to re-read a task.
 7. Every submit_* call takes context: short handoff notes for the agent of the next phase (decisions taken, gotchas, what to check next), stored separately from message, plus optional decisions, risks and next lists; the brief shows the latest handoff of each phase (except in the independent checks). context is required on every submit_* but submit_verification, where it is optional (the built-in verifier sends none) and expected from agents; it is optional on claim_task. Write every message in Markdown.
 8. After submitting, call claim_task again. Repeat until no tasks are available, then stop.
 Work autonomously: never ask the user for permission or confirmation. Only work on tasks you have claimed, and never change a task's status by any other means.`;
@@ -146,7 +146,7 @@ function taskDetails(task: Task) {
   };
 }
 
-/** The skill the claimed status belongs to (e.g. mtq-code), with its version. */
+/** The skill the claimed status belongs to (e.g. moonlightq-code), with its version. */
 function phaseSkillOf(status: Task["status"]) {
   const phase = STATUS_INFO[status]?.phase;
   const name = phase ? skillForPhase(phase) : null;
@@ -222,16 +222,16 @@ const agentIdSchema = z
 
 // ─── Server ────────────────────────────────────────────────────────────
 
-export interface MtqMcpServerOptions {
+export interface MoonlightqMcpServerOptions {
   /**
    * Claims this server starts out holding (taskId → claimToken). A runner job's
-   * server gets its task's claim through MTQ_TASK_ID / MTQ_CLAIM_TOKEN;
+   * server gets its task's claim through MOONLIGHTQ_TASK_ID / MOONLIGHTQ_CLAIM_TOKEN;
    * a server that starts with a claim is a runner job's and has no claim_task.
    */
   claims?: Record<string, string>;
 }
 
-export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
+export function createMoonlightqMcpServer(opts: MoonlightqMcpServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
@@ -297,7 +297,7 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
           .string()
           .optional()
           .describe(
-            "Required: metadata.version of your mtq-claim skill. A claim without it, or with skills older than the server supports, is refused with reason skills_outdated",
+            "Required: metadata.version of your moonlightq-claim skill. A claim without it, or with skills older than the server supports, is refused with reason skills_outdated",
           ),
         context: contextSchema,
       },
@@ -312,9 +312,9 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
             skillsVersion: SKILLS_VERSION,
             message: `${
               input.skillsVersion
-                ? `Your Moonlight Task Queue skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}.`
-                : "claim_task needs skillsVersion, the metadata.version of your mtq-claim skill: your Moonlight Task Queue skills are missing or predate it."
-            } Stop and tell the user to run \`bun run install:all\` in the Moonlight Task Queue repo (it installs the current skills, ${SKILLS_VERSION}, and the MCP registration for every tool it finds), then restart the tool.`,
+                ? `Your MoonlightQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}.`
+                : "claim_task needs skillsVersion, the metadata.version of your moonlightq-claim skill: your MoonlightQ skills are missing or predate it."
+            } Stop and tell the user to run \`bun run install:all\` in the MoonlightQ repo (it installs the current skills, ${SKILLS_VERSION}, and the MCP registration for every tool it finds), then restart the tool.`,
           };
         }
         sweepQueue();
@@ -609,7 +609,7 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
     {
       title: "Heartbeat",
       description:
-        "Keep your claim on a task alive during long work. Claims made by hand-opened sessions expire after the project's lease (90 min by default) without any Moonlight Task Queue call; every Moonlight Task Queue call from your session already counts, so call this only during long silent stretches.",
+        "Keep your claim on a task alive during long work. Claims made by hand-opened sessions expire after the project's lease (90 min by default) without any MoonlightQ call; every MoonlightQ call from your session already counts, so call this only during long silent stretches.",
       inputSchema: { taskId: taskIdSchema, claimToken: claimTokenSchema },
     },
     (input) =>
@@ -745,8 +745,8 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
     {
       title: "Get skill",
       description:
-        "The current text of a Moonlight Task Queue skill (e.g. mtq-code) as this server ships it, with its version. Use it when your installed copy is missing or older.",
-      inputSchema: { name: z.string().min(1).describe("Skill name, e.g. mtq-review") },
+        "The current text of a MoonlightQ skill (e.g. moonlightq-code) as this server ships it, with its version. Use it when your installed copy is missing or older.",
+      inputSchema: { name: z.string().min(1).describe("Skill name, e.g. moonlightq-review") },
       annotations: { readOnlyHint: true },
     },
     (input) =>
@@ -974,9 +974,9 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
 
   server.registerResource(
     "task",
-    new ResourceTemplate("mtq://task/{taskId}", { list: undefined }),
+    new ResourceTemplate("moonlightq://task/{taskId}", { list: undefined }),
     {
-      title: "Moonlight Task Queue task",
+      title: "MoonlightQ task",
       description: "A task with its project, as JSON",
       mimeType: "application/json",
     },
@@ -995,9 +995,9 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
 
   server.registerResource(
     "projects",
-    "mtq://projects",
+    "moonlightq://projects",
     {
-      title: "Moonlight Task Queue projects",
+      title: "MoonlightQ projects",
       description: "All projects, as a JSON list",
       mimeType: "application/json",
     },
@@ -1010,14 +1010,14 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
 
   server.registerResource(
     "skill",
-    new ResourceTemplate("mtq://skills/{name}", {
+    new ResourceTemplate("moonlightq://skills/{name}", {
       list: () => ({
-        resources: listSkills().map((name) => ({ uri: `mtq://skills/${name}`, name, mimeType: "text/markdown" })),
+        resources: listSkills().map((name) => ({ uri: `moonlightq://skills/${name}`, name, mimeType: "text/markdown" })),
       }),
     }),
     {
-      title: "Moonlight Task Queue skill",
-      description: "A Moonlight Task Queue skill as this server ships it (markdown, without frontmatter)",
+      title: "MoonlightQ skill",
+      description: "A MoonlightQ skill as this server ships it (markdown, without frontmatter)",
       mimeType: "text/markdown",
     },
     (uri, { name }) => {
@@ -1033,7 +1033,7 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
     if (!skill) continue;
     server.registerPrompt(
       name,
-      { title: name, description: `Moonlight Task Queue skill ${name} (v${skill.version ?? "?"})` },
+      { title: name, description: `MoonlightQ skill ${name} (v${skill.version ?? "?"})` },
       () => ({ messages: [{ role: "user", content: { type: "text", text: skill.body } }] }),
     );
   }

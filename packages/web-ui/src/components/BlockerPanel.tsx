@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { resolveTargets, statusLabel } from "@mtq/shared/catalog";
+import { resolveTargets, statusLabel } from "@moonlightq/shared/catalog";
 import type { Task } from "../lib/api";
 import { NeedsHumanIcon, SendIcon } from "../lib/icons";
 import { formatRelative } from "../lib/format";

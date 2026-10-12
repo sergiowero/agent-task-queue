@@ -3,9 +3,9 @@ import { isIP } from "net";
 /**
  * The HTTP API has no login: whoever reaches it can approve code, answer
  * blockers and create runners. So it only serves the local user. The server
- * listens on loopback (MTQ_HOST), and requests a web page could forge are
+ * listens on loopback (MOONLIGHTQ_HOST), and requests a web page could forge are
  * refused before any route runs:
- * - a Host that is not localhost, an IP address or listed in MTQ_ALLOWED_HOSTS
+ * - a Host that is not localhost, an IP address or listed in MOONLIGHTQ_ALLOWED_HOSTS
  *   (a DNS-rebinding page names its own domain) → 403, on every request;
  * - a state-changing request whose Origin is not the server's own → 403;
  * - a POST/PUT/PATCH that is not `application/json` (text and form bodies are
@@ -21,10 +21,10 @@ export interface RequestRefusal {
   error: string;
 }
 
-/** Host names accepted besides localhost and IP addresses: MTQ_ALLOWED_HOSTS, plus MTQ_HOST when it is a name. */
+/** Host names accepted besides localhost and IP addresses: MOONLIGHTQ_ALLOWED_HOSTS, plus MOONLIGHTQ_HOST when it is a name. */
 export function extraAllowedHosts(env: NodeJS.ProcessEnv = process.env): string[] {
-  const names = (env.MTQ_ALLOWED_HOSTS ?? "").split(",");
-  if (env.MTQ_HOST && !isIP(env.MTQ_HOST)) names.push(env.MTQ_HOST);
+  const names = (env.MOONLIGHTQ_ALLOWED_HOSTS ?? "").split(",");
+  if (env.MOONLIGHTQ_HOST && !isIP(env.MOONLIGHTQ_HOST)) names.push(env.MOONLIGHTQ_HOST);
   return names.map((n) => n.trim().toLowerCase()).filter(Boolean);
 }
 
@@ -48,7 +48,7 @@ export function refuseRequest(req: Request): RequestRefusal | null {
   if (!isAllowedHost(host)) {
     return {
       status: 403,
-      error: `Host ${host ?? "(none)"} is not allowed: add it to MTQ_ALLOWED_HOSTS to reach Moonlight Task Queue by that name`,
+      error: `Host ${host ?? "(none)"} is not allowed: add it to MOONLIGHTQ_ALLOWED_HOSTS to reach MoonlightQ by that name`,
     };
   }
   if (!STATE_CHANGING.has(req.method)) return null;

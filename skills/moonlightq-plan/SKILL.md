@@ -1,15 +1,15 @@
 ---
-name: mtq-plan
-description: Planning phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the mtq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_plan, mcp__mtq__create_subtask, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
+name: moonlightq-plan
+description: Planning phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `plan_requested` or `plan_changes_requested`, now in `planning` (the moonlightq-claim router sends you here). Reads the project read-only in `task.project.workingDirectory`, writes or revises the implementation plan, and submits it with the `submit_plan` MCP tool. No worktree, no code changes, no git write operations.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_plan, mcp__moonlightq__create_subtask, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Plan Skill
+# MoonlightQ Plan Skill
 
-Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `mtq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
+Follow this skill when you hold a task claimed from `plan_requested` or `plan_changes_requested` (its status is now `planning`). The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
 
 ## Phase
 
@@ -36,7 +36,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 ## Steps
 
 1. `cd {task.project.workingDirectory}`
-2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` and `brief.handoffs` (the refiner's notes, if any), see Context Reading in `mtq-claim`. Call `get_task` only if you need the whole conversation. `brief.dependencies` lists the tasks this one starts after: a task can be planned before they are complete (nobody codes it until they are), so plan on top of the work they describe and name in the plan what you rely on from each
+2. Read the brief: `brief.task` (description, steerDetails, nonGoals, references), `brief.guardrails`, `brief.criteria` and `brief.handoffs` (the refiner's notes, if any), see Context Reading in `moonlightq-claim`. Call `get_task` only if you need the whole conversation. `brief.dependencies` lists the tasks this one starts after: a task can be planned before they are complete (nobody codes it until they are), so plan on top of the work they describe and name in the plan what you rely on from each
 3. Explore the codebase read-only (read files, `git log`, `git status`, `git show`) so the plan is grounded in the real code. Check that every file you cite exists (or is marked as new)
 4. Write the plan with the Plan Template below — concrete steps, files to create/modify, the decisions taken, risks and what is out of scope
 5. Write the **validation plan**: for every acceptance criterion (`task.acceptanceCriteria[].id`, e.g. `AC1`), how it will be verified and, whenever possible, a command that proves it (a test to add and run). The project's own commands (install, build, typecheck, lint, test) always run; add as regression commands only the extra ones that must keep passing (e.g. a focused test file)
@@ -46,7 +46,7 @@ Follow this skill when you hold a task claimed from `plan_requested` or `plan_ch
 
 Under autonomy L2 and higher an AI critic reviews the plan first (a different agent): a low-risk plan it approves goes straight to coding; otherwise a person approves it too. Critique findings have ids like `P1-2`; when revising, address each one and answer it in `findingResolutions` (see Revising a plan).
 
-Once a person approves the plan, the validation plan is **frozen**: the coder cannot change it, and the Moonlight Task Queue verifier runs its commands on every code submission. Commands from a plan a person approved always run; otherwise only those on the project's allowlist do. Prefer the project's own test runner.
+Once a person approves the plan, the validation plan is **frozen**: the coder cannot change it, and the MoonlightQ verifier runs its commands on every code submission. Commands from a plan a person approved always run; otherwise only those on the project's allowlist do. Prefer the project's own test runner.
 
 ### Revising a plan (`plan_changes_requested`)
 
@@ -76,7 +76,7 @@ Call the `submit_plan` MCP tool:
 
 Every `criterionId` must be one of the task's criteria, and every criterion (except waived ones) needs at least one item: the tool rejects unknown ids and a plan that leaves a criterion without a check. An item with only `how` is a manual check.
 
-`context` is required (see Context Handoff in `mtq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
+`context` is required (see Context Handoff in `moonlightq-claim`). For the coder, include: the key decisions and trade-offs, the files to start from, and open questions or risks.
 
 It releases the task and sends it to the AI critic (`plan_review_requested`, autonomy L2+) or to a person (`waiting_plan_review`); a blocking question sends it to `needs_human`. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Planning status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
@@ -115,7 +115,7 @@ Keep the Validation table and `validationPlan` in sync: the table is for people,
 
 ## Guardrails
 
-- **DO** call `report_blocker` (see Blocked in `mtq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
+- **DO** call `report_blocker` (see Blocked in `moonlightq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** write code during planning phase - only produce a plan document
 - **DO NOT** modify files in the project - planning is read-only
 - **DO NOT** create or use a worktree - planning works in `task.project.workingDirectory`

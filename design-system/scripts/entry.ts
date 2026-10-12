@@ -1,4 +1,4 @@
-// The design-system bundle: the portal's reusable components, assigned to window.MTQ.
+// The design-system bundle: the portal's reusable components, assigned to window.MOONLIGHTQ.
 import * as Icons from "../../packages/web-ui/src/lib/icons";
 
 export { Button, buttonVariants } from "../../packages/web-ui/src/components/Button";

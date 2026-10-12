@@ -2,8 +2,8 @@ import { randomUUID } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { homedir, hostname } from "os";
 import { join, sep } from "path";
-import { claimEnv, mcpServerLaunch, mcpServersConfig } from "@mtq/mcp";
-import type { Agent, Project, Role, Runner, RunnerTool, Task } from "@mtq/shared";
+import { claimEnv, mcpServerLaunch, mcpServersConfig } from "@moonlightq/mcp";
+import type { Agent, Project, Role, Runner, RunnerTool, Task } from "@moonlightq/shared";
 import {
   TaskStatus,
   claimNextTask,
@@ -15,7 +15,7 @@ import {
   getTasks,
   isActiveStatus,
   revertClaim,
-} from "@mtq/shared";
+} from "@moonlightq/shared";
 import type { BuiltCommand, CommandBuilder } from "./commands.js";
 import {
   CUSTOM_RUNNERS_DISABLED,
@@ -60,7 +60,7 @@ export interface RunnerLiveState {
 export interface RunnerEngineOptions {
   buildCommand?: CommandBuilder;
   broadcast?: (event: string, data: unknown) => void;
-  /** Kill a job that runs longer than this. Defaults to MTQ_JOB_TIMEOUT_MIN (60). */
+  /** Kill a job that runs longer than this. Defaults to MOONLIGHTQ_JOB_TIMEOUT_MIN (60). */
   jobTimeoutMs?: number;
   /** Grace period between SIGTERM and SIGKILL. */
   killGraceMs?: number;
@@ -192,7 +192,7 @@ export class RunnerEngine {
   constructor(opts: RunnerEngineOptions = {}) {
     this.build = opts.buildCommand ?? defaultBuildCommand;
     this.broadcast = opts.broadcast ?? (() => {});
-    const envMin = Number(process.env.MTQ_JOB_TIMEOUT_MIN ?? "60");
+    const envMin = Number(process.env.MOONLIGHTQ_JOB_TIMEOUT_MIN ?? "60");
     this.jobTimeoutMs =
       opts.jobTimeoutMs ?? (Number.isFinite(envMin) && envMin > 0 ? envMin : 60) * 60_000;
     this.killGraceMs = opts.killGraceMs ?? 10_000;
@@ -497,7 +497,7 @@ export class RunnerEngine {
       const jobDir = jobCwd(role, task, cwd);
       const prompt = buildPrompt({ task, project, agent, role, claimToken, worktree: jobDir === cwd ? undefined : jobDir });
       writeFileSync(promptFile, prompt);
-      // Every job gets the Moonlight Task Queue MCP server, bound to this server's database and
+      // Every job gets the MoonlightQ MCP server, bound to this server's database and
       // holding the job's claim (so the agent's submits carry the claim token).
       const mcp = mcpServerLaunch(getDbPath(), undefined, claimEnv(task.id, claimToken, agent.id));
       writeFileSync(mcpConfigFile, JSON.stringify(mcpServersConfig(mcp), null, 2));
@@ -526,8 +526,8 @@ export class RunnerEngine {
     try {
       appendFileSync(
         logPath,
-        `[mtq] ${job.startedAt} ${runner.name} → ${built.cmd[0]} (task ${task.id}, phase ${phase})\n` +
-          `[mtq] Moonlight Task Queue MCP server: ${mcpConfigFile}\n`,
+        `[moonlightq] ${job.startedAt} ${runner.name} → ${built.cmd[0]} (task ${task.id}, phase ${phase})\n` +
+          `[moonlightq] MoonlightQ MCP server: ${mcpConfigFile}\n`,
       );
       proc = Bun.spawn(built.cmd, {
         cwd: built.cwd,
@@ -583,7 +583,7 @@ export class RunnerEngine {
   }
 
   private finishWithoutSpawn(rt: RunnerRuntime, job: RunnerJob, reason: string, taskId: string): void {
-    this.appendOutput(job, `[mtq] ${reason}\n`);
+    this.appendOutput(job, `[moonlightq] ${reason}\n`);
     job.status = "failed";
     job.finishedAt = new Date().toISOString();
     job.exitCode = null;
@@ -663,11 +663,11 @@ export class RunnerEngine {
     if (IS_WINDOWS) {
       // No SIGTERM on Windows, and ending only the tool would leave its children
       // (a shell's commands, the tool's MCP servers) running: end the whole tree.
-      this.appendOutput(active.job, `\n[mtq] ${reason}; ending the process tree\n`);
+      this.appendOutput(active.job, `\n[moonlightq] ${reason}; ending the process tree\n`);
       killProcessTree(active.proc);
       return;
     }
-    this.appendOutput(active.job, `\n[mtq] ${reason}; sending SIGTERM\n`);
+    this.appendOutput(active.job, `\n[moonlightq] ${reason}; sending SIGTERM\n`);
     try {
       active.proc.kill("SIGTERM");
     } catch {}
@@ -711,7 +711,7 @@ export class RunnerEngine {
       if (job.status === "succeeded") this.cooldowns.delete(job.taskId);
       if (task) this.broadcast("task_updated", task);
     }
-    this.appendOutput(job, `[mtq] exit code ${code} → job ${job.status}\n`);
+    this.appendOutput(job, `[moonlightq] exit code ${code} → job ${job.status}\n`);
     this.flushOutput(job.id);
     this.emitJob("finished", job);
     this.emitRunner(rt.id);

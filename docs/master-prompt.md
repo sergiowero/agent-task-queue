@@ -1,6 +1,6 @@
-# Moonlight Task Queue — Master Prompt
+# MoonlightQ — Master Prompt
 
-> **Outdated (historical spec).** This document describes the original design, where agents used an `mtq` command-line binary. That binary no longer exists: agents now use the Moonlight Task Queue MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
+> **Outdated (historical spec).** This document describes the original design, where agents used an `moonlightq` command-line binary. That binary no longer exists: agents now use the MoonlightQ MCP server (see [mcp.md](mcp.md)) and humans use the web portal. Kept for reference only.
 
 Build a local task queue system for managing coding-agent work across multiple projects. It provides a centralized backlog that allows AI agents (OpenCode, Codex, Claude, Kimi, Junie) to pull work items, complete them, and continue from well-defined context.
 
@@ -58,7 +58,7 @@ moonlight-task-queue/
 ├── project.md                         # Full project spec
 │
 ├── packages/
-│   ├── shared/src/                    # @mtq/shared
+│   ├── shared/src/                    # @moonlightq/shared
 │   │   ├── index.ts                   # Re-exports everything
 │   │   ├── types.ts                   # Enums (TaskStatus) + interfaces
 │   │   ├── schemas.ts                 # Zod validation schemas
@@ -68,11 +68,11 @@ moonlight-task-queue/
 │   │   ├── env.ts                     # Zod-validated env config
 │   │   └── database.test.ts           # Tests (~580 lines)
 │   │
-│   ├── cli/src/index.ts               # @mtq/cli — Commander CLI (~580 lines, single file)
+│   ├── cli/src/index.ts               # @moonlightq/cli — Commander CLI (~580 lines, single file)
 │   │
-│   ├── web/src/index.ts               # @mtq/web — Bun.serve server (~740 lines, single file)
+│   ├── web/src/index.ts               # @moonlightq/web — Bun.serve server (~740 lines, single file)
 │   │
-│   ├── web-ui/                        # @mtq/web-ui — React SPA
+│   ├── web-ui/                        # @moonlightq/web-ui — React SPA
 │   │   ├── index.html
 │   │   ├── vite.config.ts
 │   │   ├── tailwind.config.js
@@ -88,15 +88,15 @@ moonlight-task-queue/
 │   │       ├── components/            # 19 components (Layout, TaskCard, modals, etc.)
 │   │       └── pages/                 # 7 pages (Board, TaskDetail, Agents, Activity, Projects, Tools, InstallTool)
 │   │
-│   └── installer/src/                 # @mtq/installer — install scripts
-│       ├── install-bin.ts             # Build + install mtq binary to ~/.local/bin
+│   └── installer/src/                 # @moonlightq/installer — install scripts
+│       ├── install-bin.ts             # Build + install moonlightq binary to ~/.local/bin
 │       └── install-skills.ts          # Copy workflow skill to agent config dirs
 │
 ├── skills/                            # Shared agent skill definitions
-│   └── mtq-workflow/SKILL.md
+│   └── moonlightq-workflow/SKILL.md
 │
 └── .opencode/                         # OpenCode-specific config
-    └── skills/                        # mtq-workflow, mtq-create-task
+    └── skills/                        # moonlightq-workflow, moonlightq-create-task
 ```
 
 ---
@@ -205,7 +205,7 @@ interface ActivityEvent {
 
 ## 5. Database Schema (SQLite via `bun:sqlite`)
 
-- **File path**: `~/.mtq/mtq.db` (configurable via `MTQ_DB_PATH` env var, supports `~` expansion)
+- **File path**: `~/.moonlightq/moonlightq.db` (configurable via `MOONLIGHTQ_DB_PATH` env var, supports `~` expansion)
 - **Connection**: Lazily initialized singleton with `PRAGMA journal_mode = WAL` and `PRAGMA foreign_keys = ON`
 
 ### Tables
@@ -532,19 +532,19 @@ Each action validates current task status, records history, adds conversation en
 
 ## 8. CLI (`packages/cli/src/index.ts`)
 
-Standalone binary named `mtq`, built with Commander (`^12`). Single file (~580 lines). The CLI operates directly on the SQLite database — no server needed.
+Standalone binary named `moonlightq`, built with Commander (`^12`). Single file (~580 lines). The CLI operates directly on the SQLite database — no server needed.
 
 ### ALL Commands support `--json` flag
 
 JSON success: `{ "success": true, ... }` | JSON error: `{ "success": false, "error": "..." }`
 
-### `mtq list`
+### `moonlightq list`
 List all tasks with project info. Human-readable summary or `--json`.
 
-### `mtq projects`
+### `moonlightq projects`
 List all projects. Human-readable or `--json`.
 
-### `mtq create <title>`
+### `moonlightq create <title>`
 Create a new task.
 
 | Option | Required | Description |
@@ -563,10 +563,10 @@ Create a new task.
 
 **Note**: The `--context` flag is passed to `createTask()` but the underlying function ignores extra keys — contexts are handled via separate `updateTask` calls in other commands.
 
-### `mtq get <id>`
+### `moonlightq get <id>`
 Get task by ID. Includes project object in JSON output.
 
-### `mtq claim`
+### `moonlightq claim`
 Claim highest-priority eligible task for agent's role.
 
 | Option | Required | Description |
@@ -606,16 +606,16 @@ Claim logic:
 5. Records history and conversation entry
 6. Appends context if provided
 
-### `mtq submit-plan <taskId>`
+### `moonlightq submit-plan <taskId>`
 Status: `planning` → `waiting_plan_review`. Options: `-m/--message`, `-a/--author` (default "agent"), `--context`, `--json`
 
-### `mtq submit-code <taskId>`
+### `moonlightq submit-code <taskId>`
 Status: `coding` → `waiting_code_review`. Options: `-m/--message`, `-a/--author`, `-w/--worktree` **(required)**, `--context`, `--json`
 
-### `mtq submit-review <taskId>`
+### `moonlightq submit-review <taskId>`
 Status: `reviewing` → `waiting_code_review`. Options: `-m/--message`, `-a/--author`, `--context`, `--json`
 
-### `mtq submit-merge <taskId>`
+### `moonlightq submit-merge <taskId>`
 Status: `merging` → `merged`. Options:
 
 | Option | Required | Description |
@@ -689,7 +689,7 @@ React SPA with Vite build. Tailwind CSS for styling.
 
 | Component | Description |
 |---|---|
-| **Layout** | Sidebar nav (Board, Projects, Agents, Activity, Tools) + header "Moonlight Task Queue — your 100x engineer tool" + theme toggle + main outlet |
+| **Layout** | Sidebar nav (Board, Projects, Agents, Activity, Tools) + header "MoonlightQ — your 100x engineer tool" + theme toggle + main outlet |
 | **TaskCard** | Card: title, priority badge, branch, status badge, assigned agent, plan/review badges, edit button |
 | **CreateTaskModal** | Modal form: title, description, project, priority, branch, requiresPlan, mergeBranch, acceptance criteria, guardrails, steer details |
 | **EditTaskModal** | Modal form for editing task fields |
@@ -756,13 +756,13 @@ typescript ^5.8
 
 ### Shared Skills (`skills/` — installed to multiple agent tools)
 
-**mtq-workflow/SKILL.md** (~250 lines):
+**moonlightq-workflow/SKILL.md** (~250 lines):
 - Identity info: `toolName`, `version`, `model`, `sessionId`, `role`
 - CLI command reference with `--json` flags
 - Phase intelligence table (task status → phase → action)
 - Working directory per phase (project root for planning, worktree for coding/review/merge)
 - Worktree management rules (create for coding+, skip for planning, use existing path)
-- Path format: `{project}/.mtq/worktrees/{task.id}` (not `/tmp`)
+- Path format: `{project}/.moonlightq/worktrees/{task.id}` (not `/tmp`)
 - Git safety: NO commits until merging phase
 - Message format templates (plan, code, review, merge)
 - Context reading guidance (description, steerDetails, guardrails, acceptanceCriteria)
@@ -772,8 +772,8 @@ typescript ^5.8
 
 ### OpenCode Skills (`.opencode/skills/`)
 
-- `mtq-workflow/SKILL.md` — Adapted for OpenCode
-- `mtq-create-task/SKILL.md` — Creating well-structured tasks via CLI
+- `moonlightq-workflow/SKILL.md` — Adapted for OpenCode
+- `moonlightq-create-task/SKILL.md` — Creating well-structured tasks via CLI
 
 ---
 
@@ -781,21 +781,21 @@ typescript ^5.8
 
 ### `install-bin.ts` — Binary Installation
 
-1. `bun build --compile` CLI source → `/tmp/mtq-binary`
-2. Copy to `~/.local/bin/mtq`
+1. `bun build --compile` CLI source → `/tmp/moonlightq-binary`
+2. Copy to `~/.local/bin/moonlightq`
 3. `chmod 755`
 4. Remove temp file
-5. Verify with `mtq --version`
+5. Verify with `moonlightq --version`
 6. Check PATH (`echo $PATH`) and warn if `~/.local/bin` not in PATH
 
 ### `install-skills.ts` — Skill Installation
 
-Copies `skills/mtq-workflow/SKILL.md` to all agent config directories:
-- `~/.claude/skills/mtq-workflow/SKILL.md`
-- `~/.config/opencode/skills/mtq-workflow/SKILL.md`
-- `~/.codex/skills/mtq-workflow/SKILL.md`
-- `~/.kimi-code/skills/mtq-workflow/SKILL.md`
-- `~/.junie/skills/mtq-workflow/SKILL.md`
+Copies `skills/moonlightq-workflow/SKILL.md` to all agent config directories:
+- `~/.claude/skills/moonlightq-workflow/SKILL.md`
+- `~/.config/opencode/skills/moonlightq-workflow/SKILL.md`
+- `~/.codex/skills/moonlightq-workflow/SKILL.md`
+- `~/.kimi-code/skills/moonlightq-workflow/SKILL.md`
+- `~/.junie/skills/moonlightq-workflow/SKILL.md`
 
 Creates target directories if missing.
 
@@ -808,7 +808,7 @@ Creates target directories if missing.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Web server port (validated: positive int, max 65535) |
-| `MTQ_DB_PATH` | `~/.mtq/mtq.db` | SQLite database path (`~` expanded to `homedir()`) |
+| `MOONLIGHTQ_DB_PATH` | `~/.moonlightq/moonlightq.db` | SQLite database path (`~` expanded to `homedir()`) |
 
 ### Agent ID Format
 
@@ -819,7 +819,7 @@ Examples: `opencode@1.2.1|gpt-4`, `github-copilot@1.0|raptor`
 
 ### Worktree Path Convention
 
-`<project-working-directory>/.mtq/worktrees/<task-id>`
+`<project-working-directory>/.moonlightq/worktrees/<task-id>`
 
 Set by agent on `submit-code --worktree`. Stored in `task.worktreePath`.
 
@@ -859,12 +859,12 @@ husky ^9.1, lint-staged ^17.2
 ## 14. Package Relationships
 
 ```
-@mtq/shared        (zod, bun-types)
+@moonlightq/shared        (zod, bun-types)
     ↑
-@mtq/web           (shared → workspace:*)
-@mtq/cli           (shared → workspace:*, commander ^12)
-@mtq/web-ui        (shared → workspace:*, react, react-router, tanstack-query, vite, tailwind, etc.)
-@mtq/installer     (no deps — uses bun $ and fs)
+@moonlightq/web           (shared → workspace:*)
+@moonlightq/cli           (shared → workspace:*, commander ^12)
+@moonlightq/web-ui        (shared → workspace:*, react, react-router, tanstack-query, vite, tailwind, etc.)
+@moonlightq/installer     (no deps — uses bun $ and fs)
 ```
 
 Bun workspace root `package.json` references `packages/*`.
@@ -875,7 +875,7 @@ Bun workspace root `package.json` references `packages/*`.
 
 **Location**: `packages/shared/src/database.test.ts`
 **Runner**: `bun test` (Bun's built-in test runner)
-**Database**: Uses in-memory SQLite (`MTQ_DB_PATH=:memory:`)
+**Database**: Uses in-memory SQLite (`MOONLIGHTQ_DB_PATH=:memory:`)
 
 ### Test Groups
 
@@ -939,7 +939,7 @@ bun run install:skills
 8. **Immutable requiresPlan** — cannot be changed after task creation. Determines initial status and workflow path.
 9. **Soft delete by default** — hard delete requires explicit `?hard=true` flag. Deleted items excluded from queries via `WHERE deleted_at IS NULL`.
 10. **Conversation authorName convention** — `"agentName|tool|model"` for agent messages so UI can parse both readable name and metadata.
-11. **Local-first** — SQLite path defaults to `~/.mtq/mtq.db`, supporting `~` expansion. Database is lazily initialized on first access.
+11. **Local-first** — SQLite path defaults to `~/.moonlightq/moonlightq.db`, supporting `~` expansion. Database is lazily initialized on first access.
 12. **No HTTP from CLI** — the CLI imports shared code directly and calls database functions in-process. No network calls needed.
 
 ---

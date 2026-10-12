@@ -1,4 +1,4 @@
-// Classic-script entry: expose the bundle as window.MTQ.
-import * as MTQ from "./entry";
+// Classic-script entry: expose the bundle as window.MOONLIGHTQ.
+import * as MOONLIGHTQ from "./entry";
 
-(window as unknown as { MTQ: typeof MTQ }).MTQ = MTQ;
+(window as unknown as { MOONLIGHTQ: typeof MOONLIGHTQ }).MOONLIGHTQ = MOONLIGHTQ;

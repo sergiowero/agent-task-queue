@@ -1,15 +1,15 @@
 ---
-name: mtq-pr
-description: Pull-request phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `approved`, now in `merging` (the mtq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body Moonlight Task Queue wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_pr, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*), Bash(gh:*)
+name: moonlightq-pr
+description: Pull-request phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `approved`, now in `merging` (the moonlightq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body MoonlightQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_pr, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*), Bash(gh:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Pull Request Skill
+# MoonlightQ Pull Request Skill
 
-Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). This is the **`pr`** role. The cross-cutting rules in `mtq-claim` (identity, MCP conventions, context reading, handoff, autonomy, guardrails) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`).
+Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). This is the **`pr`** role. The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context reading, handoff, autonomy, guardrails) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`).
 
 ## What this phase does
 
@@ -17,7 +17,7 @@ Follow this skill when you hold a task claimed from `approved` (the review passe
 |--------------|-------|--------|-------------|
 | `approved` | Pull request | Push the feature branch, open a PR into `mergeBranch` with the body from `brief.pr.body` (or update the task's open PR), then `submit_pr` | `pr_open` |
 
-The code was committed to the feature branch during coding, verified and reviewed: the approval pinned that commit (`brief.pr.commit`), and the PR ships exactly it. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; Moonlight Task Queue sees the merge and completes the task on its own (under L3 with auto-merge, Moonlight Task Queue merges green low-risk PRs itself — still not you).
+The code was committed to the feature branch during coding, verified and reviewed: the approval pinned that commit (`brief.pr.commit`), and the PR ships exactly it. Your job ends when the PR exists and is recorded. **You never merge it**: a person reviews the PR on GitHub and merges it; MoonlightQ sees the merge and completes the task on its own (under L3 with auto-merge, MoonlightQ merges green low-risk PRs itself — still not you).
 
 Two branches matter:
 - **Head / feature branch** = `task.realBranch` if set, else `task.recommendedBranch` — where the worktree lives.
@@ -25,7 +25,7 @@ Two branches matter:
 
 ## Working directory
 
-- **Worktree**: `task.worktreePath` when set; otherwise `{project}/.mtq/worktrees/{task.id}` (`{project}` is `task.project.workingDirectory`). Never `/tmp`, never a new worktree when one is assigned.
+- **Worktree**: `task.worktreePath` when set; otherwise `{project}/.moonlightq/worktrees/{task.id}` (`{project}` is `task.project.workingDirectory`). Never `/tmp`, never a new worktree when one is assigned.
 - Push and run `gh pr create` from the **main repo** (`task.project.workingDirectory`): the feature branch is checked out in the worktree.
 
 ## Step by step
@@ -56,9 +56,9 @@ git rev-parse {feature branch}  # the commit you pass to submit_pr
 
 Push rejected → do not open the PR; call `report_blocker` with the full output. Never force-push.
 
-### 3. Open the PR with Moonlight Task Queue's body
+### 3. Open the PR with MoonlightQ's body
 
-`brief.pr.body` is the PR description Moonlight Task Queue wrote from the task: summary, acceptance criteria with their evidence, verification, the AI review and its findings, and the risk. Use it as is (you may add a short "Notes" section at the end):
+`brief.pr.body` is the PR description MoonlightQ wrote from the task: summary, acceptance criteria with their evidence, verification, the AI review and its findings, and the risk. Use it as is (you may add a short "Notes" section at the end):
 
 ```bash
 cd {task.project.workingDirectory}
@@ -93,7 +93,7 @@ EOF
 
 | Argument | What to pass | Common mistake |
 |----------|--------------|----------------|
-| `prUrl` | The URL `gh pr create` printed | Leaving it out: Moonlight Task Queue then cannot follow the PR |
+| `prUrl` | The URL `gh pr create` printed | Leaving it out: MoonlightQ then cannot follow the PR |
 | `mergeBranch` | The PR **base** (`task.mergeBranch`) | Passing the feature branch |
 | `headBranch` | The pushed feature branch | — |
 | `commit` | The feature-branch head SHA you pushed (the approved commit) | Passing a merge commit (there is none), or a commit made after the approval |
@@ -104,7 +104,7 @@ The task moves to `pr_open` and is released (to `needs_human` instead when `comm
 
 ## After submitting
 
-Stop. You do not wait for the merge, re-run checks or poll GitHub. Moonlight Task Queue syncs the PR:
+Stop. You do not wait for the merge, re-run checks or poll GitHub. MoonlightQ syncs the PR:
 
 | On GitHub | Task |
 |-----------|------|
@@ -122,7 +122,7 @@ Push or PR failure: do not call `submit_pr`. Call `report_blocker` with the erro
 
 ## Guardrails
 
-- **NEVER** merge the PR, merge locally, or enable auto-merge — a person (or Moonlight Task Queue under L3) merges
+- **NEVER** merge the PR, merge locally, or enable auto-merge — a person (or MoonlightQ under L3) merges
 - **NEVER** force-push, amend or rewrite commits from earlier phases
 - **NEVER** commit in the worktree: the PR ships the approved commit, nothing added after it
 - **DO NOT** open the PR before the branch is pushed, or call `submit_pr` before the PR exists

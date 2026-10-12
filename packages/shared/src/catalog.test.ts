@@ -124,7 +124,7 @@ describe("identities for separation of duties", () => {
       ["claude", "", "claude:default"],
       ["Claude Code", "default", "claude:default"],
       ["codex", "default", "codex:default"],
-      ["mtq-verifier", "none", "mtq-verifier:default"],
+      ["moonlightq-verifier", "none", "moonlightq-verifier:default"],
       ["claude", "sonnet", "claude-sonnet"],
       ["claude", "Sonnet", "claude-sonnet"],
       ["opencode", "anthropic/sonnet", "claude-sonnet"],

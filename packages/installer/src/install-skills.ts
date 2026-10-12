@@ -1,15 +1,9 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { SKILLS_DIR, SKILL_PREFIX, listSkills, toolSkillDirs } from "@mtq/shared/skills";
-import { claudeHome, codexHome, opencodeHome, type ToolEnv } from "@mtq/shared/tool-paths";
+import { SKILLS_DIR, SKILL_PREFIX, listSkills, toolSkillDirs } from "@moonlightq/shared/skills";
+import { claudeHome, codexHome, opencodeHome, type ToolEnv } from "@moonlightq/shared/tool-paths";
 import { hasToolData } from "./mcp-setup.js";
-
-/** Directory names that are leftovers from the old tool name and must be removed. */
-const STALE_SKILL_DIRS = ["atq-workflow"];
-
-/** Prefix of the skill folders from before the rename to `mtq-*`; every one of them is stale. */
-const LEGACY_SKILL_PREFIX = "agentq-";
 
 /**
  * The tools that load skills from a folder of their own, keyed like `toolSkillDirs`:
@@ -34,17 +28,13 @@ export interface SkillsEnv {
 }
 
 /**
- * Moonlight Task Queue skills installed for a tool that the repo no longer ships (renamed or
- * removed). Only `mtq-*` (and legacy `agentq-*`) folders are ours; anything else is left alone.
+ * MoonlightQ skills installed for a tool that the repo no longer ships (renamed or
+ * removed). Only `moonlightq-*` folders are ours; anything else is left alone.
  */
 function obsoleteSkills(toolSkillsDir: string, current: string[]): string[] {
   if (!existsSync(toolSkillsDir)) return [];
   return readdirSync(toolSkillsDir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        (entry.name.startsWith(SKILL_PREFIX) || entry.name.startsWith(LEGACY_SKILL_PREFIX)),
-    )
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(SKILL_PREFIX))
     .map((entry) => entry.name)
     .filter((name) => !current.includes(name));
 }
@@ -68,7 +58,7 @@ export function skillToolPresent(tool: string, e: SkillsEnv): boolean {
 /**
  * Syncs every skill into the skills directory of each tool found on this machine:
  * replaces the repo's skills (each folder as a whole, so a file a skill dropped does
- * not linger) and removes Moonlight Task Queue skills the repo dropped. Returns false when there
+ * not linger) and removes MoonlightQ skills the repo dropped. Returns false when there
  * is nothing to copy.
  */
 export function installSkills(
@@ -89,11 +79,11 @@ export function installSkills(
       continue;
     }
     mkdirSync(toolSkillsDir, { recursive: true });
-    for (const stale of [...STALE_SKILL_DIRS, ...obsoleteSkills(toolSkillsDir, skills)]) {
+    for (const stale of obsoleteSkills(toolSkillsDir, skills)) {
       rmSync(join(toolSkillsDir, stale), { recursive: true, force: true });
     }
     // Copy every skill directory recursively (SKILL.md plus any references/*.md etc.).
-    // The folder is ours (mtq-*): it is replaced, not merged into.
+    // The folder is ours (moonlightq-*): it is replaced, not merged into.
     for (const skill of skills) {
       const dest = join(toolSkillsDir, skill);
       rmSync(dest, { recursive: true, force: true });

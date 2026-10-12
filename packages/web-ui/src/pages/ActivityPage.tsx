@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { EVENT_TYPES } from "@mtq/shared/catalog";
+import { EVENT_TYPES } from "@moonlightq/shared/catalog";
 import type { ActivityEvent } from "../lib/api";
 import { api } from "../lib/api";
 import type { LucideIcon } from "../lib/icons";

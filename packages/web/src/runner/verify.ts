@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { hostname } from "os";
 import { join } from "path";
-import type { NewEvidence, Project, SubmitVerificationInput, Task } from "@mtq/shared";
+import type { NewEvidence, Project, SubmitVerificationInput, Task } from "@moonlightq/shared";
 import {
   BUILTIN_VERIFIER_AUTHOR,
   DEFAULT_VERIFY_ALLOWLIST,
@@ -24,7 +24,7 @@ import {
   revertClaim,
   setAppState,
   submitVerification,
-} from "@mtq/shared";
+} from "@moonlightq/shared";
 import { runsDir } from "./commands.js";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -363,7 +363,7 @@ export class VerifyWorker {
       if (this.busy) return null;
       const claimed = claimNextTask({
         roles: ["verify"],
-        agent: { toolName: "mtq-verifier", version: "1", model: "none", sessionId: VERIFIER_RUNNER_ID, host: hostname() },
+        agent: { toolName: "moonlightq-verifier", version: "1", model: "none", sessionId: VERIFIER_RUNNER_ID, host: hostname() },
         runnerId: VERIFIER_RUNNER_ID,
       });
       if (!claimed) return null;

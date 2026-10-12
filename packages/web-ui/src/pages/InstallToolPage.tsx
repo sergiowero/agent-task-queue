@@ -7,12 +7,12 @@ const INSTALL_STEPS = [
   {
     title: "Register the MCP Server",
     description:
-      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) to the Moonlight Task Queue MCP server. Safe to run again.",
+      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) to the MoonlightQ MCP server. Safe to run again.",
     command: "bun run install:mcp",
   },
   {
     title: "Install Workflow Skills",
-    description: "Copy the Moonlight Task Queue workflow skill to all detected coding-agent tool directories.",
+    description: "Copy the MoonlightQ workflow skill to all detected coding-agent tool directories.",
     command: "bun run install:skills",
   },
 ];
@@ -23,7 +23,7 @@ export function InstallToolPage() {
       <PageHeader
         back={{ to: "/tools", label: "Back to tools" }}
         icon={DownloadIcon}
-        title="Install Moonlight Task Queue"
+        title="Install MoonlightQ"
         description="Run these commands from the project root in your terminal."
       />
 

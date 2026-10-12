@@ -1,4 +1,4 @@
-Moonlight Task Queue is a local task queue for coding agents. The portal is a calm, dense, neutral workspace: zinc greys on a near-white `canvas`, one indigo `primary`, and six semantic tones for workflow state. It ships in a light and a dark theme with the same structure, so every rule below holds in both.
+MoonlightQ is a local task queue for coding agents. The portal is a calm, dense, neutral workspace: zinc greys on a near-white `canvas`, one indigo `primary`, and six semantic tones for workflow state. It ships in a light and a dark theme with the same structure, so every rule below holds in both.
 
 ## Voice and content
 
@@ -10,7 +10,7 @@ Moonlight Task Queue is a local task queue for coding agents. The portal is a ca
 - Page descriptions are one sentence that says what the page holds: "What happened across all tasks, newest first."
 - Address the reader as "you" ("An agent writes a plan for your review before coding."). Agents are "agents", runtimes are "runners", and tools are named in lowercase as their commands are spelled: claude, codex, opencode, gemini.
 - No emoji and no exclamation marks. The one exception is the transient "Copied!" tooltip.
-- The product is **Moonlight Task Queue**, with capital A and Q. Its tagline is lowercase: "your 100x engineer tool".
+- The product is **MoonlightQ**, with capital A and Q. Its tagline is lowercase: "your 100x engineer tool".
 - Set branch names, paths, ids and commands in `mono` (`font-mono text-xs`), never in quotes.
 
 ## Color
@@ -21,7 +21,7 @@ Moonlight Task Queue is a local task queue for coding agents. The portal is a ca
 - Spend `primary` (indigo) on the one thing the page is for: the primary button, the active nav item, the selected card, the focus ring, checked controls. Keep it rare so it stays loud.
 - Every tone (`primary`, `danger`, `success`, `warning`, `info`, `accent`) comes in four shades. Use the solid shade (`primary`) for fills and borders, `-hover` for the pressed/hover fill, `-fg` for text on the solid fill, and `-text` for colored text on neutral grounds. In Tailwind, `text-primary` already resolves to `primary-text`.
 - Use soft tints for status. A chip is `bg-{tone}/10` + `text-{tone}` + a `ring-{tone}/20` inset ring. An alert is `bg-{tone}/[0.06]` + `border-{tone}/25`. Never put `-text` on a solid fill.
-- Map workflow state to tone through `TASK_STATUS` in `lib/status.ts`, never ad hoc. Labels and board columns come from the shared status catalog (`@mtq/shared/catalog`); `lib/status.ts` only adds tone and icon, typed per status so a new status fails typecheck until it has a look. `accent` = planning, `info` = ready and coding, `warning` = anything waiting on review (plus merging), `primary` = PR open, `success` = approved and complete, `danger` = changes requested, canceled and needs human, `neutral` = requested and not started.
+- Map workflow state to tone through `TASK_STATUS` in `lib/status.ts`, never ad hoc. Labels and board columns come from the shared status catalog (`@moonlightq/shared/catalog`); `lib/status.ts` only adds tone and icon, typed per status so a new status fails typecheck until it has a look. `accent` = planning, `info` = ready and coding, `warning` = anything waiting on review (plus merging), `primary` = PR open, `success` = approved and complete, `danger` = changes requested, canceled and needs human, `neutral` = requested and not started.
 - Board columns follow the same map: Pending is neutral, In progress is info, Needs you is warning and Done is success.
 - Tool tones are fixed: claude = `accent`, codex = `info`, opencode = `success`, gemini = `warning`, custom = neutral. Priority tones: P0 neutral, P1 `info`, P2 `warning`, P3+ `danger`.
 - Always pair a status color with its label and icon (StatusBadge does this). Hue is never the only signal.
@@ -69,20 +69,20 @@ Moonlight Task Queue is a local task queue for coding agents. The portal is a ca
 
 ## Iconography
 
-- Icons are Lucide (lucide-react), 24px-grid stroke icons at stroke width 2, and they inherit `currentColor`. Import them only through the portal's vocabulary in `lib/icons.ts` (exposed here as `MTQ.Icons`), so an action always gets the same glyph: `AddIcon`, `DeleteIcon`, `ApproveIcon`, `MergeIcon` and so on. See the Icons card for the full set.
+- Icons are Lucide (lucide-react), 24px-grid stroke icons at stroke width 2, and they inherit `currentColor`. Import them only through the portal's vocabulary in `lib/icons.ts` (exposed here as `MOONLIGHTQ.Icons`), so an action always gets the same glyph: `AddIcon`, `DeleteIcon`, `ApproveIcon`, `MergeIcon` and so on. See the Icons card for the full set.
 - Sizes: 14px (`h-3.5`) in badges, sm buttons and meta rows; 16px (`h-4`) by default; 18px in nav items and md icon buttons; 20px in modal header wells; 24px at stroke 1.75 in empty states. The active nav icon thickens to 2.25.
 - Icons next to text are `aria-hidden`. An icon-only control is always an IconButton with a `label`, which becomes both its accessible name and its tooltip.
 - Put a feature icon in a tinted well: `rounded-xl` + `TONE_SOFT[tone]` (modal headers) or a `primary/15`→`accent/10` gradient well with a `primary/15` ring (page headers).
 
 ## Logo
 
-- The mark is a rounded tile with the brand gradient, indigo `#6366f1` to violet `#a855f7` corner to corner, carrying three white queue lines of decreasing length. Use `mtq-mark.svg` in the app at 36px, with an indigo (`#6366f1`) drop shadow at 35% (`0 4px 12px`). Use `mtq-favicon.svg` (radius 8, gradient to `#8b5cf6`) only for the browser tab.
-- There is no wordmark. Set "Moonlight Task Queue" beside the mark in `brand-name` (Inter 15px bold, tight), with the tagline in 11px `text-muted` under it.
+- The mark is a rounded tile with the brand gradient, indigo `#6366f1` to violet `#a855f7` corner to corner, carrying three white queue lines of decreasing length. Use `moonlightq-mark.svg` in the app at 36px, with an indigo (`#6366f1`) drop shadow at 35% (`0 4px 12px`). Use `moonlightq-favicon.svg` (radius 8, gradient to `#8b5cf6`) only for the browser tab.
+- There is no wordmark. Set "MoonlightQ" beside the mark in `brand-name` (Inter 15px bold, tight), with the tagline in 11px `text-muted` under it.
 - Never recolor the tile, flatten the gradient, or change the line lengths.
 
 ## Building with the system
 
-- In the repository, colors are RGB channel triples in `src/index.css` (`--primary: 79 70 229`). Tailwind reads them as `rgb(var(--primary) / <alpha-value>)` so opacity modifiers like `bg-primary/10` work in both themes. The dark theme switches on `[data-theme="dark"]` on `<html>`, set before first paint from `localStorage["mtq-theme"]` or the OS preference.
+- In the repository, colors are RGB channel triples in `src/index.css` (`--primary: 79 70 229`). Tailwind reads them as `rgb(var(--primary) / <alpha-value>)` so opacity modifiers like `bg-primary/10` work in both themes. The dark theme switches on `[data-theme="dark"]` on `<html>`, set before first paint from `localStorage["moonlightq-theme"]` or the OS preference.
 - In this system, `tokens.css` declares full colors, and `components/bundle.css` is the portal's compiled Tailwind with every `rgb(var(--x) / a)` rewritten to `color-mix()` over the same variables. Load `bundle.css` after `tokens.css` and every utility class from the portal works (`card`, `card-interactive`, `eyebrow`, `stagger`, `skeleton`, `markdown-content`).
 - Compose class names with `cn()`: it filters falsy values and lets a later class override a conflicting earlier one.
 - Reuse the tone maps (`TONE_SOFT`, `TONE_TEXT`, `TONE_DOT`, `TONE_BORDER`) instead of writing tone classes by hand.
@@ -91,6 +91,6 @@ Moonlight Task Queue is a local task queue for coding agents. The portal is a ca
 
 - The `--ease-out` custom property is not a token, because the system has no motion family. It stays in `bundle.css`; its curves are listed under Motion.
 - There are no font files. Inter and JetBrains Mono load from Google Fonts, via `bundle.css` and the app's `index.css`.
-- Icons are not uploaded as SVG files. The Lucide vocabulary ships inside `bundle.js` as `MTQ.Icons`.
+- Icons are not uploaded as SVG files. The Lucide vocabulary ships inside `bundle.js` as `MOONLIGHTQ.Icons`.
 - These are not built as cards: Layout (the app shell; it needs the router), ThemeToggle (it needs ThemeContext), and the page-level modals and forms: CreateTaskModal, EditProjectModal, RunnerModal, DeleteTaskModal, BulkDeleteModal, EditableField, ErrorBoundary and LoadingSkeleton. All live in `packages/web-ui/src/components/`.
 - The bundle runs the components on React 18 (the app uses 19). Tooltip can't forward a trigger's own `ref` there, and PageHeader's back button follows its link instead of calling react-router.

@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 
-// Research reports reuse the Moonlight Task Queue portal tokens (packages/web-ui/tailwind.config.js):
+// Research reports reuse the MoonlightQ portal tokens (packages/web-ui/tailwind.config.js):
 // every color is an RGB channel triple defined in report.src.css, so opacity
 // modifiers (`bg-primary/10`, `border-danger/30`) work in both themes.
 const c = (name) => `rgb(var(--${name}) / <alpha-value>)`;

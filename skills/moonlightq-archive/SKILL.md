@@ -1,17 +1,17 @@
 ---
-name: mtq-archive
-description: Archives finished Moonlight Task Queue tasks into their project's repository, the same as the board's "Archive" button. Use when the user asks to archive a task, archive the complete/completed/done tasks, clean up the Done column, or save a task's history (description, conversation, PR, branch, agents) as Markdown. For each task, the `archive_task` MCP tool writes `archive/<name>.summary.md` and `archive/<name>.detailed.md` in the project and takes the task off the board. The skill also finds the pull request with `gh` when the conversation does not mention it, and writes an overview of what was done.
-allowed-tools: mcp__mtq__list_projects, mcp__mtq__list_tasks, mcp__mtq__get_task, mcp__mtq__archive_task, Bash(gh:*), Bash(git:*)
+name: moonlightq-archive
+description: Archives finished MoonlightQ tasks into their project's repository, the same as the board's "Archive" button. Use when the user asks to archive a task, archive the complete/completed/done tasks, clean up the Done column, or save a task's history (description, conversation, PR, branch, agents) as Markdown. For each task, the `archive_task` MCP tool writes `archive/<name>.summary.md` and `archive/<name>.detailed.md` in the project and takes the task off the board. The skill also finds the pull request with `gh` when the conversation does not mention it, and writes an overview of what was done.
+allowed-tools: mcp__moonlightq__list_projects, mcp__moonlightq__list_tasks, mcp__moonlightq__get_task, mcp__moonlightq__archive_task, Bash(gh:*), Bash(git:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Archive Skill
+# MoonlightQ Archive Skill
 
 Archive saves a finished task in its project repository as two Markdown files, then takes the task off the board. The board's **Archive** button on complete cards runs the same code. This skill can also do two things the button can't: find the pull request with `gh`, and write an overview of what was done.
 
-All queue work goes through the tools of the `mtq` MCP server. Your client prefixes their names (in Claude Code `archive_task` is `mcp__mtq__archive_task`). If the `mtq` tools are missing, tell the user to run `bun run install:mcp` from the Moonlight Task Queue checkout and restart the tool.
+All queue work goes through the tools of the `moonlightq` MCP server. Your client prefixes their names (in Claude Code `archive_task` is `mcp__moonlightq__archive_task`). If the `moonlightq` tools are missing, tell the user to run `bun run install:mcp` from the MoonlightQ checkout and restart the tool.
 
 | Aspect | Details |
 |---|---|
@@ -119,7 +119,7 @@ Tell the user, for each task: the title, the summary path, the detailed path and
 
 ## Guardrails
 
-- **NEVER** use the HTTP API (curl/fetch). Use the Moonlight Task Queue MCP tools, and use `gh` only to read PRs (`gh pr list`, `gh pr view`).
+- **NEVER** use the HTTP API (curl/fetch). Use the MoonlightQ MCP tools, and use `gh` only to read PRs (`gh pr list`, `gh pr view`).
 - **DO NOT** change a task's status: no `claim_task`, no `submit_*`, no confirming completion for the user.
 - **DO NOT** pass `force` unless the user explicitly asked to re-archive.
 - **DO NOT** hand-edit or delete archive files. To refresh them, re-archive with `force` (when asked).

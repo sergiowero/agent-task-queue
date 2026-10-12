@@ -1,15 +1,15 @@
 ---
-name: mtq-code
-description: Coding phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the mtq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_code, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
+name: moonlightq-code
+description: Coding phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the moonlightq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_code, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Code Skill
+# MoonlightQ Code Skill
 
-Follow this skill when you hold a task claimed from `ready_for_code` or `changes_requested` (its status is now `coding`). The cross-cutting rules in `mtq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
+Follow this skill when you hold a task claimed from `ready_for_code` or `changes_requested` (its status is now `coding`). The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.
 
 ## Phase
 
@@ -22,22 +22,22 @@ Follow this skill when you hold a task claimed from `ready_for_code` or `changes
 
 | Phase | Directory | Why |
 |-------|-----------|-----|
-| Coding / Changes Requested | Worktree (`{project}/.mtq/worktrees/{task.id}`) | Isolate code changes from other tasks |
+| Coding / Changes Requested | Worktree (`{project}/.moonlightq/worktrees/{task.id}`) | Isolate code changes from other tasks |
 
 Always `cd` into the worktree before starting work — never assume which one to use. `{project}` is `task.project.workingDirectory`.
 
 ## Worktree Rules
 
 - **Check first**: If `task.worktreePath` is set, use that path instead of creating new. If the directory already exists, it was left from a previous session — reuse it.
-- **Path format**: Always `{project}/.mtq/worktrees/{task.id}` — never `/tmp`
+- **Path format**: Always `{project}/.moonlightq/worktrees/{task.id}` — never `/tmp`
 - **Creation command** (run from `task.project.workingDirectory`, the main repo):
   ```bash
-  git worktree add {project}/.mtq/worktrees/{task.id} {task.recommendedBranch}
+  git worktree add {project}/.moonlightq/worktrees/{task.id} {task.recommendedBranch}
   ```
   If `{task.recommendedBranch}` does not exist yet, create it from the **up-to-date** merge branch: fetch it first, so the work merged since the main checkout was last pulled (including this task's dependencies) is in your branch:
   ```bash
   git fetch origin {task.mergeBranch}
-  git worktree add -b {task.recommendedBranch} {project}/.mtq/worktrees/{task.id} origin/{task.mergeBranch}
+  git worktree add -b {task.recommendedBranch} {project}/.moonlightq/worktrees/{task.id} origin/{task.mergeBranch}
   ```
   Only when the repository has no `origin` (or it has no such branch), branch from the local `{task.mergeBranch}` instead.
 - **Dependencies** (`brief.dependencies`): the tasks this one starts after. Each should be `complete`, i.e. its pull request (`pullRequest`) was merged into its `mergeBranch`. Check that its work is in your branch: `git merge-base --is-ancestor {headSha} HEAD` succeeds for a merge commit; after a squash or rebase merge, look for its changes in `git log origin/{task.mergeBranch}`. If a dependency is not complete, went into another branch than `task.mergeBranch`, or its work is missing, call `report_blocker`: never re-implement it here
@@ -54,7 +54,7 @@ Always `cd` into the worktree before starting work — never assume which one to
 - `submit_code` is queue bookkeeping — it does NOT run git. Commit your work in the worktree BEFORE calling it.
 - NEVER commit in the main working directory (`task.project.workingDirectory`) — commits live in the task worktree.
 - NEVER force-push (`git push --force` / `-f`). NEVER amend or rewrite commits made in earlier rounds — each round of changes is a new commit.
-- `git push` happens only in the merging phase (`mtq-pr`), never here.
+- `git push` happens only in the merging phase (`moonlightq-pr`), never here.
 
 ## Commit Before Submit
 
@@ -113,11 +113,11 @@ Commit your changes in the worktree BEFORE calling `submit_code` — it only rec
 - `criteria` is your view; the verifier and the reviewer check every criterion themselves without seeing it. Evidence and criteria go into the pull request body for people.
 - `findingResolutions` is required for every open finding (none on the first round), and only for open code findings: the tool refuses a plan finding (`P…`) or one a reviewer already verified.
 
-`context` is required too (see Context Handoff in `mtq-claim`). It is for the coder of the next round and the person who merges: known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
+`context` is required too (see Context Handoff in `moonlightq-claim`). It is for the coder of the next round and the person who merges: known limitations or shortcuts, and how you verified it (tests run, what was not tested). After a review round, list the finding ids you fixed and any you deliberately did not, and why.
 
 The verifier and the reviewer check your work independently: they never see your `message`, `context`, `evidence` or `criteria`, only the task, the diff and the commands they run. Make the code, the tests and the commit messages speak for themselves. The only words of yours a reviewer reads are the `resolution` of a `wontfix` finding, so give the real reason there.
 
-It stores the worktree path and the evidence and releases the task. The server checks your committed diff on every submit: deleted, moved-out, skipped or weakened tests (and lowered or removed coverage thresholds) send the task straight back, and protected paths or a large diff send it to a person. When the project has commands, the Moonlight Task Queue verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
+It stores the worktree path and the evidence and releases the task. The server checks your committed diff on every submit: deleted, moved-out, skipped or weakened tests (and lowered or removed coverage thresholds) send the task straight back, and protected paths or a large diff send it to a person. When the project has commands, the MoonlightQ verifier runs them next in your worktree (`verify_requested`): red sends the task back to you with the output. Then the review: an AI reviewer under autonomy L1 and higher, a person under L0. On `{ "success": false, "error": "..." }`, read the error: `Task must be in Coding status.` or `claimed by another agent session` means the task is no longer yours (stop); anything else, fix the arguments and call it again.
 
 ## Code Template
 
@@ -158,7 +158,7 @@ Before `submit_code`:
 ## Guardrails
 
 - **DO NOT** change the approved validation plan or weaken tests to make them pass - call `report_blocker` instead
-- **DO** call `report_blocker` (see Blocked in `mtq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
+- **DO** call `report_blocker` (see Blocked in `moonlightq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** review code during coding phase - only implement
 - **DO NOT** modify files outside the assigned worktree
 - **DO NOT** create a new worktree if one is already assigned - use the existing path

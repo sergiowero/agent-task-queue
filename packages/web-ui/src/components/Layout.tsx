@@ -53,7 +53,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   },
 ];
 
-const COLLAPSED_KEY = "mtq-sidebar-collapsed";
+const COLLAPSED_KEY = "moonlightq-sidebar-collapsed";
 
 function readCollapsed() {
   try {
@@ -76,12 +76,12 @@ function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden>
       <defs>
-        <linearGradient id="mtq-logo" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id="moonlightq-logo" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#6366f1" />
           <stop offset="1" stopColor="#a855f7" />
         </linearGradient>
       </defs>
-      <rect width="32" height="32" rx="9" fill="url(#mtq-logo)" />
+      <rect width="32" height="32" rx="9" fill="url(#moonlightq-logo)" />
       <path
         d="M9 11h14M9 16h10M9 21h6"
         stroke="white"
@@ -138,7 +138,7 @@ export function Layout() {
               collapsed ? "pointer-events-none -translate-x-2 opacity-0" : "opacity-100",
             )}
           >
-            <div className="truncate text-[15px] font-bold tracking-tight text-text">Moonlight Task Queue</div>
+            <div className="truncate text-[15px] font-bold tracking-tight text-text">MoonlightQ</div>
             <div className="truncate text-[11px] text-text-muted">your 100x engineer tool</div>
           </div>
         </div>
@@ -244,16 +244,16 @@ export function Layout() {
   );
 }
 
-/** Warns when a coding tool still has Moonlight Task Queue skills older than the ones this server ships. */
+/** Warns when a coding tool still has MoonlightQ skills older than the ones this server ships. */
 function SkillsBanner() {
   const { data: meta } = useQuery({ queryKey: ["meta"], queryFn: api.getMeta, staleTime: 60_000 });
   if (!meta || meta.outdatedSkills.length === 0) return null;
   return (
     <div className="relative px-6 pt-4">
-      <Alert tone="warning" title="Moonlight Task Queue skills are out of date">
+      <Alert tone="warning" title="MoonlightQ skills are out of date">
         {meta.outdatedSkills.join(", ")} still {meta.outdatedSkills.length === 1 ? "has" : "have"} an
         older skills bundle than this server ({meta.skillsVersion}). Run{" "}
-        <code className="font-mono">bun run install:all</code> in the Moonlight Task Queue checkout (it updates the
+        <code className="font-mono">bun run install:all</code> in the MoonlightQ checkout (it updates the
         skills and the MCP registration of every tool it finds), then restart those tools. Copies in
         folders the installer does not manage, such as <code className="font-mono">~/.agents/skills</code>,
         are yours to delete.

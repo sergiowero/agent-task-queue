@@ -1,15 +1,15 @@
 ---
-name: mtq-review
-description: Reviewing phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the mtq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_review, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
+name: moonlightq-review
+description: Reviewing phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the moonlightq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_review, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Review Skill
+# MoonlightQ Review Skill
 
-Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `mtq-claim` (identity, MCP conventions, context handoff, autonomy, guardrails, no tasks available) still apply.
+Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context handoff, autonomy, guardrails, no tasks available) still apply.
 
 ## Independent Review
 
@@ -37,8 +37,8 @@ Always `cd` into the worktree before starting work — never assume which one to
 ## Worktree Rules
 
 - **Check first**: If `brief.task.worktreePath` is set (the coding phase stores it with `submit_code`), use that path. If the directory already exists, it was left from a previous session — reuse it.
-- **Path format**: Always `{project}/.mtq/worktrees/{task.id}` — never `/tmp`. `{project}` is `task.project.workingDirectory`.
-- **Creation command** (only if no worktree exists; run from `task.project.workingDirectory`): `git worktree add {project}/.mtq/worktrees/{task.id} {task.recommendedBranch}`
+- **Path format**: Always `{project}/.moonlightq/worktrees/{task.id}` — never `/tmp`. `{project}` is `task.project.workingDirectory`.
+- **Creation command** (only if no worktree exists; run from `task.project.workingDirectory`): `git worktree add {project}/.moonlightq/worktrees/{task.id} {task.recommendedBranch}`
 - **DO NOT** create a new worktree if one is already assigned - use the existing path
 
 ## Git Safety
@@ -94,7 +94,7 @@ Call the `submit_review` MCP tool:
 
 New findings get ids `R<round>-<n>`; the coder answers them by id in the next round.
 
-`context` is required (see Context Handoff in `mtq-claim`). For the next agent, include the verdict and, for `request_changes`, the finding ids to fix first and why; for `approve`, anything the merger or the user should know.
+`context` is required (see Context Handoff in `moonlightq-claim`). For the next agent, include the verdict and, for `request_changes`, the finding ids to fix first and why; for `approve`, anything the merger or the user should know.
 
 On `{ "success": false, "error": "..." }`, read the error: `Task must be in Reviewing status.` or `claimed by another agent session` means the task is no longer yours (stop); `Cannot approve with open blocker or major findings: R1-1 (fixed), ...` means pass the ones you checked in `verifiedFindings` as `verified`, or request changes; anything else, fix the arguments and call it again.
 
@@ -121,7 +121,7 @@ The `message` MUST be Markdown. It summarises; the findings themselves go in `fi
 
 ## Guardrails
 
-- **DO** call `report_blocker` (see Blocked in `mtq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
+- **DO** call `report_blocker` (see Blocked in `moonlightq-claim`) when something outside your control blocks this phase - never submit partial or placeholder work to move the task forward
 - **DO NOT** implement changes during review phase - only review and give verdict
 - **DO NOT** look for the coder's context (the task's conversation, contexts, handoffs or evidence) or ask the coder to explain the code: judge the code from the diff, the task and the criteria
 - **DO NOT** approve with open `blocker` or `major` findings, and **DO NOT** request changes without a finding the coder can act on

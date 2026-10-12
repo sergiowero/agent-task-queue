@@ -18,7 +18,7 @@ export function ToolsPage() {
       <PageHeader
         icon={ToolsIcon}
         title="Tools"
-        description="Helpers for setting up Moonlight Task Queue on your machine."
+        description="Helpers for setting up MoonlightQ on your machine."
       />
 
       <PageBody>

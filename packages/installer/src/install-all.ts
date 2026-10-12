@@ -2,7 +2,7 @@ import { installMcp } from "./install-mcp.js";
 import { installSkills } from "./install-skills.js";
 
 /**
- * Registers the Moonlight Task Queue MCP server and installs the workflow skills.
+ * Registers the MoonlightQ MCP server and installs the workflow skills.
  *
  *   bun run install:all              # same options as install:mcp (e.g. --db <path>)
  */

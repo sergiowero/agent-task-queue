@@ -1,19 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import type { McpServerLaunch } from "@mtq/mcp";
-import { MCP_SERVER_NAME } from "@mtq/mcp";
-import { claudeHome, codexHome, opencodeHome, xdgConfigHome } from "@mtq/shared/tool-paths";
+import type { McpServerLaunch } from "@moonlightq/mcp";
+import { MCP_SERVER_NAME } from "@moonlightq/mcp";
+import { claudeHome, codexHome, opencodeHome, xdgConfigHome } from "@moonlightq/shared/tool-paths";
 
 /**
- * Registers the Moonlight Task Queue MCP server in the user-level config of every installed
- * coding tool. Each tool's config file is edited in place: only the `mtq`
- * entry is added or replaced (and the pre-rename `agentq` entry removed),
- * everything else is kept, and a file whose entry is already up to date is not
+ * Registers the MoonlightQ MCP server in the user-level config of every installed
+ * coding tool. Each tool's config file is edited in place: only the `moonlightq`
+ * entry is added or replaced, everything else is kept, and a file whose entry is already up to date is not
  * rewritten, so running it again is a no-op.
  */
-
-/** Name the server was registered under before the rename to Moonlight Task Queue. */
-const LEGACY_SERVER_NAME = "agentq";
 
 export type SetupTool = "claude" | "codex" | "opencode" | "gemini" | "copilot" | "vscode";
 
@@ -49,13 +45,11 @@ interface ToolTarget {
   homeMarker(e: SetupEnv): string;
   /** JSON configs: the key that holds the servers. Absent for Codex's TOML. */
   section?: string;
-  /** The `mtq` entry this tool should hold. */
+  /** The `moonlightq` entry this tool should hold. */
   entry(launch: McpServerLaunch): unknown;
-  /** The `mtq` entry currently in `content` (undefined when absent). Throws on unreadable content. */
+  /** The `moonlightq` entry currently in `content` (undefined when absent). Throws on unreadable content. */
   read(content: string | null): unknown;
-  /** Whether `content` still holds the pre-rename `agentq` entry. */
-  hasLegacy(content: string | null): boolean;
-  /** `content` with the `mtq` entry set to `entry`. */
+  /** `content` with the `moonlightq` entry set to `entry`. */
   write(content: string | null, entry: unknown): string;
 }
 
@@ -72,7 +66,7 @@ function parseJsonObject(content: string | null): Record<string, any> {
 
 /** A JSON config whose servers live under `root[section][name]`. */
 function jsonTarget(
-  base: Omit<ToolTarget, "read" | "write" | "hasLegacy">,
+  base: Omit<ToolTarget, "read" | "write">,
   section: string,
   seed: Record<string, unknown> = {},
 ): ToolTarget {
@@ -82,14 +76,10 @@ function jsonTarget(
     read(content) {
       return parseJsonObject(content)[section]?.[MCP_SERVER_NAME];
     },
-    hasLegacy(content) {
-      return parseJsonObject(content)[section]?.[LEGACY_SERVER_NAME] !== undefined;
-    },
     write(content, entry) {
       const root = content === null ? { ...seed } : parseJsonObject(content);
       const servers = root[section] && typeof root[section] === "object" ? root[section] : {};
       const next = { ...servers, [MCP_SERVER_NAME]: entry };
-      delete next[LEGACY_SERVER_NAME];
       root[section] = next;
       return JSON.stringify(root, null, 2) + "\n";
     },
@@ -114,7 +104,7 @@ function tomlKeyPath(key: string): string[] {
 
 const TOML_HEADER = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/;
 
-/** Removes the `[mcp_servers.mtq]` and legacy `[mcp_servers.agentq]` tables and their sub-tables. */
+/** Removes the `[mcp_servers.moonlightq]` table and its sub-tables. */
 function removeCodexServer(content: string): string {
   const out: string[] = [];
   let skipping = false;
@@ -122,8 +112,7 @@ function removeCodexServer(content: string): string {
     const header = line.match(TOML_HEADER);
     if (header) {
       const path = tomlKeyPath(header[1]);
-      skipping =
-        path[0] === "mcp_servers" && (path[1] === MCP_SERVER_NAME || path[1] === LEGACY_SERVER_NAME);
+      skipping = path[0] === "mcp_servers" && path[1] === MCP_SERVER_NAME;
     }
     if (!skipping) out.push(line);
   }
@@ -146,9 +135,6 @@ const codexTarget: ToolTarget = {
     if (!content) return undefined;
     const server = (Bun.TOML.parse(content) as any).mcp_servers?.[MCP_SERVER_NAME];
     return server ? { command: server.command, args: server.args, env: server.env } : undefined;
-  },
-  hasLegacy(content) {
-    return !!content && (Bun.TOML.parse(content) as any).mcp_servers?.[LEGACY_SERVER_NAME] !== undefined;
   },
   write(content, entry) {
     const { command, args, env } = entry as McpServerLaunch;
@@ -289,13 +275,13 @@ function sameJson(a: unknown, b: unknown): boolean {
 }
 
 /** Folders our own installers create inside a tool's home (install:skills). */
-const MTQ_ONLY_ENTRIES = new Set(["skills"]);
+const MOONLIGHTQ_ONLY_ENTRIES = new Set(["skills"]);
 
 /** The tool's home exists and holds something the tool itself wrote. */
 export function hasToolData(dir: string): boolean {
   if (!existsSync(dir)) return false;
   try {
-    return readdirSync(dir).some((name) => !MTQ_ONLY_ENTRIES.has(name));
+    return readdirSync(dir).some((name) => !MOONLIGHTQ_ONLY_ENTRIES.has(name));
   } catch {
     return false;
   }
@@ -329,7 +315,7 @@ export function registerWith(
       ? readFileSync(configPath, "utf8").replace(/^\uFEFF/, "")
       : null;
     const current = target.read(content);
-    if (sameJson(current, desired) && !target.hasLegacy(content)) return result("unchanged");
+    if (sameJson(current, desired)) return result("unchanged");
 
     const next = target.write(content, desired);
     if (!sameJson(target.read(next), desired)) {

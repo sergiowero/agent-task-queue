@@ -119,5 +119,5 @@ dist
 # TernJS port file
 .tern-port
 
-# Moonlight Task Queue runtime (worktrees)
-.mtq/
+# MoonlightQ runtime (worktrees)
+.moonlightq/

@@ -20,7 +20,7 @@ import {
   submitRefinement,
 } from "./workflow.js";
 
-process.env.MTQ_DB_PATH = ":memory:";
+process.env.MOONLIGHTQ_DB_PATH = ":memory:";
 
 const planner = { toolName: "Planner", version: "1", model: "p", sessionId: "lc-planner" };
 const critic = { toolName: "Critic", version: "1", model: "c", sessionId: "lc-critic" };

@@ -1,5 +1,5 @@
 import type { Evidence, Finding, Task } from "../lib/api";
-import type { RoundChip } from "@mtq/shared/policy";
+import type { RoundChip } from "@moonlightq/shared/policy";
 import { Alert } from "./Alert";
 import { Badge } from "./Badge";
 import { FindingChecklist } from "./FindingChecklist";

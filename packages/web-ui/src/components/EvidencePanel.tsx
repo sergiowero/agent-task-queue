@@ -1,5 +1,5 @@
-import { BUILTIN_VERIFIER_AUTHOR } from "@mtq/shared/catalog";
-import { checkVerifyCommand } from "@mtq/shared/profile";
+import { BUILTIN_VERIFIER_AUTHOR } from "@moonlightq/shared/catalog";
+import { checkVerifyCommand } from "@moonlightq/shared/profile";
 import type { AcceptanceCriterion, Evidence, ProjectProfile, Task, ValidationPlan } from "../lib/api";
 import type { Tone } from "../lib/status";
 import { CheckIcon, CloseIcon, PendingIcon, PlanIcon, VerifyIcon } from "../lib/icons";

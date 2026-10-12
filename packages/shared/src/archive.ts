@@ -761,7 +761,7 @@ function renderSummary(input: ArchiveDocumentsInput): string {
   const out: string[] = [
     `# ${task.title}`,
     "",
-    `> Archived from Moonlight Task Queue on ${formatTimestamp(archivedAt)}. This is the summary; every message, ` +
+    `> Archived from MoonlightQ on ${formatTimestamp(archivedAt)}. This is the summary; every message, ` +
       `status change, agent session and activity event is in ` +
       `[${input.detailedFile}](./${input.detailedFile}).`,
     "",
@@ -899,7 +899,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
   const out: string[] = [
     `# ${task.title} — full record`,
     "",
-    `> Archived from Moonlight Task Queue on ${formatTimestamp(archivedAt)}. ` +
+    `> Archived from MoonlightQ on ${formatTimestamp(archivedAt)}. ` +
       `Summary: [${input.summaryFile}](./${input.summaryFile}).`,
     "",
     "## Task",
@@ -1112,7 +1112,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
   const evidence = input.evidence ?? [];
   const verification = verificationLines(task, evidence);
   if (verification || evidence.length) {
-    out.push("", "## Verification", "", ...(verification ?? ["_Not verified by Moonlight Task Queue._"]));
+    out.push("", "## Verification", "", ...(verification ?? ["_Not verified by MoonlightQ._"]));
     if (task.diffStats) {
       out.push("", `Diff: ${task.diffStats.files} files, +${task.diffStats.insertions} −${task.diffStats.deletions}.`);
     }
@@ -1211,7 +1211,7 @@ function renderDetailed(input: ArchiveDocumentsInput): string {
     "## Raw data",
     "",
     "<details>",
-    "<summary>Task, project, findings, evidence and handoffs as stored in Moonlight Task Queue</summary>",
+    "<summary>Task, project, findings, evidence and handoffs as stored in MoonlightQ</summary>",
     "",
     fenced(JSON.stringify({ task, project, findings, evidence, handoffs }, null, 2), "json"),
     "",

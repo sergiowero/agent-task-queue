@@ -33,7 +33,7 @@ import { Modal, useModal } from "./Modal";
 import type { SegmentOption } from "./SegmentedControl";
 import { SegmentedControl } from "./SegmentedControl";
 import { Select } from "./Select";
-import { DEFAULT_ROLES, ROLES, ROLE_INFO, normalizeRoles, type Role } from "@mtq/shared/catalog";
+import { DEFAULT_ROLES, ROLES, ROLE_INFO, normalizeRoles, type Role } from "@moonlightq/shared/catalog";
 
 /** Effort levels per tool; null when the tool has no effort flag (see commands.ts). */
 const TOOL_EFFORTS: Record<RunnerTool, string[] | null> = {
@@ -340,12 +340,12 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
           required={isCustomTool}
           hint={
             isCustomTool
-              ? "Argv to run; the prompt is appended as the last argument and exposed as $MTQ_PROMPT. Needs the server started with MTQ_ALLOW_CUSTOM_RUNNERS=1."
-              : "Appended to the generated command. Quoted or JSON array. Needs the server started with MTQ_ALLOW_CUSTOM_RUNNERS=1."
+              ? "Argv to run; the prompt is appended as the last argument and exposed as $MOONLIGHTQ_PROMPT. Needs the server started with MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1."
+              : "Appended to the generated command. Quoted or JSON array. Needs the server started with MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1."
           }
         >
           <Input
-            placeholder={isCustomTool ? 'bash -c "my-agent \\"$MTQ_TASK_ID\\""' : "--verbose"}
+            placeholder={isCustomTool ? 'bash -c "my-agent \\"$MOONLIGHTQ_TASK_ID\\""' : "--verbose"}
             value={extraArgs}
             onChange={(e) => setExtraArgs(e.target.value)}
             className="font-mono"

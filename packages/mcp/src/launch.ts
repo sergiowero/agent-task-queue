@@ -1,7 +1,7 @@
 import { resolve } from "path";
 
-/** Name the Moonlight Task Queue MCP server is registered under in every coding tool. */
-export const MCP_SERVER_NAME = "mtq";
+/** Name the MoonlightQ MCP server is registered under in every coding tool. */
+export const MCP_SERVER_NAME = "moonlightq";
 
 /** Absolute path of the stdio entry point. */
 export const MCP_ENTRY = resolve(import.meta.dir, "index.ts");
@@ -35,7 +35,7 @@ export interface McpServerLaunch {
 }
 
 /**
- * Launch spec for the Moonlight Task Queue MCP server bound to the database at `dbPath`.
+ * Launch spec for the MoonlightQ MCP server bound to the database at `dbPath`.
  * MCP clients start servers with a minimal environment, so the database path
  * travels in `env` instead of being inherited.
  */
@@ -44,7 +44,7 @@ export function mcpServerLaunch(
   bunPath: string = process.execPath,
   extraEnv: Record<string, string> = {},
 ): McpServerLaunch {
-  return { command: bunPath, args: ["run", MCP_ENTRY], env: { MTQ_DB_PATH: dbPath, ...extraEnv } };
+  return { command: bunPath, args: ["run", MCP_ENTRY], env: { MOONLIGHTQ_DB_PATH: dbPath, ...extraEnv } };
 }
 
 /**
@@ -53,14 +53,14 @@ export function mcpServerLaunch(
  */
 export function claimEnv(taskId: string, claimToken: string, agentId?: string): Record<string, string> {
   return {
-    MTQ_TASK_ID: taskId,
-    MTQ_CLAIM_TOKEN: claimToken,
-    ...(agentId ? { MTQ_AGENT_ID: agentId } : {}),
+    MOONLIGHTQ_TASK_ID: taskId,
+    MOONLIGHTQ_CLAIM_TOKEN: claimToken,
+    ...(agentId ? { MOONLIGHTQ_AGENT_ID: agentId } : {}),
   };
 }
 
 /**
- * The common `{ "mcpServers": { "mtq": { command, args, env } } }` document,
+ * The common `{ "mcpServers": { "moonlightq": { command, args, env } } }` document,
  * read by Claude Code (`--mcp-config`), Gemini CLI settings and most MCP clients.
  */
 export function mcpServersConfig(launch: McpServerLaunch): {

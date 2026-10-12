@@ -421,7 +421,7 @@ export function renderPrBody(task: Task): string {
   }
   const v = task.verification;
   lines.push("## Verification", "");
-  if (!v) lines.push("Not verified by Moonlight Task Queue.");
+  if (!v) lines.push("Not verified by MoonlightQ.");
   else if (v.skipped) lines.push(v.note ?? "Not verified.");
   else {
     lines.push(`${v.passed ? "✅ Passed" : "❌ Failed"} (round ${v.round})${v.verifiedSha ? ` on \`${v.verifiedSha.slice(0, 12)}\`` : ""}.`);
@@ -446,7 +446,7 @@ export function renderPrBody(task: Task): string {
     lines.push(`Approved by a person (\`${approval.by}\`)${short(approval.sha)} on ${approval.at.slice(0, 10)}.`);
   } else if (!review) {
     // Tasks approved before approvals were recorded.
-    lines.push("Reviewed by a person in Moonlight Task Queue.");
+    lines.push("Reviewed by a person in MoonlightQ.");
   }
   if (resolved.length) {
     lines.push("", "Findings addressed:");
@@ -466,6 +466,6 @@ export function renderPrBody(task: Task): string {
   }
   lines.push("", "## Risk", "", `**${task.risk}**${task.riskReasons.length ? `: ${task.riskReasons.join("; ")}` : ""}`);
   if (task.nonGoals.length) lines.push("", "Out of scope: " + task.nonGoals.join("; "));
-  lines.push("", `Moonlight Task Queue task \`${task.id}\``);
+  lines.push("", `MoonlightQ task \`${task.id}\``);
   return lines.join("\n");
 }

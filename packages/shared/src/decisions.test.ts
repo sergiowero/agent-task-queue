@@ -18,7 +18,7 @@ import {
 } from "./workflow.js";
 
 // Set test DB before any imports
-process.env.MTQ_DB_PATH = ":memory:";
+process.env.MOONLIGHTQ_DB_PATH = ":memory:";
 
 const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "d-coder" };
 const reviewer = { toolName: "Reviewer", version: "1", model: "opus", sessionId: "d-reviewer" };

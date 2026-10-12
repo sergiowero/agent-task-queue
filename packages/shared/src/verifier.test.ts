@@ -19,12 +19,12 @@ import {
   verifyWait,
 } from "./verifier.js";
 
-process.env.MTQ_DB_PATH = ":memory:";
+process.env.MOONLIGHTQ_DB_PATH = ":memory:";
 
 const minutes = (n: number) => n * 60_000;
 const coder = { toolName: "Coder", version: "1", model: "sonnet", sessionId: "v-coder" };
 const verifier = { toolName: "Verifier", version: "1", model: "opus", sessionId: "v-verifier" };
-const builtin = { toolName: "mtq-verifier", version: "1", model: "none", sessionId: VERIFIER_RUNNER_ID };
+const builtin = { toolName: "moonlightq-verifier", version: "1", model: "none", sessionId: VERIFIER_RUNNER_ID };
 
 const runnerIds: string[] = [];
 let projects = 0;

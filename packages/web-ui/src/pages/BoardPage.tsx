@@ -21,8 +21,8 @@ import {
   ReviewIcon,
   SearchIcon,
 } from "../lib/icons";
-import { ALL_STATUSES, STATUS_INFO, type BoardColumn, type TaskStatus } from "@mtq/shared/catalog";
-import { resolvePolicy } from "@mtq/shared/policy";
+import { ALL_STATUSES, STATUS_INFO, type BoardColumn, type TaskStatus } from "@moonlightq/shared/catalog";
+import { resolvePolicy } from "@moonlightq/shared/policy";
 import type { Tone } from "../lib/status";
 import { TASK_STATUS, TONE_SOFT, taskStatusMeta } from "../lib/status";
 import { cn } from "../lib/cn";

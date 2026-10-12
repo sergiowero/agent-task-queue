@@ -72,14 +72,14 @@ import {
   type Risk,
   type TaskStatus,
   type TaskType,
-} from "@mtq/shared/catalog";
+} from "@moonlightq/shared/catalog";
 import { FindingsList } from "../components/FindingsList";
 import { HandoffTimeline } from "../components/HandoffTimeline";
 import { Alert } from "../components/Alert";
 import { ApprovedPlanCard, CriteriaList, ProposedValidationCard, VerificationCard } from "../components/EvidencePanel";
-import { formatCriterionLine } from "@mtq/shared/criteria";
-import { planRoundChip, resolvePolicy, reviewRoundChip } from "@mtq/shared/policy";
-import { resolveProfile } from "@mtq/shared/profile";
+import { formatCriterionLine } from "@moonlightq/shared/criteria";
+import { planRoundChip, resolvePolicy, reviewRoundChip } from "@moonlightq/shared/policy";
+import { resolveProfile } from "@moonlightq/shared/profile";
 import { Select } from "../components/Select";
 
 const info = (status: string) => STATUS_INFO[status as TaskStatus];

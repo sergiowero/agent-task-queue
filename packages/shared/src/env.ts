@@ -7,13 +7,13 @@ const envSchema = z.object({
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().positive().int().max(65535)),
   // Address the web server listens on: loopback unless set (e.g. 0.0.0.0 for every interface).
-  MTQ_HOST: z.string().trim().min(1).default("127.0.0.1"),
-  MTQ_DB_PATH: z.string().default("~/.mtq/mtq.db"),
+  MOONLIGHTQ_HOST: z.string().trim().min(1).default("127.0.0.1"),
+  MOONLIGHTQ_DB_PATH: z.string().default("~/.moonlightq/moonlightq.db"),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
-// Not cached: the parse is trivial and tests change MTQ_DB_PATH between files.
+// Not cached: the parse is trivial and tests change MOONLIGHTQ_DB_PATH between files.
 export function validateEnv(): Env {
   const result = envSchema.safeParse(process.env);
   if (!result.success) {

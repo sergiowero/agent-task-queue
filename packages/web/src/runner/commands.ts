@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { McpServerLaunch, RUNNER_MCP_TOOLS } from "@mtq/mcp";
-import { MCP_SERVER_NAME, mcpServersConfig } from "@mtq/mcp";
-import type { Role, RunnerPermissionMode, RunnerTool } from "@mtq/shared";
+import type { McpServerLaunch, RUNNER_MCP_TOOLS } from "@moonlightq/mcp";
+import { MCP_SERVER_NAME, mcpServersConfig } from "@moonlightq/mcp";
+import type { Role, RunnerPermissionMode, RunnerTool } from "@moonlightq/shared";
 
 export interface CommandContext {
   /** Absolute working directory the tool runs in (the project's repo). */
@@ -12,16 +12,16 @@ export interface CommandContext {
   prompt: string;
   /** Absolute path of the file the prompt was written to. */
   promptFile: string;
-  /** How to start the Moonlight Task Queue MCP server, bound to the web server's database. */
+  /** How to start the MoonlightQ MCP server, bound to the web server's database. */
   mcp: McpServerLaunch;
   /**
-   * Absolute path of the job's `{ "mcpServers": { "mtq": ... } }` file, written
+   * Absolute path of the job's `{ "mcpServers": { "moonlightq": ... } }` file, written
    * by the engine before the tool starts (`<runs>/<taskId>/<jobId>.mcp.json`).
    */
   mcpConfigFile: string;
   taskId: string;
   /**
-   * The role the claim acts as (exported as MTQ_ROLE). In safe mode it decides what the
+   * The role the claim acts as (exported as MOONLIGHTQ_ROLE). In safe mode it decides what the
    * tool may do (see ROLE_ACCESS); a role this file does not know gets the least.
    */
   role: string;
@@ -49,17 +49,17 @@ export interface BuiltCommand {
 
 export type CommandBuilder = (tool: RunnerTool, ctx: CommandContext) => BuiltCommand;
 
-/** `~/.mtq` unless MTQ_HOME overrides it (tests point it at a temp dir). */
-export function mtqHome(): string {
-  const raw = process.env.MTQ_HOME;
-  if (!raw) return join(homedir(), ".mtq");
+/** `~/.moonlightq` unless MOONLIGHTQ_HOME overrides it (tests point it at a temp dir). */
+export function moonlightqHome(): string {
+  const raw = process.env.MOONLIGHTQ_HOME;
+  if (!raw) return join(homedir(), ".moonlightq");
   if (raw === "~") return homedir();
   if (raw.startsWith("~/")) return join(homedir(), raw.slice(2));
   return raw;
 }
 
 export function runsDir(taskId: string): string {
-  return join(mtqHome(), "runs", taskId);
+  return join(moonlightqHome(), "runs", taskId);
 }
 
 /** Tools known to refuse to start inside another Claude Code session. */
@@ -70,11 +70,11 @@ export function childEnv(ctx: CommandContext, extra?: Record<string, string>): R
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined && !STRIPPED_ENV.includes(k)) env[k] = v;
   }
-  env.MTQ_TASK_ID = ctx.taskId;
-  env.MTQ_ROLE = ctx.role;
-  env.MTQ_PROMPT_FILE = ctx.promptFile;
-  // Any tool (custom ones included) can start the Moonlight Task Queue MCP server from this file.
-  env.MTQ_MCP_CONFIG = ctx.mcpConfigFile;
+  env.MOONLIGHTQ_TASK_ID = ctx.taskId;
+  env.MOONLIGHTQ_ROLE = ctx.role;
+  env.MOONLIGHTQ_PROMPT_FILE = ctx.promptFile;
+  // Any tool (custom ones included) can start the MoonlightQ MCP server from this file.
+  env.MOONLIGHTQ_MCP_CONFIG = ctx.mcpConfigFile;
   Object.assign(env, ctx.mcp.env);
   return { ...env, ...extra };
 }
@@ -106,11 +106,11 @@ export function accessOf(role: string): RoleAccess {
 
 type RunnerMcpTool = (typeof RUNNER_MCP_TOOLS)[number];
 
-/** The Moonlight Task Queue tools every job may call, whatever its role. */
+/** The MoonlightQ tools every job may call, whatever its role. */
 const COMMON_MCP_TOOLS: readonly RunnerMcpTool[] = ["get_task", "get_task_brief", "get_skill", "post_comment", "report_blocker"];
 
 /**
- * The Moonlight Task Queue tools a job of each role may call: the common ones and its own phase's
+ * The MoonlightQ tools a job of each role may call: the common ones and its own phase's
  * submit (the claim is already the job's: nothing claims, creates or archives tasks).
  */
 export const ROLE_MCP_TOOLS: Record<Role, readonly RunnerMcpTool[]> = {
@@ -124,7 +124,7 @@ export const ROLE_MCP_TOOLS: Record<Role, readonly RunnerMcpTool[]> = {
 };
 
 /** Claude Code names MCP tools `mcp__<server>__<tool>`. */
-export function claudeMtqTools(role: string): string[] {
+export function claudeMoonlightqTools(role: string): string[] {
   const tools = Object.hasOwn(ROLE_MCP_TOOLS, role) ? ROLE_MCP_TOOLS[role as Role] : COMMON_MCP_TOOLS;
   return tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`);
 }
@@ -241,7 +241,7 @@ export interface ClaudeSafeProfile {
 /** The tools a safe-mode Claude job of `role` gets. `commands`: what the job may run (see CommandContext). */
 export function claudeSafeProfile(role: string, commands: readonly string[] = []): ClaudeSafeProfile {
   const access = accessOf(role);
-  const mcp = claudeMtqTools(role);
+  const mcp = claudeMoonlightqTools(role);
   switch (access) {
     case "edit":
       return {
@@ -278,7 +278,7 @@ function toml(value: string | string[]): string {
   return Array.isArray(value) ? `[${value.map((v) => JSON.stringify(v)).join(", ")}]` : JSON.stringify(value);
 }
 
-/** `-c` overrides that add the Moonlight Task Queue server to Codex's `mcp_servers` for this run. */
+/** `-c` overrides that add the MoonlightQ server to Codex's `mcp_servers` for this run. */
 export function codexMcpOverrides(mcp: McpServerLaunch): string[] {
   const key = `mcp_servers.${MCP_SERVER_NAME}`;
   const env = Object.entries(mcp.env)
@@ -318,7 +318,7 @@ export function geminiSystemSettingsPath(): string {
 
 /**
  * Gemini CLI has no per-run MCP flag, so the job points GEMINI_CLI_SYSTEM_SETTINGS_PATH
- * at a copy of the system settings with the Moonlight Task Queue server added. Admin settings in
+ * at a copy of the system settings with the MoonlightQ server added. Admin settings in
  * the real file are kept; a file that cannot be read stops the job with a clear error.
  */
 export function geminiSettings(mcp: McpServerLaunch, systemPath = geminiSystemSettingsPath()): string {
@@ -328,7 +328,7 @@ export function geminiSettings(mcp: McpServerLaunch, systemPath = geminiSystemSe
       base = JSON.parse(readFileSync(systemPath, "utf8"));
     } catch (e: any) {
       throw new Error(
-        `gemini: cannot add the Moonlight Task Queue MCP server to this run: ${systemPath} is not readable JSON (${e?.message ?? e}). Fix that file and start the runner again.`,
+        `gemini: cannot add the MoonlightQ MCP server to this run: ${systemPath} is not readable JSON (${e?.message ?? e}). Fix that file and start the runner again.`,
       );
     }
   }
@@ -345,13 +345,13 @@ export function runsCustomArgv(runner: { tool: RunnerTool; extraArgs?: string[] 
   return runner.tool === "custom" || (runner.extraArgs?.length ?? 0) > 0;
 }
 
-/** Custom argv runners are created and run only when the server was started with MTQ_ALLOW_CUSTOM_RUNNERS=1. */
+/** Custom argv runners are created and run only when the server was started with MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1. */
 export function customRunnersAllowed(): boolean {
-  return process.env.MTQ_ALLOW_CUSTOM_RUNNERS === "1";
+  return process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS === "1";
 }
 
 export const CUSTOM_RUNNERS_DISABLED =
-  "Custom runners (tool custom, or extraArgs on any tool) are disabled: start the server with MTQ_ALLOW_CUSTOM_RUNNERS=1 to allow them";
+  "Custom runners (tool custom, or extraArgs on any tool) are disabled: start the server with MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1 to allow them";
 
 export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltCommand {
   const extra = ctx.extraArgs ?? [];
@@ -407,11 +407,11 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       if (extra.length === 0) {
         throw new Error("custom runners need extraArgs (the full argv to execute)");
       }
-      // A custom tool gets the server through $MTQ_MCP_CONFIG (see docs/runner.md).
+      // A custom tool gets the server through $MOONLIGHTQ_MCP_CONFIG (see docs/runner.md).
       return {
         cmd: [...extra, ctx.prompt],
         cwd: ctx.cwd,
-        env: childEnv(ctx, { MTQ_PROMPT: ctx.prompt }),
+        env: childEnv(ctx, { MOONLIGHTQ_PROMPT: ctx.prompt }),
       };
     }
     default: {

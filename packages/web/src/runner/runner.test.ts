@@ -5,9 +5,9 @@ import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import type { McpServerLaunch } from "@mtq/mcp";
-import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@mtq/mcp";
-import type { Agent, Runner, RunnerTool } from "@mtq/shared";
+import type { McpServerLaunch } from "@moonlightq/mcp";
+import { RUNNER_MCP_TOOLS, mcpServerLaunch } from "@moonlightq/mcp";
+import type { Agent, Runner, RunnerTool } from "@moonlightq/shared";
 import {
   CLAIM_RULES,
   TaskStatus,
@@ -29,15 +29,15 @@ import {
   revertClaim,
   unblockTask,
   updateTask,
-} from "@mtq/shared";
+} from "@moonlightq/shared";
 import { REDACTED_CLAIM_TOKEN, RunnerEngine, secretRedactor, type RunnerJob } from "./runner.js";
 import type { BuiltCommand, CommandContext } from "./commands.js";
 import {
   CUSTOM_RUNNERS_DISABLED,
   ROLE_MCP_TOOLS,
-  mtqHome,
+  moonlightqHome,
   buildCommand,
-  claudeMtqTools,
+  claudeMoonlightqTools,
   geminiSettings,
   opencodeConfigContent,
 } from "./commands.js";
@@ -46,19 +46,19 @@ import { buildPrompt, stripFrontmatter } from "./prompt.js";
 // The engine claims in-process while the agent's MCP server opens the database
 // by path, so this file needs a FILE database. Other test files may already have
 // opened the singleton on ":memory:"; resetDb() reopens it on our path.
-const DB_PATH = join(tmpdir(), `mtq-runner-test-${randomUUID()}.db`);
-const HOME = join(tmpdir(), `mtq-runner-home-${randomUUID()}`);
-const PROJECT_DIR = join(tmpdir(), `mtq-runner-project-${randomUUID()}`);
+const DB_PATH = join(tmpdir(), `moonlightq-runner-test-${randomUUID()}.db`);
+const HOME = join(tmpdir(), `moonlightq-runner-home-${randomUUID()}`);
+const PROJECT_DIR = join(tmpdir(), `moonlightq-runner-project-${randomUUID()}`);
 const FAKE_AGENT = resolve(import.meta.dir, "testing/fake-agent.ts");
 const BUN = process.execPath;
 
-const previousDbPath = process.env.MTQ_DB_PATH;
-const previousHome = process.env.MTQ_HOME;
-const previousAllowCustom = process.env.MTQ_ALLOW_CUSTOM_RUNNERS;
-process.env.MTQ_DB_PATH = DB_PATH;
-process.env.MTQ_HOME = HOME;
+const previousDbPath = process.env.MOONLIGHTQ_DB_PATH;
+const previousHome = process.env.MOONLIGHTQ_HOME;
+const previousAllowCustom = process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS;
+process.env.MOONLIGHTQ_DB_PATH = DB_PATH;
+process.env.MOONLIGHTQ_HOME = HOME;
 // The runners below are custom argv runners (see makeRunner).
-process.env.MTQ_ALLOW_CUSTOM_RUNNERS = "1";
+process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS = "1";
 resetDb();
 
 const projectId = randomUUID();
@@ -66,7 +66,7 @@ const events: { event: string; data: any }[] = [];
 const engines: RunnerEngine[] = [];
 const runners: Runner[] = [];
 
-/** argv for a custom runner whose "tool" submits the claimed task through the Moonlight Task Queue MCP server. */
+/** argv for a custom runner whose "tool" submits the claimed task through the MoonlightQ MCP server. */
 function agentArgv(tool: string, args: Record<string, unknown>, ...flags: string[]): string[] {
   return [BUN, FAKE_AGENT, tool, JSON.stringify(args), ...flags];
 }
@@ -140,11 +140,11 @@ afterEach(async () => {
 
 afterAll(() => {
   // Hand the singleton back to the in-memory DB the other test files expect.
-  process.env.MTQ_DB_PATH = previousDbPath ?? ":memory:";
-  if (previousHome === undefined) delete process.env.MTQ_HOME;
-  else process.env.MTQ_HOME = previousHome;
-  if (previousAllowCustom === undefined) delete process.env.MTQ_ALLOW_CUSTOM_RUNNERS;
-  else process.env.MTQ_ALLOW_CUSTOM_RUNNERS = previousAllowCustom;
+  process.env.MOONLIGHTQ_DB_PATH = previousDbPath ?? ":memory:";
+  if (previousHome === undefined) delete process.env.MOONLIGHTQ_HOME;
+  else process.env.MOONLIGHTQ_HOME = previousHome;
+  if (previousAllowCustom === undefined) delete process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS;
+  else process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS = previousAllowCustom;
   resetDb();
   for (const p of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
     try { rmSync(p); } catch {}
@@ -154,7 +154,7 @@ afterAll(() => {
 });
 
 describe("RunnerEngine", () => {
-  it("claims a task, runs the tool, and the agent submits it through the Moonlight Task Queue MCP server", async () => {
+  it("claims a task, runs the tool, and the agent submits it through the MoonlightQ MCP server", async () => {
     const task = planTask("submits a plan");
     const runner = makeRunner(agentArgv("submit_plan", { message: "## Plan", context: "planned via MCP" }));
     const engine = makeEngine();
@@ -181,28 +181,28 @@ describe("RunnerEngine", () => {
       [TaskStatus.Planning, TaskStatus.WaitingPlanReview],
     ]);
 
-    // Log, prompt and MCP config live under MTQ_HOME/runs/<taskId>/.
+    // Log, prompt and MCP config live under MOONLIGHTQ_HOME/runs/<taskId>/.
     expect(existsSync(job.logPath)).toBe(true);
     const log = readFileSync(job.logPath, "utf8");
     expect(log).toContain("prompt file:");
-    expect(log).toContain("Moonlight Task Queue MCP server:");
+    expect(log).toContain("MoonlightQ MCP server:");
     const promptFile = join(HOME, "runs", task.id, `${job.id}.prompt.md`);
     expect(existsSync(promptFile)).toBe(true);
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain(task.id);
     expect(prompt).toContain("Do **NOT** call `claim_task`");
-    expect(prompt).toContain("`submit_plan` tool of the `mtq` MCP server");
+    expect(prompt).toContain("`submit_plan` tool of the `moonlightq` MCP server");
     expect(prompt).not.toContain("allowed-tools:");
 
     const mcpConfig = JSON.parse(readFileSync(join(HOME, "runs", task.id, `${job.id}.mcp.json`), "utf8"));
     const launch = mcpServerLaunch(DB_PATH);
-    const jobToken: string = mcpConfig.mcpServers.mtq.env.MTQ_CLAIM_TOKEN;
+    const jobToken: string = mcpConfig.mcpServers.moonlightq.env.MOONLIGHTQ_CLAIM_TOKEN;
     expect(prompt).toContain(`"claimToken": "${jobToken}"`);
     // The job's server holds the job's claim, so the agent's submit needs no token argument.
-    expect(mcpConfig.mcpServers.mtq).toMatchObject({ command: launch.command, args: launch.args });
-    expect(mcpConfig.mcpServers.mtq.env).toMatchObject({
-      MTQ_DB_PATH: DB_PATH,
-      MTQ_TASK_ID: task.id,
+    expect(mcpConfig.mcpServers.moonlightq).toMatchObject({ command: launch.command, args: launch.args });
+    expect(mcpConfig.mcpServers.moonlightq.env).toMatchObject({
+      MOONLIGHTQ_DB_PATH: DB_PATH,
+      MOONLIGHTQ_TASK_ID: task.id,
     });
     expect(jobToken).toMatch(/^[0-9a-f-]{36}$/);
 
@@ -379,7 +379,7 @@ describe("RunnerEngine", () => {
     expect(seen[0].ctx.model).toBe("opus");
     expect(seen[0].ctx.cwd).toBe(PROJECT_DIR);
     expect(seen[0].ctx.role).toBe("plan");
-    expect(seen[0].ctx.mcp).toMatchObject({ ...mcpServerLaunch(DB_PATH), env: { MTQ_DB_PATH: DB_PATH, MTQ_TASK_ID: task.id } });
+    expect(seen[0].ctx.mcp).toMatchObject({ ...mcpServerLaunch(DB_PATH), env: { MOONLIGHTQ_DB_PATH: DB_PATH, MOONLIGHTQ_TASK_ID: task.id } });
     expect(existsSync(seen[0].ctx.mcpConfigFile)).toBe(true);
     const updated = getTaskById(task.id)!;
     expect(updated.assignedAgent).toBeNull();
@@ -405,7 +405,7 @@ describe("RunnerEngine", () => {
       expect(job.pid).toBeNull();
       const message = getTaskById(task.id)!.conversation.at(-1)!.message;
       expect(message).toContain("could not build the gemini command");
-      expect(message).toContain("cannot add the Moonlight Task Queue MCP server");
+      expect(message).toContain("cannot add the MoonlightQ MCP server");
       expect(engine.getState(runner.id).lastError).toContain(settings);
     } finally {
       if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
@@ -416,13 +416,13 @@ describe("RunnerEngine", () => {
 
 describe("RunnerEngine: custom argv opt-in", () => {
   afterEach(() => {
-    process.env.MTQ_ALLOW_CUSTOM_RUNNERS = "1";
+    process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS = "1";
   });
 
-  it("does not start a custom argv runner without MTQ_ALLOW_CUSTOM_RUNNERS=1", async () => {
+  it("does not start a custom argv runner without MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1", async () => {
     const task = planTask("never claimed");
     const runner = makeRunner(bunEval("process.exit(0)"));
-    delete process.env.MTQ_ALLOW_CUSTOM_RUNNERS;
+    delete process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS;
     const engine = makeEngine();
 
     const state = engine.start(runner.id);
@@ -438,7 +438,7 @@ describe("RunnerEngine: custom argv opt-in", () => {
     const engine = makeEngine();
     expect(engine.start(runner.id).running).toBe(true);
 
-    delete process.env.MTQ_ALLOW_CUSTOM_RUNNERS;
+    delete process.env.MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS;
     const task = planTask("claimed by nobody");
     await waitFor(() => !engine.getState(runner.id).running, 5000, "runner to stop claiming");
     expect(engine.getState(runner.id).lastError).toBe(CUSTOM_RUNNERS_DISABLED);
@@ -463,7 +463,7 @@ describe("RunnerEngine: the claim token stays out of job output", () => {
     // Prints the token from its prompt in two writes, the way a tool echoing its MCP calls would.
     const runner = makeRunner(
       bunEval(
-        `const t = process.env.MTQ_PROMPT.match(/"claimToken": "([0-9a-f-]{36})"/)[1];` +
+        `const t = process.env.MOONLIGHTQ_PROMPT.match(/"claimToken": "([0-9a-f-]{36})"/)[1];` +
           `process.stdout.write("submit_plan claimToken=" + t.slice(0, 12));` +
           `setTimeout(() => { process.stdout.write(t.slice(12) + "\\n"); process.exit(1); }, 200);`,
       ),
@@ -478,7 +478,7 @@ describe("RunnerEngine: the claim token stays out of job output", () => {
     expect(job.status).toBe("reverted");
 
     const mcpConfig = JSON.parse(readFileSync(join(HOME, "runs", task.id, `${job.id}.mcp.json`), "utf8"));
-    const token: string = mcpConfig.mcpServers.mtq.env.MTQ_CLAIM_TOKEN;
+    const token: string = mcpConfig.mcpServers.moonlightq.env.MOONLIGHTQ_CLAIM_TOKEN;
     expect(token).toMatch(/^[0-9a-f-]{36}$/);
 
     const log = readFileSync(job.logPath, "utf8");
@@ -600,7 +600,7 @@ describe("RunnerEngine: separation of duties (autonomy L2)", () => {
   }, 60_000);
 
   it("a review job starts in the task's worktree, and its prompt says so", async () => {
-    const worktree = join(PROJECT_DIR, ".mtq", "worktrees", "review-cwd");
+    const worktree = join(PROJECT_DIR, ".moonlightq", "worktrees", "review-cwd");
     mkdirSync(worktree, { recursive: true });
     const task = createTask({ title: "review in the worktree", description: "", projectId });
     const coder = { toolName: "coder", version: "1", model: "m", sessionId: "cwd-coder" };
@@ -679,7 +679,7 @@ describe("RunnerEngine: agent verification (autonomy L2)", () => {
 });
 
 describe("RunnerEngine: plan critique (autonomy L2)", () => {
-  it("a plan_review runner critiques a plan with the mtq-plan-review skill, and its verdict routes the task", async () => {
+  it("a plan_review runner critiques a plan with the moonlightq-plan-review skill, and its verdict routes the task", async () => {
     const l2 = randomUUID();
     createProject({ id: l2, displayName: "Critique", workingDirectory: PROJECT_DIR, autonomy: 2 });
     const task = createTask({ title: "critique me", description: "d", projectId: l2, requiresPlan: true });
@@ -697,7 +697,7 @@ describe("RunnerEngine: plan critique (autonomy L2)", () => {
     const job = lastJob(engine, runner.id)!;
     expect(job.phase).toBe("plan_review");
     const prompt = readFileSync(join(HOME, "runs", task.id, `${job.id}.prompt.md`), "utf8");
-    expect(prompt).toContain("## Phase skill: mtq-plan-review");
+    expect(prompt).toContain("## Phase skill: moonlightq-plan-review");
     expect(prompt).toContain("`submit_plan_review` tool");
     expect(getTaskById(task.id)!.planRound).toBe(1);
   }, 30_000);
@@ -730,21 +730,21 @@ describe("revertClaim", () => {
   });
 });
 
-describe("mtqHome", () => {
-  it("is ~/.mtq unless MTQ_HOME overrides it", () => {
-    const saved = process.env.MTQ_HOME;
-    delete process.env.MTQ_HOME;
+describe("moonlightqHome", () => {
+  it("is ~/.moonlightq unless MOONLIGHTQ_HOME overrides it", () => {
+    const saved = process.env.MOONLIGHTQ_HOME;
+    delete process.env.MOONLIGHTQ_HOME;
     try {
-      expect(mtqHome()).toBe(join(homedir(), ".mtq"));
+      expect(moonlightqHome()).toBe(join(homedir(), ".moonlightq"));
     } finally {
-      process.env.MTQ_HOME = saved;
+      process.env.MOONLIGHTQ_HOME = saved;
     }
-    expect(mtqHome()).toBe(HOME);
+    expect(moonlightqHome()).toBe(HOME);
   });
 });
 
 describe("buildCommand", () => {
-  const mcp: McpServerLaunch = { command: "/bin/bun", args: ["run", "/mtq/packages/mcp/src/index.ts"], env: { MTQ_DB_PATH: "/data/mtq.db" } };
+  const mcp: McpServerLaunch = { command: "/bin/bun", args: ["run", "/moonlightq/packages/mcp/src/index.ts"], env: { MOONLIGHTQ_DB_PATH: "/data/moonlightq.db" } };
   const ctx: CommandContext = {
     cwd: "/repo",
     prompt: "PROMPT",
@@ -759,9 +759,9 @@ describe("buildCommand", () => {
     extraArgs: null,
   };
   const CODEX_MCP = [
-    "-c", 'mcp_servers.mtq.command="/bin/bun"',
-    "-c", 'mcp_servers.mtq.args=["run", "/mtq/packages/mcp/src/index.ts"]',
-    "-c", 'mcp_servers.mtq.env={ "MTQ_DB_PATH" = "/data/mtq.db" }',
+    "-c", 'mcp_servers.moonlightq.command="/bin/bun"',
+    "-c", 'mcp_servers.moonlightq.args=["run", "/moonlightq/packages/mcp/src/index.ts"]',
+    "-c", 'mcp_servers.moonlightq.env={ "MOONLIGHTQ_DB_PATH" = "/data/moonlightq.db" }',
   ];
   // The coder's sandbox: it writes in the workspace and installs dependencies.
   const CODEX_CODE_SANDBOX = ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"];
@@ -769,31 +769,31 @@ describe("buildCommand", () => {
   it("gives every child the job's MCP config and database", () => {
     for (const tool of ["claude", "codex", "opencode", "custom"] as const) {
       const env = buildCommand(tool, { ...ctx, extraArgs: tool === "custom" ? ["agent"] : null }).env!;
-      expect(env.MTQ_MCP_CONFIG).toBe("/runs/t1/job.mcp.json");
-      expect(env.MTQ_DB_PATH).toBe("/data/mtq.db");
-      expect(env.MTQ_TASK_ID).toBe("t1");
+      expect(env.MOONLIGHTQ_MCP_CONFIG).toBe("/runs/t1/job.mcp.json");
+      expect(env.MOONLIGHTQ_DB_PATH).toBe("/data/moonlightq.db");
+      expect(env.MOONLIGHTQ_TASK_ID).toBe("t1");
     }
   });
 
-  it("claude: --mcp-config on every run; safe mode allows exactly the runner's Moonlight Task Queue tools", () => {
+  it("claude: --mcp-config on every run; safe mode allows exactly the runner's MoonlightQ tools", () => {
     const safe = buildCommand("claude", ctx);
     expect(safe.cmd.slice(0, 7)).toEqual(["claude", "-p", "PROMPT", "--output-format", "json", "--mcp-config", "/runs/t1/job.mcp.json"]);
     expect(safe.cmd).toContain("--permission-mode");
     const allowed = safe.cmd.slice(safe.cmd.indexOf("--allowedTools") + 1);
     // The coder's own phase: the common tools and submit_code, all of them runner tools.
-    const coderTools = claudeMtqTools("code");
-    expect(coderTools).toEqual(ROLE_MCP_TOOLS.code.map((t) => `mcp__mtq__${t}`));
+    const coderTools = claudeMoonlightqTools("code");
+    expect(coderTools).toEqual(ROLE_MCP_TOOLS.code.map((t) => `mcp__moonlightq__${t}`));
     for (const tool of ROLE_MCP_TOOLS.code) expect(RUNNER_MCP_TOOLS).toContain(tool);
     for (const tool of coderTools) expect(allowed).toContain(tool);
     // Nothing broader than the tools a claimed job needs.
     expect(allowed.filter((t) => t.startsWith("mcp__"))).toEqual(coderTools);
-    for (const denied of ["mcp__mtq", "mcp__mtq__claim_task", "mcp__mtq__create_task", "mcp__mtq__archive_task"]) {
+    for (const denied of ["mcp__moonlightq", "mcp__moonlightq__claim_task", "mcp__moonlightq__create_task", "mcp__moonlightq__archive_task"]) {
       expect(allowed).not.toContain(denied);
     }
-    expect(allowed.some((t) => t.startsWith("Bash(mtq"))).toBe(false);
-    expect(safe.env?.MTQ_TASK_ID).toBe("t1");
-    expect(safe.env?.MTQ_ROLE).toBe("code");
-    expect(safe.env?.MTQ_PROMPT_FILE).toBe("/tmp/p.md");
+    expect(allowed.some((t) => t.startsWith("Bash(moonlightq"))).toBe(false);
+    expect(safe.env?.MOONLIGHTQ_TASK_ID).toBe("t1");
+    expect(safe.env?.MOONLIGHTQ_ROLE).toBe("code");
+    expect(safe.env?.MOONLIGHTQ_PROMPT_FILE).toBe("/tmp/p.md");
     expect(safe.env?.CLAUDECODE).toBeUndefined();
 
     const full = buildCommand("claude", { ...ctx, permissionMode: "full", model: "sonnet", extraArgs: ["--verbose"] });
@@ -804,7 +804,7 @@ describe("buildCommand", () => {
     expect(full.cmd.slice(-3)).toEqual(["--model", "sonnet", "--verbose"]);
   });
 
-  it("codex: the server comes in as -c mcp_servers.mtq.* overrides", () => {
+  it("codex: the server comes in as -c mcp_servers.moonlightq.* overrides", () => {
     expect(buildCommand("codex", ctx).cmd).toEqual([
       "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "PROMPT",
     ]);
@@ -813,9 +813,9 @@ describe("buildCommand", () => {
     ]);
     // Windows paths survive the TOML quoting.
     const win = buildCommand("codex", { ...ctx, mcp: { ...mcp, command: "C:\\bun\\bun.exe" } }).cmd;
-    const command = win.find((arg) => arg.startsWith("mcp_servers.mtq.command="))!;
+    const command = win.find((arg) => arg.startsWith("mcp_servers.moonlightq.command="))!;
     expect(Bun.TOML.parse(command.replace("=", " = "))).toEqual({
-      mcp_servers: { mtq: { command: "C:\\bun\\bun.exe" } },
+      mcp_servers: { moonlightq: { command: "C:\\bun\\bun.exe" } },
     });
   });
 
@@ -824,22 +824,22 @@ describe("buildCommand", () => {
     expect(built.cmd).toEqual(["opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "anthropic/claude", "PROMPT"]);
     expect(JSON.parse(built.env!.OPENCODE_CONFIG_CONTENT)).toEqual({
       mcp: {
-        mtq: {
+        moonlightq: {
           type: "local",
-          command: ["/bin/bun", "run", "/mtq/packages/mcp/src/index.ts"],
-          environment: { MTQ_DB_PATH: "/data/mtq.db" },
+          command: ["/bin/bun", "run", "/moonlightq/packages/mcp/src/index.ts"],
+          environment: { MOONLIGHTQ_DB_PATH: "/data/moonlightq.db" },
           enabled: true,
         },
       },
     });
     const merged = JSON.parse(opencodeConfigContent(mcp, JSON.stringify({ theme: "x", mcp: { other: { type: "remote" } } })));
     expect(merged.theme).toBe("x");
-    expect(Object.keys(merged.mcp).sort()).toEqual(["mtq", "other"]);
-    expect(JSON.parse(opencodeConfigContent(mcp, "not json")).mcp.mtq.type).toBe("local");
+    expect(Object.keys(merged.mcp).sort()).toEqual(["moonlightq", "other"]);
+    expect(JSON.parse(opencodeConfigContent(mcp, "not json")).mcp.moonlightq.type).toBe("local");
   });
 
   it("gemini: a per-job system settings file adds the server and keeps admin settings", () => {
-    const dir = join(tmpdir(), `mtq-gemini-${randomUUID()}`);
+    const dir = join(tmpdir(), `moonlightq-gemini-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     const system = join(dir, "system.json");
     const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
@@ -853,14 +853,14 @@ describe("buildCommand", () => {
       expect(built.files![0].path).toBe("/runs/t1/job.gemini-settings.json");
       expect(JSON.parse(built.files![0].content)).toEqual({
         telemetry: { enabled: false },
-        mcpServers: { corp: { command: "corp-mcp" }, mtq: mcp },
+        mcpServers: { corp: { command: "corp-mcp" }, moonlightq: mcp },
       });
 
       // No system settings at all: just the server.
-      expect(JSON.parse(geminiSettings(mcp, join(dir, "missing.json")))).toEqual({ mcpServers: { mtq: mcp } });
+      expect(JSON.parse(geminiSettings(mcp, join(dir, "missing.json")))).toEqual({ mcpServers: { moonlightq: mcp } });
 
       writeFileSync(system, "{ // comments are not JSON");
-      expect(() => buildCommand("gemini", ctx)).toThrow(/cannot add the Moonlight Task Queue MCP server/);
+      expect(() => buildCommand("gemini", ctx)).toThrow(/cannot add the MoonlightQ MCP server/);
     } finally {
       if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
       else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = previous;
@@ -868,11 +868,11 @@ describe("buildCommand", () => {
     }
   });
 
-  it("custom: extraArgs is the argv; the server is documented through $MTQ_MCP_CONFIG", () => {
+  it("custom: extraArgs is the argv; the server is documented through $MOONLIGHTQ_MCP_CONFIG", () => {
     const custom = buildCommand("custom", { ...ctx, extraArgs: ["bash", "-c", "echo hi"] });
     expect(custom.cmd).toEqual(["bash", "-c", "echo hi", "PROMPT"]);
-    expect(custom.env?.MTQ_PROMPT).toBe("PROMPT");
-    expect(custom.env?.MTQ_MCP_CONFIG).toBe("/runs/t1/job.mcp.json");
+    expect(custom.env?.MOONLIGHTQ_PROMPT).toBe("PROMPT");
+    expect(custom.env?.MOONLIGHTQ_MCP_CONFIG).toBe("/runs/t1/job.mcp.json");
     expect(() => buildCommand("custom", ctx)).toThrow();
   });
 
@@ -895,7 +895,7 @@ describe("buildCommand", () => {
 
     // gemini and custom have no effort flag: the value is ignored.
     const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
-    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `mtq-no-gemini-${randomUUID()}.json`);
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `moonlightq-no-gemini-${randomUUID()}.json`);
     try {
       expect(buildCommand("gemini", { ...ctx, model: "gemini-2.5-pro", effort: "high" }).cmd).toEqual([
         "gemini", "-p", "PROMPT", "--yolo", "-m", "gemini-2.5-pro",
@@ -911,7 +911,7 @@ describe("buildCommand", () => {
 
   it("omits the model flag when the model is blank, so the tool uses its default", () => {
     const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
-    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `mtq-no-gemini-${randomUUID()}.json`);
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `moonlightq-no-gemini-${randomUUID()}.json`);
     try {
       for (const model of [null, "", "   "]) {
         expect(buildCommand("claude", { ...ctx, model }).cmd).not.toContain("--model");
@@ -932,10 +932,10 @@ describe("buildCommand", () => {
   });
 });
 
-describe("each tool's MCP config starts a working Moonlight Task Queue server", () => {
+describe("each tool's MCP config starts a working MoonlightQ server", () => {
   // Rebuilds the launch spec the way each tool reads it, starts the server with
   // it (as that tool would) and reads a task from the runner's database.
-  const dir = join(tmpdir(), `mtq-runner-mcp-${randomUUID()}`);
+  const dir = join(tmpdir(), `moonlightq-runner-mcp-${randomUUID()}`);
   const mcpConfigFile = join(dir, "job.mcp.json");
   const previousGemini = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
 
@@ -953,20 +953,20 @@ describe("each tool's MCP config starts a working Moonlight Task Queue server", 
   function launchFor(tool: RunnerTool, built: BuiltCommand): McpServerLaunch {
     switch (tool) {
       case "claude":
-        return JSON.parse(readFileSync(built.cmd[built.cmd.indexOf("--mcp-config") + 1], "utf8")).mcpServers.mtq;
+        return JSON.parse(readFileSync(built.cmd[built.cmd.indexOf("--mcp-config") + 1], "utf8")).mcpServers.moonlightq;
       case "codex": {
         const lines = built.cmd.filter((_, i) => built.cmd[i - 1] === "-c" && built.cmd[i].startsWith("mcp_servers."));
-        const server = (Bun.TOML.parse(lines.map((l) => l.replace("=", " = ")).join("\n")) as any).mcp_servers.mtq;
+        const server = (Bun.TOML.parse(lines.map((l) => l.replace("=", " = ")).join("\n")) as any).mcp_servers.moonlightq;
         return { command: server.command, args: server.args, env: server.env };
       }
       case "opencode": {
-        const server = JSON.parse(built.env!.OPENCODE_CONFIG_CONTENT).mcp.mtq;
+        const server = JSON.parse(built.env!.OPENCODE_CONFIG_CONTENT).mcp.moonlightq;
         return { command: server.command[0], args: server.command.slice(1), env: server.environment };
       }
       case "gemini":
-        return JSON.parse(built.files![0].content).mcpServers.mtq;
+        return JSON.parse(built.files![0].content).mcpServers.moonlightq;
       case "custom":
-        return JSON.parse(readFileSync(built.env!.MTQ_MCP_CONFIG, "utf8")).mcpServers.mtq;
+        return JSON.parse(readFileSync(built.env!.MOONLIGHTQ_MCP_CONFIG, "utf8")).mcpServers.moonlightq;
     }
   }
 
@@ -974,7 +974,7 @@ describe("each tool's MCP config starts a working Moonlight Task Queue server", 
     it(tool, async () => {
       const task = planTask(`mcp config for ${tool}`);
       const mcp = mcpServerLaunch(getDbPath());
-      writeFileSync(mcpConfigFile, JSON.stringify({ mcpServers: { mtq: mcp } }));
+      writeFileSync(mcpConfigFile, JSON.stringify({ mcpServers: { moonlightq: mcp } }));
       const built = buildCommand(tool, {
         cwd: PROJECT_DIR,
         prompt: "PROMPT",
@@ -1024,17 +1024,17 @@ describe("buildPrompt", () => {
       const task = { ...planTask(`prompt ${status}`), status };
       const prompt = buildPrompt({ task, project: null, agent, role: roleOf(status), phaseSkill: "SKILL" });
       expect(prompt).toContain(`working the **${roleOf(status)}** role`);
-      expect(prompt).toContain(`call the \`${tool}\` tool of the \`mtq\` MCP server`);
+      expect(prompt).toContain(`call the \`${tool}\` tool of the \`moonlightq\` MCP server`);
       expect(prompt).toContain(`"taskId": "${task.id}"`);
       for (const arg of [...args, "context", "decisions", "risks", "next"]) expect(prompt).toContain(`"${arg}":`);
       expect(prompt).toContain(
         status === TaskStatus.Verifying ? "`context` is optional for a verification but expected" : "`context` is required",
       );
       expect(prompt).toContain("Do **NOT** call `claim_task`");
-      expect(prompt).toContain("mcp__mtq__<tool>");
+      expect(prompt).toContain("mcp__moonlightq__<tool>");
       expect(prompt).toContain("`report_blocker`");
       expect(prompt).not.toContain("still submit");
-      expect(prompt).not.toMatch(/mtq (claim|submit)/);
+      expect(prompt).not.toMatch(/moonlightq (claim|submit)/);
     }
   });
 
@@ -1057,7 +1057,7 @@ describe("buildPrompt", () => {
         const task = { ...planTask(`prompt args ${status}`), status };
         const prompt = buildPrompt({ task, project: null, agent, role: roleOf(status), claimToken: "tok", phaseSkill: "SKILL" });
         const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
-        const tool = prompt.match(/call the `(\w+)` tool of the `mtq` MCP server/)![1];
+        const tool = prompt.match(/call the `(\w+)` tool of the `moonlightq` MCP server/)![1];
         check(tool, JSON.parse(blocks[1]), status);
         check("report_blocker", JSON.parse(blocks[2]), status);
       }
@@ -1151,7 +1151,7 @@ describe("buildPrompt", () => {
       expect(prompt).toContain(`## Phase skill: ${skillForPhase(phase)}`);
       expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review", merge: "pr" }[phase as string] ?? phase}`);
       expect(prompt).not.toContain("skill file not found");
-      expect(prompt).not.toMatch(/mtq (claim|submit|list|get|create|projects|archive)\b/);
+      expect(prompt).not.toMatch(/moonlightq (claim|submit|list|get|create|projects|archive)\b/);
     }
   });
 });

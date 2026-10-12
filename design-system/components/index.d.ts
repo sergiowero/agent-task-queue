@@ -1,4 +1,4 @@
-// Moonlight Task Queue portal components (packages/web-ui/src/components), exposed as window.MTQ.
+// MoonlightQ portal components (packages/web-ui/src/components), exposed as window.MOONLIGHTQ.
 import type * as React from "react";
 import type { LucideIcon } from "lucide-react";
 
@@ -406,7 +406,7 @@ export declare const Icons: Record<string, LucideIcon>;
 
 declare global {
   interface Window {
-    MTQ: {
+    MOONLIGHTQ: {
       Button: typeof Button;
       IconButton: typeof IconButton;
       CopyButton: typeof CopyButton;

@@ -1,7 +1,7 @@
 /**
  * The task state machine as data: statuses, what each one means, which role
  * claims which status, and the edges a task may take. Pure module (no Bun, Node
- * or database imports) so the web UI can import it as `@mtq/shared/catalog`.
+ * or database imports) so the web UI can import it as `@moonlightq/shared/catalog`.
  */
 
 export enum TaskStatus {
@@ -38,7 +38,7 @@ export function normalizeStatus(status: string): TaskStatus {
   return status as TaskStatus;
 }
 
-/** Work phases; each has a skill (`skills/mtq-<phase>`) and a submit tool. */
+/** Work phases; each has a skill (`skills/moonlightq-<phase>`) and a submit tool. */
 export type Phase = "refine" | "plan" | "plan_review" | "code" | "verify" | "review" | "merge";
 
 /**
@@ -181,7 +181,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
     boardColumn: "need-review",
     cancelable: true,
     editable: false,
-    hint: "The pull request is open: review and merge it on GitHub (Moonlight Task Queue completes the task when it sees the merge), or request changes to send it back to the coder.",
+    hint: "The pull request is open: review and merge it on GitHub (MoonlightQ completes the task when it sees the merge), or request changes to send it back to the coder.",
   },
   [TaskStatus.Complete]: {
     label: "Complete",
@@ -277,10 +277,10 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
 
 export const ALL_STATUSES = Object.values(TaskStatus) as TaskStatus[];
 
-/** The skill that covers a phase: skills/mtq-<phase with dashes>/SKILL.md. */
+/** The skill that covers a phase: skills/moonlightq-<phase with dashes>/SKILL.md. */
 export function skillForPhase(phase: Phase): string {
-  if (phase === "merge") return "mtq-pr";
-  return `mtq-${phase.replace(/_/g, "-")}`;
+  if (phase === "merge") return "moonlightq-pr";
+  return `moonlightq-${phase.replace(/_/g, "-")}`;
 }
 
 export function statusLabel(status: string): string {

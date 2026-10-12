@@ -2,7 +2,7 @@
 
 How to write and style the HTML reports in `research/`. Every report opens on its own from disk
 (double-click it, no server, no sibling files), in light and dark themes, from phone width up.
-The look reuses the Moonlight Task Queue portal's tokens (`design-system/README.md`,
+The look reuses the MoonlightQ portal's tokens (`design-system/README.md`,
 `packages/web-ui/src/index.css`), so reports read as part of the product.
 
 ## Files
@@ -76,7 +76,7 @@ the plan, then the appendix. The first screen must answer the question on its ow
 - Sentence case for every heading, label and chip. No emoji, no exclamation marks.
 - The h1 states the conclusion, not the topic: "Menos puertas humanas, más evidencia de agentes",
   not "Análisis del flujo".
-- `<title>` is the report's name in two to four words ("Auditoría del flujo Moonlight Task Queue"), with no
+- `<title>` is the report's name in two to four words ("Auditoría del flujo MoonlightQ"), with no
   explainer after a dash or colon. The explanation goes in `<meta name="description">`.
 - Every finding cites the code that proves it with an `r-ref` (`path/to/file.ts:123`). No claim
   without a reference or a number.
@@ -130,7 +130,7 @@ All classes live in `research/assets/report.src.css`.
 ```html
 <header class="r-header">
   <div class="r-header__bar">
-    <span class="r-brand"><span class="r-brand__mark">AQ</span>Moonlight Task Queue · Investigación</span>
+    <span class="r-brand"><span class="r-brand__mark">AQ</span>MoonlightQ · Investigación</span>
     <button type="button" class="r-btn" data-theme-toggle id="theme-toggle">Tema oscuro</button>
   </div>
   <p class="r-eyebrow">Auditoría de flujo · 23 sep 2026</p>
@@ -257,7 +257,7 @@ A wrapping row of steps; the actor decides the color, so a reader sees at a glan
 
 `r-phase` (a phase with `r-phase__head` and a size chip) holds `r-task` items. Each task has an id,
 a title, a size chip (S/M/L), the files it touches in an `r-ref`, and its acceptance criteria as a
-list, so it can be pasted into a Moonlight Task Queue task as is.
+list, so it can be pasted into a MoonlightQ task as is.
 
 ### Cards and collapsibles
 

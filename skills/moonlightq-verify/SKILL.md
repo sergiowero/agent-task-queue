@@ -1,15 +1,15 @@
 ---
-name: mtq-verify
-description: Verification phase of the Moonlight Task Queue workflow, for LLM agents with the `verify` role. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `verify_requested`, now in `verifying`. Works from an independent brief without the coder's context: runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The Moonlight Task Queue web server has a built-in verifier that verifies by default; an agent does it when the project is set to agent verification (Projects → Edit → Autonomy → Who verifies code) or while the built-in verifier is off. Never edits code.
-allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_verification, mcp__mtq__report_blocker, mcp__mtq__get_task, Bash(git:*), Bash(bun:*), Bash(npm:*), Bash(npx:*)
+name: moonlightq-verify
+description: Verification phase of the MoonlightQ workflow, for LLM agents with the `verify` role. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `verify_requested`, now in `verifying`. Works from an independent brief without the coder's context: runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The MoonlightQ web server has a built-in verifier that verifies by default; an agent does it when the project is set to agent verification (Projects → Edit → Autonomy → Who verifies code) or while the built-in verifier is off. Never edits code.
+allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_verification, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, Bash(git:*), Bash(bun:*), Bash(npm:*), Bash(npx:*)
 metadata:
   version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
-# Moonlight Task Queue Verify Skill
+# MoonlightQ Verify Skill
 
-Follow this skill when you hold a task claimed from `verify_requested` (now `verifying`). The cross-cutting rules in `mtq-claim` still apply.
+Follow this skill when you hold a task claimed from `verify_requested` (now `verifying`). The cross-cutting rules in `moonlightq-claim` still apply.
 
 You verify instead of the built-in verifier because the project is set to agent verification (Projects → Edit → Autonomy → Who verifies code: code always waits for an agent with the `verify` role, with or without project commands), or because the built-in verifier is off and a runner with your role took over. You are never handed code you wrote, nor, when the project requires another model, code written on your model.
 

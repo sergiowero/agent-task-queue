@@ -1,5 +1,5 @@
 {
-  "name": "@mtq/web",
+  "name": "@moonlightq/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
-    "@mtq/mcp": "workspace:*",
-    "@mtq/shared": "workspace:*"
+    "@moonlightq/mcp": "workspace:*",
+    "@moonlightq/shared": "workspace:*"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

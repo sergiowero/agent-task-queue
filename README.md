@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="design-system/assets/Logos/mtq-mark.svg" alt="Moonlight Task Queue logo" width="80" />
+<img src="design-system/assets/Logos/moonlightq-mark.svg" alt="MoonlightQ logo" width="80" />
 
-# Moonlight Task Queue
+# MoonlightQ
 
 ### If you want to be a 100x engineer, stop prompting and start queueing.
 
@@ -27,7 +27,7 @@ AI critics and reviewers handle the routine gates. You decide what needs a perso
 
 ---
 
-## Why Moonlight Task Queue?
+## Why MoonlightQ?
 
 Coding agents are great at single tasks. Running **many** of them across **many** repositories is where things fall apart:
 
@@ -36,7 +36,7 @@ Coding agents are great at single tasks. Running **many** of them across **many*
 - Nobody is sure which agent touched which branch, or whether that "done" actually means merged.
 - You end up babysitting prompts instead of reviewing outcomes.
 
-Moonlight Task Queue turns that chaos into a **queue**. You write well-scoped tasks on a board. Agents **claim** them, work in isolated git worktrees, and **submit** their output back with handoff notes for the next agent. Other agents critique the plans and review the code (never their own), and the **Needs you** inbox holds only the decisions a person has to make: risky plans and code, blocked tasks and the pull request. How much that is, is a setting per project. The PR phase opens a pull request; no agent merges it.
+MoonlightQ turns that chaos into a **queue**. You write well-scoped tasks on a board. Agents **claim** them, work in isolated git worktrees, and **submit** their output back with handoff notes for the next agent. Other agents critique the plans and review the code (never their own), and the **Needs you** inbox holds only the decisions a person has to make: risky plans and code, blocked tasks and the pull request. How much that is, is a setting per project. The PR phase opens a pull request; no agent merges it.
 
 It all runs on your machine: one Bun process, one SQLite file, no accounts, no cloud.
 
@@ -56,7 +56,7 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 | **Live Kanban dashboard** | React board and a **Needs you** inbox, decision screens for escalated plans and reviews, task details with conversation, handoffs and history, runners with live logs, agents, flow metrics and per-project settings, all updated over SSE. |
 | **Safe by default** | Runners use an allow-list of tools and commands. The PR phase means push + `gh pr create`, never a local merge or a force-push. |
 | **Archive to Markdown** | Finished tasks are saved into the repo as a summary and a full record of the flow they took: the approved plan, verification with its evidence, reviews and approvals, the PR, handoffs, agents and timeline. |
-| **Local-first** | A single SQLite file at `~/.mtq/mtq.db`. Your code and your tasks stay on your machine. |
+| **Local-first** | A single SQLite file at `~/.moonlightq/moonlightq.db`. Your code and your tasks stay on your machine. |
 
 ## How it works
 
@@ -64,10 +64,10 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 flowchart LR
     you([You]) -->|write tasks, decide what needs you| ui["Web dashboard<br/>React · SSE"]
     ui <--> server["Web server<br/>Bun · REST · runners"]
-    server <--> db[("SQLite<br/>~/.mtq/mtq.db")]
+    server <--> db[("SQLite<br/>~/.moonlightq/moonlightq.db")]
     server -->|launches headless| agents["Coding agents<br/>claude · codex · opencode · gemini"]
-    ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|mtq-claim skill| mcp
-    agents <-->|claim_task · submit_*| mcp["Moonlight Task Queue MCP server<br/>stdio"]
+    ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|moonlightq-claim skill| mcp
+    agents <-->|claim_task · submit_*| mcp["MoonlightQ MCP server<br/>stdio"]
     mcp <--> db
     agents -->|worktree · commits · PR| repo[("Your repositories")]
     ide -->|worktree · commits · PR| repo
@@ -79,7 +79,7 @@ flowchart LR
 4. **It submits** with a Markdown message plus handoff notes. The task moves to the next status and is released.
 5. **The next phase picks it up.** A critic or reviewer agent, never the author, usually decides where the task goes next. It comes to **you**, in the dashboard, when a person has to decide: a risky plan or code, a blocked task, or the pull request to merge.
 
-Agents talk to Moonlight Task Queue **only** through the MCP server, which writes straight to SQLite. The web server does not even need to be running for agents to work; the board catches up as soon as you open it.
+Agents talk to MoonlightQ **only** through the MCP server, which writes straight to SQLite. The web server does not even need to be running for agents to work; the board catches up as soon as you open it.
 
 ## Quick start
 
@@ -104,7 +104,7 @@ Connect your coding tools (MCP server + workflow skills). Safe to run again at a
 bun run install:all
 ```
 
-Start Moonlight Task Queue:
+Start MoonlightQ:
 
 ```bash
 bun run start
@@ -112,27 +112,27 @@ bun run start
 
 Open **http://localhost:3000**. The API and the dashboard share that single port.
 
-The API has no login, so it only serves you: the server listens on `127.0.0.1`, and it refuses requests another web page could send it (a foreign `Origin`, a `Host` that is not this machine, a body that is not JSON). To reach it from other machines, set `MTQ_HOST=0.0.0.0` and list the names you use in `MTQ_ALLOWED_HOSTS`; anyone who can reach the port can then drive Moonlight Task Queue.
+The API has no login, so it only serves you: the server listens on `127.0.0.1`, and it refuses requests another web page could send it (a foreign `Origin`, a `Host` that is not this machine, a body that is not JSON). To reach it from other machines, set `MOONLIGHTQ_HOST=0.0.0.0` and list the names you use in `MOONLIGHTQ_ALLOWED_HOSTS`; anyone who can reach the port can then drive MoonlightQ.
 
 ### Your first task in two minutes
 
-1. **Projects → New project.** Give it a name and the absolute path of a local git repository. Moonlight Task Queue reads the repository's test, lint and build commands for its verifier and opens the **Commands** tab to check them (if it finds none, add them there).
+1. **Projects → New project.** Give it a name and the absolute path of a local git repository. MoonlightQ reads the repository's test, lint and build commands for its verifier and opens the **Commands** tab to check them (if it finds none, add them there).
 2. **Board → New task.** Describe what you want, add acceptance criteria, and choose whether it needs a plan first.
 3. **Put agents on it.** Pick one of the two modes:
    - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`), keep the default roles (all but verify), mode `safe`, and start it. It claims the task within seconds. The default level, **L2**, never lets an agent critique or review its own work, so start a second runner the same way to take those steps (the Runners page warns when none may). With only one, the critique and the review wait 20 minutes and then come to you.
    - **Interactive:** open your coding tool in any folder and say:
-     > Work the Moonlight Task Queue.
+     > Work the MoonlightQ.
 
-     The `mtq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty. Use a second session for the critique and the review.
+     The `moonlightq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty. Use a second session for the critique and the review.
 4. **Let it run.** At L2 an AI critic reviews the plan and an AI reviewer the code, change requests go back to the coder with findings tracked by id, and the built-in verifier (or an agent with the `verify` role, if you choose one under **Projects → Edit → Autonomy**) runs the project's commands before any review. A task comes to **Needs you** only when a person has to decide: a plan of medium or high risk, the code of a high-risk task, a question an agent escalated (or a limit it hit), and the pull request. The task page puts the AI verdict, the verification, the diff size and the criteria in one panel to decide on. Want to approve every plan and every change yourself? Set the project to **L0** under **Projects → Edit → Autonomy**.
-5. **Merge and finish.** The agent pushes the branch and opens the pull request: review and merge it on GitHub. With `gh` logged in, Moonlight Task Queue sees the merge and completes the task (without `gh`, click **Mark merged**). Then **Archive** the task to save the whole story as Markdown in the repo.
+5. **Merge and finish.** The agent pushes the branch and opens the pull request: review and merge it on GitHub. With `gh` logged in, MoonlightQ sees the merge and completes the task (without `gh`, click **Mark merged**). Then **Archive** the task to save the whole story as Markdown in the repo.
 
 ## Two ways to run agents
 
 | Mode | What happens | Best for |
 |---|---|---|
 | **Runners** (hands-free) | The server polls the queue with its roles and launches the coding tool headless in the project directory, with the task and the phase skill as the prompt. Each job gets the MCP server automatically. | Background work, overnight queues, parallel agents |
-| **MCP + skills** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and invoke the `mtq-claim` skill. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
+| **MCP + skills** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and invoke the `moonlightq-claim` skill. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
 
 Both go through the same MCP server, the same SQLite database and the same workflow rules in `packages/shared`.
 
@@ -251,7 +251,7 @@ Each project has an autonomy level (L0–L3, default **L2**; a task can override
 
 From L2 up a critic agent reviews each plan: approve sends a low-risk plan straight to coding and anything riskier to you, and request changes goes back to the planner. After two critiques that ask for changes, or when the plan has a blocking question or the critic cannot decide, you decide. From L1 up, `submit_code` goes straight to an AI review (after verification, when the project has commands), and the reviewer's verdict routes the task: approve moves it toward the PR, request changes sends it back with findings tracked by id, and you decide after three rounds, when the reviewer keeps reopening a finding the coder answered, when it asks a question, for a high-risk task, or for an approval picked for a spot check (every Nth, off by default). Nobody critiques, verifies or reviews their own plan or code, in any round: a second runner (or agent session) that can do it picks it up, the Runners page warns when no runner may, and a critique or review nobody takes within 20 minutes comes to you. L0 keeps every gate human. Every number is a setting under **Projects → Edit → Autonomy**, where you also choose who verifies code (the built-in verifier, or an agent). See [docs/policy.md](docs/policy.md).
 
-The task ends on GitHub. The agent with the `pr` role opens the PR with a body Moonlight Task Queue writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you, and a change request (on GitHub, or **Request changes** on the task page) sends it back to the coder: the fix goes through verification and review again and lands on the same PR. Without `gh`, or with `MTQ_PR_SYNC=0`, nothing follows the PR: the task page and **Needs you** say so, and you click **Mark merged** once it is merged (the task page also shows when GitHub was last checked, and what `gh` reported when it failed on that PR). At **L3** with `autoMerge`, green low-risk PRs merge themselves, as long as their head is the commit the review approved. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
+The task ends on GitHub. The agent with the `pr` role opens the PR with a body MoonlightQ writes (criteria with their evidence, verification, the AI review, the risk) and the task waits in **pr_open**. With the `gh` CLI logged in, the server follows every open PR: merged completes the task (and archives it when the project asks), closed sends it to you, and a change request (on GitHub, or **Request changes** on the task page) sends it back to the coder: the fix goes through verification and review again and lands on the same PR. Without `gh`, or with `MOONLIGHTQ_PR_SYNC=0`, nothing follows the PR: the task page and **Needs you** say so, and you click **Mark merged** once it is merged (the task page also shows when GitHub was last checked, and what `gh` reported when it failed on that PR). At **L3** with `autoMerge`, green low-risk PRs merge themselves, as long as their head is the commit the review approved. **Activity** shows how the flow is doing: human decisions per task, share of tasks that reached the PR without a person, review rounds, escalations.
 
 Agents also have to show their work. Plans say how each acceptance criterion will be verified; coders submit evidence per criterion; and the server's built-in verifier runs the project's commands (set them under **Projects → Edit → Commands**) on every submission, catching red builds before any reviewer spends time on them. A project can hand that step to an agent with the `verify` role instead (**Projects → Edit → Autonomy → Who verifies code**); that agent never verifies its own code. Whoever verifies, the server also reads every submission's diff itself: weakened tests go straight back to the coder, and changes to protected paths or an oversized diff raise the task's risk to high, so a person reviews the code too, with or without commands. Each phase leaves a structured handoff for the next, and agents work from a compact brief instead of rereading the whole conversation, so round five costs about as many tokens as round one. Plan critics, verifiers and code reviewers start clean: they get the task and what to check, never the author's conversation, notes or evidence, so they judge the work and not the author's account of it.
 
@@ -290,7 +290,7 @@ A task is the prompt. The more precise it is, the better the result:
 - **Acceptance criteria**: the checklist the reviewer verifies.
 - **Priority, branch and merge branch**: which task goes first, where the work lives and where the PR targets.
 
-Let an agent write tasks for you with the `mtq-create-task` skill: *"Create a Moonlight Task Queue task to add rate limiting to the API."*
+Let an agent write tasks for you with the `moonlightq-create-task` skill: *"Create a MoonlightQ task to add rate limiting to the API."*
 
 ## Runners (hands-free mode)
 
@@ -301,13 +301,13 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 - **`safe` mode** (default): each role gets only what it needs. Only the coder edits files; planners and critics only read (Codex: read-only sandbox), reviews and verifications also re-run the project's own commands in the task's worktree (any language: the commands come from **Projects → Edit → Commands**), and the `pr` role runs `git` and `gh` but never commits or merges. Every role gets only the MCP tools of its phase. Claude Code and Codex enforce this; OpenCode, Gemini and custom runners have no per-role limits (see [docs/runner.md](docs/runner.md#permission-modes)).
 - **`full` mode**: no permission prompts, no sandbox and no per-role limits. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
-- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$MTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `MTQ_ALLOW_CUSTOM_RUNNERS=1`.
+- **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$MOONLIGHTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1`.
 
 Everything is also available over REST (`/api/runners`). See [docs/runner.md](docs/runner.md) for the exact commands, environment variables and a scripted demo.
 
 ## MCP tools
 
-The `mtq` MCP server exposes the whole agent protocol as typed tools. In Claude Code they appear as `mcp__mtq__<tool>`.
+The `moonlightq` MCP server exposes the whole agent protocol as typed tools. In Claude Code they appear as `mcp__moonlightq__<tool>`.
 
 | Tool | Purpose |
 |---|---|
@@ -325,45 +325,45 @@ The `mtq` MCP server exposes the whole agent protocol as typed tools. In Claude 
 | `report_blocker` | Stop with a reason and one concrete question: the task goes to **needs_human** |
 | `heartbeat` | Extend the lease of a claim made by a hand-opened session |
 | `post_comment` | Add a note to a task without changing its status |
-| `get_skill` | Read the current text and version of a Moonlight Task Queue skill |
+| `get_skill` | Read the current text and version of a MoonlightQ skill |
 | `list_projects`, `create_task` | Create well-formed tasks |
 | `add_dependency`, `remove_dependency` | Make a task wait for another before anyone codes it, or drop that dependency |
 | `archive_task` | Archive a complete task to Markdown |
 
-Every `submit_*` call takes a `context` (required on all but `submit_verification`): short handoff notes for the agent of the next phase, with optional `decisions`, `risks` and `next` lists. Resources `mtq://task/{taskId}`, `mtq://projects` and `mtq://skills/{name}` are also available, and the skills are registered as prompts. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
+Every `submit_*` call takes a `context` (required on all but `submit_verification`): short handoff notes for the agent of the next phase, with optional `decisions`, `risks` and `next` lists. Resources `moonlightq://task/{taskId}`, `moonlightq://projects` and `moonlightq://skills/{name}` are also available, and the skills are registered as prompts. Full inputs and outputs are in [docs/mcp.md](docs/mcp.md).
 
 ## Skills
 
-Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run `bun run install:all` (skills and MCP registration) again, and restart your tools, after updating Moonlight Task Queue: the server refuses skills older than the bundle it supports, and any claim without `skillsVersion` (6.0.0 replaced the single `role` with a `roles` list named after the phases). Copies in folders the installer does not manage, such as `~/.agents/skills`, are not updated: delete them.
+Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run `bun run install:all` (skills and MCP registration) again, and restart your tools, after updating MoonlightQ: the server refuses skills older than the bundle it supports, and any claim without `skillsVersion` (6.0.0 replaced the single `role` with a `roles` list named after the phases). Copies in folders the installer does not manage, such as `~/.agents/skills`, are not updated: delete them.
 
 | Skill | What it does |
 |---|---|
-| `mtq-claim` | Entry point. Claims a task and routes to the phase skill that matches its status, then loops until the queue is empty |
-| `mtq-refine` | Turns a draft into a ready task: testable criteria, type, risk, scope |
-| `mtq-plan` | Reads the repo read-only and writes or revises the plan |
-| `mtq-plan-review` | Critiques a plan with a verdict and findings |
-| `mtq-code` | Implements in `{project}/.mtq/worktrees/{taskId}` and commits after every round. Never pushes |
-| `mtq-verify` | Runs the verification commands and reports evidence (the server also has a built-in verifier) |
-| `mtq-review` | Reviews the commits read-only against acceptance criteria and guardrails |
-| `mtq-pr` | Pushes the feature branch and opens a PR with `gh` and Moonlight Task Queue's PR body. Never merges, never force-pushes |
-| `mtq-create-task` | Turns a loose request into a well-structured task |
-| `mtq-archive` | Archives complete tasks, finds the PR with `gh`, and writes an overview of what was done |
+| `moonlightq-claim` | Entry point. Claims a task and routes to the phase skill that matches its status, then loops until the queue is empty |
+| `moonlightq-refine` | Turns a draft into a ready task: testable criteria, type, risk, scope |
+| `moonlightq-plan` | Reads the repo read-only and writes or revises the plan |
+| `moonlightq-plan-review` | Critiques a plan with a verdict and findings |
+| `moonlightq-code` | Implements in `{project}/.moonlightq/worktrees/{taskId}` and commits after every round. Never pushes |
+| `moonlightq-verify` | Runs the verification commands and reports evidence (the server also has a built-in verifier) |
+| `moonlightq-review` | Reviews the commits read-only against acceptance criteria and guardrails |
+| `moonlightq-pr` | Pushes the feature branch and opens a PR with `gh` and MoonlightQ's PR body. Never merges, never force-pushes |
+| `moonlightq-create-task` | Turns a loose request into a well-structured task |
+| `moonlightq-archive` | Archives complete tasks, finds the PR with `gh`, and writes an overview of what was done |
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `3000` | Port for the API and the dashboard |
-| `MTQ_HOST` | `127.0.0.1` | Address the server listens on (`0.0.0.0` for every interface: anyone who reaches it can drive Moonlight Task Queue) |
-| `MTQ_ALLOWED_HOSTS` | none | Comma-separated host names the API answers to besides `localhost` and IP addresses (e.g. `my-mac.local`) |
-| `MTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv: tool `custom`, or `extraArgs` on any tool |
-| `MTQ_DB_PATH` | `~/.mtq/mtq.db` | SQLite database used by the server, the MCP server and every runner job |
-| `MTQ_HOME` | `~/.mtq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
-| `MTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
-| `MTQ_PR_SYNC_SEC` | `180` | How often the server asks `gh` about open PRs (`MTQ_PR_SYNC=0` turns it off) |
-| `MTQ_PR_SYNC_TIMEOUT_SEC` | `30` | Kill a `gh` call of the PR sync that runs longer than this (the sync never blocks the server) |
-| `MTQ_VERIFY_WORKER` | on | `0` turns the server's built-in verifier off |
-| `MTQ_MAX_REVERTS` | `3` | Consecutive runner jobs that end without submitting before the task goes to **needs_human** |
+| `MOONLIGHTQ_HOST` | `127.0.0.1` | Address the server listens on (`0.0.0.0` for every interface: anyone who reaches it can drive MoonlightQ) |
+| `MOONLIGHTQ_ALLOWED_HOSTS` | none | Comma-separated host names the API answers to besides `localhost` and IP addresses (e.g. `my-mac.local`) |
+| `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS` | off | `1` allows runners that execute their own argv: tool `custom`, or `extraArgs` on any tool |
+| `MOONLIGHTQ_DB_PATH` | `~/.moonlightq/moonlightq.db` | SQLite database used by the server, the MCP server and every runner job |
+| `MOONLIGHTQ_HOME` | `~/.moonlightq` | Where runner prompts, MCP configs and job logs are written (`runs/<taskId>/`) |
+| `MOONLIGHTQ_JOB_TIMEOUT_MIN` | `60` | Kill a runner job that runs longer than this and release its task |
+| `MOONLIGHTQ_PR_SYNC_SEC` | `180` | How often the server asks `gh` about open PRs (`MOONLIGHTQ_PR_SYNC=0` turns it off) |
+| `MOONLIGHTQ_PR_SYNC_TIMEOUT_SEC` | `30` | Kill a `gh` call of the PR sync that runs longer than this (the sync never blocks the server) |
+| `MOONLIGHTQ_VERIFY_WORKER` | on | `0` turns the server's built-in verifier off |
+| `MOONLIGHTQ_MAX_REVERTS` | `3` | Consecutive runner jobs that end without submitting before the task goes to **needs_human** |
 
 Point the MCP server at another database with `bun run install:mcp --db <path>`.
 
@@ -377,7 +377,7 @@ moonlight-task-queue/
 │   ├── web/         # Bun HTTP server: REST API, SSE, static UI, runner engine, verifier, PR sync
 │   ├── web-ui/      # React dashboard
 │   └── installer/   # install:mcp and install:skills for every supported tool
-├── skills/          # mtq-claim, the phase skills (-refine, -plan, -plan-review, -code, -verify, -review, -pr), -create-task, -archive
+├── skills/          # moonlightq-claim, the phase skills (-refine, -plan, -plan-review, -code, -verify, -review, -pr), -create-task, -archive
 ├── design-system/   # Tokens, components and logos used by the dashboard
 └── docs/            # Architecture, autonomy and routing, MCP, runners
 ```
@@ -388,7 +388,7 @@ moonlight-task-queue/
 
 ```bash
 bun run dev          # server + Vite HMR on a single port
-bun test             # all tests; they use in-memory or temp databases, never ~/.mtq/mtq.db
+bun test             # all tests; they use in-memory or temp databases, never ~/.moonlightq/moonlightq.db
 bun run typecheck    # every package
 bun run lint         # ESLint
 bun run format       # Prettier
@@ -400,9 +400,9 @@ The installer's end-to-end test runs the real `install:all` against a throwaway 
 ## FAQ
 
 <details>
-<summary><b>Does Moonlight Task Queue send my code or tasks anywhere?</b></summary>
+<summary><b>Does MoonlightQ send my code or tasks anywhere?</b></summary>
 
-No. Moonlight Task Queue is a local Bun process and a SQLite file. The only network traffic comes from the coding agents themselves (calls to their model provider) and from `git push` and `gh`: `gh pr create` in the PR phase, and `gh pr view` when the server checks your open pull requests.
+No. MoonlightQ is a local Bun process and a SQLite file. The only network traffic comes from the coding agents themselves (calls to their model provider) and from `git push` and `gh`: `gh pr create` in the PR phase, and `gh pr view` when the server checks your open pull requests.
 </details>
 
 <details>
@@ -420,7 +420,7 @@ Yes. Claims are atomic, each task gets its own git worktree and feature branch, 
 <details>
 <summary><b>What happens if an agent crashes halfway through?</b></summary>
 
-With a runner, the task is released back to its previous status automatically, with the tail of the output attached as a note, and after three runs in a row that end without a submit it goes to you. A hand-opened session holds its claim as a lease (90 minutes by default, per project): every Moonlight Task Queue call from it extends the lease, `heartbeat` does so during long silent work, and when it expires the server returns the task to the queue. You can also click **Unblock** on the task page.
+With a runner, the task is released back to its previous status automatically, with the tail of the output attached as a note, and after three runs in a row that end without a submit it goes to you. A hand-opened session holds its claim as a lease (90 minutes by default, per project): every MoonlightQ call from it extends the lease, `heartbeat` does so during long silent work, and when it expires the server returns the task to the queue. You can also click **Unblock** on the task page.
 </details>
 
 <details>
@@ -432,7 +432,7 @@ No. The PR phase pushes the feature branch and opens a pull request into the tas
 <details>
 <summary><b>Can I use a model or tool that is not listed?</b></summary>
 
-Yes. Any MCP client can use the `mtq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want (start the server with `MTQ_ALLOW_CUSTOM_RUNNERS=1` to allow it).
+Yes. Any MCP client can use the `moonlightq` server (start it with `bun run mcp`), and the `custom` runner tool launches any command you want (start the server with `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1` to allow it).
 </details>
 
 ## Documentation
@@ -456,10 +456,10 @@ Found a bug or have an idea? [Open an issue](https://github.com/sergiowero/moonl
 
 ## Support the project
 
-If Moonlight Task Queue saves you from babysitting agents, **give it a star**. It helps other developers find it.
+If MoonlightQ saves you from babysitting agents, **give it a star**. It helps other developers find it.
 
 [![Star History Chart](https://api.star-history.com/svg?repos=sergiowero/moonlight-task-queue&type=Date)](https://star-history.com/#sergiowero/moonlight-task-queue&Date)
 
 ## License
 
-Moonlight Task Queue is released under the [MIT License](LICENSE).
+MoonlightQ is released under the [MIT License](LICENSE).

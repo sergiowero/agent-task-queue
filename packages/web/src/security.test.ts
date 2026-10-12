@@ -19,13 +19,13 @@ describe("isAllowedHost", () => {
     }
   });
 
-  it("accepts the names MTQ_ALLOWED_HOSTS lists and MTQ_HOST when it is a name", () => {
-    const extra = extraAllowedHosts({ MTQ_ALLOWED_HOSTS: " My-Mac.local , mtq.lan,", MTQ_HOST: "devbox" });
-    expect(extra).toEqual(["my-mac.local", "mtq.lan", "devbox"]);
+  it("accepts the names MOONLIGHTQ_ALLOWED_HOSTS lists and MOONLIGHTQ_HOST when it is a name", () => {
+    const extra = extraAllowedHosts({ MOONLIGHTQ_ALLOWED_HOSTS: " My-Mac.local , moonlightq.lan,", MOONLIGHTQ_HOST: "devbox" });
+    expect(extra).toEqual(["my-mac.local", "moonlightq.lan", "devbox"]);
     expect(isAllowedHost("my-mac.local:3000", extra)).toBe(true);
     expect(isAllowedHost("DEVBOX:3000", extra)).toBe(true);
     expect(isAllowedHost("other.lan:3000", extra)).toBe(false);
-    expect(extraAllowedHosts({ MTQ_HOST: "0.0.0.0" })).toEqual([]);
+    expect(extraAllowedHosts({ MOONLIGHTQ_HOST: "0.0.0.0" })).toEqual([]);
   });
 });
 
