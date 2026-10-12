@@ -12,6 +12,9 @@ import {
   TaskStatus,
   compareVersions,
   createTaskForProject,
+  addDependency,
+  removeDependency,
+  blockedBySchema,
   getTasks,
   getTaskById,
   getProjects,
@@ -831,6 +834,11 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
           .string()
           .optional()
           .describe("Target merge branch (default: the project's default branch, e.g. main)"),
+        blockedBy: blockedBySchema
+          .optional()
+          .describe(
+            "Ids of tasks of the same project this one starts after: it can be refined and planned, but nobody codes it until they are all complete (never a canceled or already complete task)",
+          ),
         author: authorSchema,
         context: contextSchema,
       },
@@ -855,11 +863,40 @@ export function createMtqMcpServer(opts: MtqMcpServerOptions = {}): McpServer {
             nonGoals: cleanList(input.nonGoals),
             draft: input.draft,
             references: input.references,
+            blockedBy: input.blockedBy,
           },
           input.author ?? "agent",
         );
         return { success: true, task: withProject(task) };
       }),
+  );
+
+  const dependencyInput = {
+    taskId: taskIdSchema.describe("The task that waits"),
+    dependsOn: z.string().min(1).describe("Id of the task it starts after (same project)"),
+    author: authorSchema,
+  };
+  const dependencyResult = (task: Task) => ({ success: true, taskId: task.id, status: task.status, blockedBy: task.blockedBy });
+
+  server.registerTool(
+    "add_dependency",
+    {
+      title: "Add dependency",
+      description:
+        "Make a task start after another task of the same project: nobody codes it until that one is complete (refining and planning go on; a subtask waits in every phase). Refused for a canceled or complete task, the task's parent or subtasks, a cycle, and while an agent holds the task.",
+      inputSchema: dependencyInput,
+    },
+    (input) => run(() => dependencyResult(addDependency(input.taskId, input.dependsOn, input.author ?? "agent"))),
+  );
+
+  server.registerTool(
+    "remove_dependency",
+    {
+      title: "Remove dependency",
+      description: "Drop one of a task's dependencies (blockedBy). Refused while an agent holds the task.",
+      inputSchema: dependencyInput,
+    },
+    (input) => run(() => dependencyResult(removeDependency(input.taskId, input.dependsOn, input.author ?? "agent"))),
   );
 
   server.registerTool(

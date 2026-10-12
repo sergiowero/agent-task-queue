@@ -1234,11 +1234,11 @@ export type TaskEdit = Omit<TaskPatch, "acceptanceCriteria"> & { acceptanceCrite
  * criteria are frozen with an approved plan (see criteriaEditable). Changing
  * requiresPlan before work starts routes the task (see REQUIRES_PLAN_EDITABLE).
  */
-export function editTask(taskId: string, edit: TaskEdit): Task {
-  return withTransaction(() => editTaskFields(taskId, edit));
+export function editTask(taskId: string, edit: TaskEdit, actor = "user"): Task {
+  return withTransaction(() => editTaskFields(taskId, edit, actor));
 }
 
-function editTaskFields(taskId: string, edit: TaskEdit): Task {
+function editTaskFields(taskId: string, edit: TaskEdit, actor: string): Task {
   const task = requireTask(taskId);
   if (!STATUS_INFO[task.status].editable) {
     throw new WorkflowError(
@@ -1260,6 +1260,10 @@ function editTaskFields(taskId: string, edit: TaskEdit): Task {
     );
   }
   const patch: TaskPatch = { ...rest };
+  if (rest.blockedBy) {
+    const projectId = rest.projectId !== undefined ? rest.projectId : task.projectId;
+    patch.blockedBy = checkDependencies({ ...task, projectId }, rest.blockedBy, task.blockedBy);
+  }
   if (acceptanceCriteria) patch.acceptanceCriteria = normalizeCriteria(acceptanceCriteria, task.acceptanceCriteria);
   const project = task.projectId ? getProjectById(task.projectId) : null;
   if (resolveProfile(project?.profile).dorMode !== "off") {
@@ -1267,6 +1271,9 @@ function editTaskFields(taskId: string, edit: TaskEdit): Task {
     patch.dorIssues = readinessIssues({ ...next, acceptanceCriteria: next.acceptanceCriteria }, next.projectId);
   }
   const updated = patchTask(taskId, patch)!;
+  if (patch.blockedBy && !sameIds(patch.blockedBy, task.blockedBy)) {
+    addActivity(taskId, "dependencies_changed", actor, dependencyChange(task.blockedBy, patch.blockedBy));
+  }
   const to =
     planChanged && updated.requiresPlan && task.status === TaskStatus.ReadyForCode && !task.approvedPlan
       ? TaskStatus.PlanRequested
@@ -1279,6 +1286,98 @@ function editTaskFields(taskId: string, edit: TaskEdit): Task {
     message: updated.requiresPlan ? "Requires a plan now: a planner writes one first." : "No longer requires a plan: ready for code.",
     messageType: "user",
   });
+}
+
+/**
+ * An agent makes a task start after another (both in the same project). Like a
+ * person's edit, only in the statuses STATUS_INFO marks editable.
+ */
+export function addDependency(taskId: string, dependsOn: string, actor: string): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (task.blockedBy.includes(dependsOn)) throw new WorkflowError(`The task already starts after ${dependsOn}.`);
+    return editTaskFields(taskId, { blockedBy: [...task.blockedBy, dependsOn] }, actor);
+  });
+}
+
+/** An agent drops one of a task's dependencies. */
+export function removeDependency(taskId: string, dependsOn: string, actor: string): Task {
+  return withTransaction(() => {
+    const task = requireTask(taskId);
+    if (!task.blockedBy.includes(dependsOn)) throw new WorkflowError(`The task does not start after ${dependsOn}.`);
+    return editTaskFields(taskId, { blockedBy: task.blockedBy.filter((id) => id !== dependsOn) }, actor);
+  });
+}
+
+/**
+ * The dependencies a task may start after, without duplicates: live tasks of
+ * its project that are not complete (one already in `kept` may be), not the
+ * task itself, its parents or its subtasks, and that do not wait for the task
+ * (directly, through their dependencies or through their subtasks).
+ */
+function checkDependencies(
+  task: { id: string | null; projectId: string | null; parentId: string | null },
+  ids: string[],
+  kept: string[] = [],
+): string[] {
+  const deps = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  const ancestors = new Set<string>();
+  for (let id = task.parentId; id && !ancestors.has(id); id = getTaskById(id)?.parentId ?? null) ancestors.add(id);
+  const descendants = new Set<string>();
+  for (const queue = task.id ? [task.id] : []; queue.length; ) {
+    for (const child of getSubtasks(queue.pop()!)) {
+      if (descendants.has(child.id)) continue;
+      descendants.add(child.id);
+      queue.push(child.id);
+    }
+  }
+  for (const id of deps) {
+    if (id === task.id) throw new WorkflowError("blockedBy: a task cannot start after itself.");
+    const dep = getTaskById(id);
+    if (!dep || dep.deletedAt || dep.projectId !== task.projectId) {
+      throw new WorkflowError(`blockedBy: unknown task ${id} (use ids of this project's tasks).`);
+    }
+    if (ancestors.has(id)) {
+      throw new WorkflowError(`blockedBy: ${id} is this task's parent: it waits for its subtasks, so this one would never start.`);
+    }
+    if (descendants.has(id)) throw new WorkflowError(`blockedBy: ${id} is a subtask of this task.`);
+    if (dep.status === TaskStatus.Canceled) throw new WorkflowError(`blockedBy: ${id} is canceled and will never complete.`);
+    if (dep.status === TaskStatus.Complete && !kept.includes(id)) {
+      throw new WorkflowError(`blockedBy: ${id} is already complete.`);
+    }
+    if (task.id && waitsFor(id, task.id)) {
+      throw new WorkflowError(`blockedBy: ${id} already waits for this task; depending on it would be a cycle.`);
+    }
+  }
+  return deps;
+}
+
+/** Whether `from` waits for `target`: through its dependencies, or (a split task) through its subtasks. */
+function waitsFor(from: string, target: string): boolean {
+  const seen = new Set<string>();
+  for (const queue = [from]; queue.length; ) {
+    const id = queue.pop()!;
+    if (id === target) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const t = getTaskById(id);
+    if (t) queue.push(...t.blockedBy, ...getSubtasks(id).map((c) => c.id));
+  }
+  return false;
+}
+
+function sameIds(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
+}
+
+/** Activity details of a dependency change: what was added and dropped. */
+function dependencyChange(before: string[], after: string[]): string {
+  const label = (id: string) => `${getTaskById(id)?.title ?? "?"} (${id})`;
+  const added = after.filter((id) => !before.includes(id)).map(label);
+  const dropped = before.filter((id) => !after.includes(id)).map(label);
+  return [added.length ? `Added: ${added.join("; ")}` : "", dropped.length ? `Dropped: ${dropped.join("; ")}` : ""]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function addUserComment(taskId: string, input: { message: string; author?: string }): Task {
@@ -1307,12 +1406,13 @@ export function createTaskForProject(input: CreateTaskForProjectInput, actor = "
     mergeBranch = detectDefaultBranch(project.workingDirectory);
     updateProject(project.id, { defaultMergeBranch: mergeBranch });
   }
+  const blockedBy = checkDependencies({ id: null, projectId: project.id, parentId: input.parentId ?? null }, input.blockedBy ?? []);
   const mode = resolveProfile(project.profile).dorMode;
   const issues = mode === "off" ? [] : readinessIssues(input, project.id);
   if (mode === "enforce" && issues.length && !input.draft) {
     throw new WorkflowError(`The task is not ready (this project enforces a Definition of Ready):\n- ${issues.join("\n- ")}`);
   }
-  const task = createTask({ ...input, mergeBranch, dorIssues: issues });
+  const task = createTask({ ...input, mergeBranch, dorIssues: issues, blockedBy });
   addActivity(task.id, "task_created", actor);
   if (issues.length) addActivity(task.id, "dor_warning", actor, issues.join("\n"));
   for (const note of input.contexts ?? []) {

@@ -56,6 +56,8 @@ const TOOL_NAMES = [
   "submit_plan_review",
   "create_subtask",
   "submit_refinement",
+  "add_dependency",
+  "remove_dependency",
 ];
 
 // Names no roles: the server gives it every role but verify.
@@ -155,6 +157,9 @@ describe("Moonlight Task Queue MCP server", () => {
       expect(names).toContain(name);
     }
     expect(RUNNER_MCP_TOOLS).not.toContain("claim_task");
+    // Changing another task's dependencies is for agents with the full MCP server, like create_task.
+    expect(RUNNER_MCP_TOOLS).not.toContain("add_dependency");
+    expect(RUNNER_MCP_TOOLS).not.toContain("remove_dependency");
   });
 
   it("list_projects returns every project", async () => {
@@ -1692,5 +1697,54 @@ describe("Moonlight Task Queue MCP server over stdio", () => {
     for (const line of lines) {
       expect(JSON.parse(line).jsonrpc).toBe("2.0");
     }
+  });
+});
+
+describe("AgentQ MCP task dependencies", () => {
+  const projectId = "mcp-deps-" + Date.now();
+  let client: Client;
+
+  async function call(name: string, args: Record<string, unknown>): Promise<any> {
+    return parse((await client.callTool({ name, arguments: args })) as CallToolResult);
+  }
+
+  beforeAll(async () => {
+    createProject({ id: projectId, displayName: "Deps Project", workingDirectory: "/tmp/deps" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentQMcpServer().connect(serverTransport);
+    client = new Client({ name: "deps-client", version: "0.0.0" });
+    await client.connect(clientTransport);
+  });
+
+  afterAll(async () => {
+    await client.close();
+    removeProjectTasks(projectId);
+  });
+
+  it("create_task takes blockedBy; add_dependency and remove_dependency change it; nobody codes it meanwhile", async () => {
+    const first = (await call("create_task", { title: "First", projectId, description: "d" })).task;
+    const second = (await call("create_task", { title: "Second", projectId, description: "d", blockedBy: [first.id] })).task;
+    expect(second.blockedBy).toEqual([first.id]);
+    const third = (await call("create_task", { title: "Third", projectId, description: "d" })).task;
+
+    expect(await call("add_dependency", { taskId: third.id, dependsOn: second.id })).toEqual({
+      success: true,
+      taskId: third.id,
+      status: TaskStatus.ReadyForCode,
+      blockedBy: [second.id],
+    });
+    expect(await call("add_dependency", { taskId: first.id, dependsOn: third.id })).toMatchObject({
+      success: false,
+      error: expect.stringContaining("cycle"),
+    });
+
+    const claimed = await call("claim_task", { ...defaultAgent, roles: ["code"], sessionId: "deps-coder", projectId });
+    expect(claimed.task.id).toBe(first.id);
+    expect((await call("claim_task", { ...defaultAgent, roles: ["code"], sessionId: "deps-coder-2", projectId })).reason).toBe(
+      "no_tasks_available",
+    );
+
+    expect((await call("remove_dependency", { taskId: third.id, dependsOn: second.id })).blockedBy).toEqual([]);
+    expect((await call("claim_task", { ...defaultAgent, roles: ["code"], sessionId: "deps-coder-3", projectId })).task.id).toBe(third.id);
   });
 });

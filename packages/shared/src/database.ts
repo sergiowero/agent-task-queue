@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, renameSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import type { AutonomyLevel, Risk, Role, TaskType } from "./catalog.js";
-import { SEPARATION, TASK_TYPES, normalizeRoles } from "./catalog.js";
+import { DEPENDENCY_GATED_STATUSES, SEPARATION, TASK_TYPES, normalizeRoles } from "./catalog.js";
 import type { PolicySettings } from "./policy.js";
 import { criteriaFromStored, normalizeCriteria, type CriterionInput } from "./criteria.js";
 import { resolveProfile, type ProjectProfile } from "./profile.js";
@@ -1080,12 +1080,16 @@ export function getClaimableTasks(
   let sql = `SELECT t.* FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
     WHERE t.status IN (${placeholders}) AND t.assigned_agent_id IS NULL AND t.deleted_at IS NULL AND t.archived_at IS NULL
       AND COALESCE(t.held, 0) = 0
-      AND NOT EXISTS (
-        SELECT 1 FROM json_each(COALESCE(NULLIF(t.blocked_by, ''), '[]')) dep
-        LEFT JOIN tasks o ON o.id = dep.value
-        WHERE o.id IS NULL OR o.status != 'complete'
+      AND (
+        (t.parent_id IS NULL AND t.status NOT IN (${DEPENDENCY_GATED_STATUSES.map(() => "?").join(", ")}))
+        OR NOT EXISTS (
+          SELECT 1 FROM json_each(COALESCE(NULLIF(t.blocked_by, ''), '[]')) dep
+          LEFT JOIN tasks o ON o.id = dep.value
+          WHERE o.id IS NULL OR o.status != 'complete'
+        )
       )`;
-  const params: any[] = [...statuses];
+  // A subtask waits for its dependencies in every phase; any other task only from coding on.
+  const params: any[] = [...statuses, ...DEPENDENCY_GATED_STATUSES];
   if (projectId) {
     sql += " AND t.project_id = ?";
     params.push(projectId);

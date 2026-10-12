@@ -525,6 +525,20 @@ describe("GET/PUT /api/tasks/:id", () => {
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as Task).title).toBe("Edited");
   });
+
+  it("POST and PUT set the tasks a task starts after, and refuse a cycle", async () => {
+    const first = await createTaskViaApi({ title: "First" });
+    const second = await createTaskViaApi({ title: "Second", blockedBy: [first.id] });
+    expect(second.blockedBy).toEqual([first.id]);
+
+    const cycle = await json(`/api/tasks/${first.id}`, "PUT", { blockedBy: [second.id] });
+    expect(cycle.ok).toBe(false);
+    expect((await cycle.json()).error).toContain("cycle");
+
+    const res = await json(`/api/tasks/${second.id}`, "PUT", { blockedBy: [] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Task).blockedBy).toEqual([]);
+  });
 });
 
 describe("workflow sub-actions (requiresPlan task)", () => {
