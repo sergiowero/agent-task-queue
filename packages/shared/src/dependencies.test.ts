@@ -13,7 +13,7 @@ import {
   submitPlan,
 } from "./workflow.js";
 
-process.env.AGENTQ_DB_PATH = ":memory:";
+process.env.MTQ_DB_PATH = ":memory:";
 
 const agent = { toolName: "Deps", version: "1", model: "d", sessionId: "deps-agent" };
 const DESCRIPTION = "Users can export their data as CSV from the settings page.";

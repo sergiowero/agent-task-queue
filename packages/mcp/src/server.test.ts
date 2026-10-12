@@ -1700,7 +1700,7 @@ describe("Moonlight Task Queue MCP server over stdio", () => {
   });
 });
 
-describe("AgentQ MCP task dependencies", () => {
+describe("Moonlight Task Queue MCP task dependencies", () => {
   const projectId = "mcp-deps-" + Date.now();
   let client: Client;
 
@@ -1711,7 +1711,7 @@ describe("AgentQ MCP task dependencies", () => {
   beforeAll(async () => {
     createProject({ id: projectId, displayName: "Deps Project", workingDirectory: "/tmp/deps" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await createAgentQMcpServer().connect(serverTransport);
+    await createMtqMcpServer().connect(serverTransport);
     client = new Client({ name: "deps-client", version: "0.0.0" });
     await client.connect(clientTransport);
   });
