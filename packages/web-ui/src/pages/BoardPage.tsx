@@ -117,12 +117,12 @@ export function BoardPage() {
     [projects],
   );
   const byId = useMemo(() => new Map((allTasks ?? []).map((t) => [t.id, t])), [allTasks]);
-  /** Tasks a task starts after that are not complete yet (one that left the list, archived, is complete). */
+  /** Titles of the tasks a task starts after that are not complete yet (one that left the list, archived, is complete). */
   const waitingOn = (t: Task) =>
-    t.blockedBy.filter((id) => {
+    t.blockedBy.flatMap((id) => {
       const dep = byId.get(id);
-      return dep && dep.status !== "complete";
-    }).length;
+      return dep && dep.status !== "complete" ? [dep.title] : [];
+    });
 
   useSSE(
     useCallback(() => {

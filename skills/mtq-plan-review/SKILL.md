@@ -3,7 +3,7 @@ name: mtq-plan-review
 description: Plan-critique phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `plan_review_requested`, now in `plan_reviewing` (the mtq-claim router sends you here). Works from an independent brief without the planner's handoff notes or the conversation: reads the plan and its validation plan read-only against the task and the codebase, and submits a verdict (approve / request_changes / needs_human) with findings through the `submit_plan_review` MCP tool. The verdict routes the task. Never edits files.
 allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_plan_review, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
 metadata:
-  version: "6.5.0"
+  version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

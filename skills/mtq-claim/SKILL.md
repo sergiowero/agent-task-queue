@@ -3,7 +3,7 @@ name: mtq-claim
 description: Entry point for working as a Moonlight Task Queue agent through the Moonlight Task Queue MCP server. Use when asked to work the Moonlight Task Queue, claim or pick up tasks, act as a Moonlight Task Queue agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (mtq-refine, mtq-plan, mtq-plan-review, mtq-code, mtq-verify, mtq-review, mtq-pr) that matches the task status.
 allowed-tools: mcp__mtq__claim_task, mcp__mtq__get_task, mcp__mtq__get_task_brief, mcp__mtq__get_skill, mcp__mtq__post_comment, mcp__mtq__report_blocker, mcp__mtq__heartbeat
 metadata:
-  version: "6.5.0"
+  version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 
@@ -39,7 +39,7 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "roles": ["<role>", "..."], "sessionId": "<sessionId>",
-  "skillsVersion": "6.5.0",
+  "skillsVersion": "7.0.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
@@ -59,9 +59,9 @@ Call `claim_task`:
     "humanNotes": [{ "author": "user", "at": "...", "message": "..." }],
     "verification": { "passed": false, "failing": [{ "command": "bun test", "exitCode": 1, "summary": "..." }] } | null,
     "round": { "codeRound": 1, "remainingReviewRounds": 2, "remainingPlanRounds": 2, "remainingVerifyFailures": 1 } },
-  "phaseSkill": { "name": "mtq-code", "version": "6.5.0" }, "autonomy": 2, "round": { "...": "same as brief.round" },
+  "phaseSkill": { "name": "mtq-code", "version": "7.0.0" }, "autonomy": 2, "round": { "...": "same as brief.round" },
   "agent": { "id": "opencode@1.0|model", "role": "code" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "6.5.0", "skills": { "mtq-code": "6.5.0" } }
+  "claimToken": "<secret for this claim>", "skillsVersion": "7.0.0", "skills": { "mtq-code": "7.0.0" } }
 ```
 
 The conversation, history, contexts, every finding and every piece of evidence are in `get_task`; the brief holds what you need of them.

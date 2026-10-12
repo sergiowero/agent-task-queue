@@ -8,6 +8,7 @@ import { Badge, StatusBadge } from "./Badge";
 import { Button } from "./Button";
 import { Checkbox } from "./Checkbox";
 import { IconButton } from "./IconButton";
+import { Tooltip } from "./Tooltip";
 
 interface TaskCardProps {
   task: Task;
@@ -19,8 +20,8 @@ interface TaskCardProps {
   onToggleSelect?: () => void;
   /** The limits its round chips count against (the project's policy). */
   policy?: Pick<PolicySettings, "maxReviewRounds" | "maxPlanRounds">;
-  /** Tasks it starts after that are not complete yet (the board knows them all). */
-  waitingOn?: number;
+  /** Titles of the tasks it starts after that are not complete yet (the board knows them all). */
+  waitingOn?: string[];
 }
 
 export function TaskCard({
@@ -31,7 +32,7 @@ export function TaskCard({
   selected = false,
   onToggleSelect,
   policy = DEFAULT_POLICY,
-  waitingOn = 0,
+  waitingOn = [],
 }: TaskCardProps) {
   const review = reviewRoundChip(task, policy);
   // Plan critiques matter while the plan is being written, critiqued or decided.
@@ -127,10 +128,25 @@ export function TaskCard({
             held: plan pending
           </Badge>
         )}
-        {waitingOn > 0 && (
-          <Badge tone="neutral" title="No agent takes it until the tasks it starts after are complete">
-            waits for {waitingOn} task{waitingOn === 1 ? "" : "s"}
-          </Badge>
+        {waitingOn.length > 0 && (
+          <Tooltip
+            content={
+              <>
+                {task.parentId ? "No agent takes it" : "Nobody codes it"} until these are complete:
+                <ul className="mt-1 list-disc pl-4">
+                  {waitingOn.map((title, i) => (
+                    <li key={i}>{title}</li>
+                  ))}
+                </ul>
+              </>
+            }
+          >
+            <span tabIndex={0} className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60">
+              <Badge tone="neutral">
+                waits for {waitingOn.length} task{waitingOn.length === 1 ? "" : "s"}
+              </Badge>
+            </span>
+          </Tooltip>
         )}
         {task.pullRequest && (
           <Badge

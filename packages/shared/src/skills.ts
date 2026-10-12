@@ -13,7 +13,7 @@ export const SKILL_PREFIX = "mtq-";
  * Oldest skills bundle the server still works with. Agents that report an older
  * `skillsVersion` on claim_task are refused with `reason: "skills_outdated"`.
  */
-export const MIN_COMPATIBLE_SKILLS_VERSION = "6.0.0";
+export const MIN_COMPATIBLE_SKILLS_VERSION = "7.0.0";
 
 /**
  * Where each coding tool looks for skills (resolved at call time, so HOME and the

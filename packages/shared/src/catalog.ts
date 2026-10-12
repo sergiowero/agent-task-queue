@@ -387,6 +387,15 @@ export function claimRuleFor(status: TaskStatus): ClaimRule | null {
   return CLAIM_RULES.find((r) => r.from.includes(status)) ?? null;
 }
 
+/**
+ * Queued statuses that wait for the task's dependencies (blockedBy) to complete:
+ * coding and everything after it. A task can be refined and planned before its
+ * dependencies are done; a subtask waits in every phase (see getClaimableTasks).
+ */
+export const DEPENDENCY_GATED_STATUSES: TaskStatus[] = CLAIM_RULES.filter(
+  (r) => r.role !== "refine" && r.role !== "plan" && r.role !== "plan_review",
+).flatMap((r) => r.from);
+
 /** Active status → the statuses a claim into it may come from. */
 export const CLAIMABLE_FROM: Partial<Record<TaskStatus, TaskStatus[]>> = CLAIM_RULES.reduce(
   (acc, rule) => {
@@ -753,6 +762,7 @@ export const EVENT_TYPES: Record<string, string> = {
   plan_review_submitted: "Plan critique submitted",
   subtask_created: "Subtask created",
   task_split: "Split into subtasks",
+  dependencies_changed: "Dependencies changed",
   draft_refined: "Draft refined",
   draft_promoted: "Draft promoted",
   pr_opened: "PR opened",

@@ -3,7 +3,7 @@ name: mtq-review
 description: Reviewing phase of the Moonlight Task Queue workflow. Use right after the Moonlight Task Queue `claim_task` MCP tool (or a Moonlight Task Queue runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the mtq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
 allowed-tools: mcp__mtq__get_task_brief, mcp__mtq__submit_review, mcp__mtq__report_blocker, mcp__mtq__get_task, mcp__mtq__post_comment, Bash(git:*)
 metadata:
-  version: "6.5.0"
+  version: "7.0.0"
   author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
 ---
 

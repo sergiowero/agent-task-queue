@@ -45,6 +45,9 @@ export const referenceSchema = z.object({
 
 const listOfLines = z.array(z.string().max(2000)).max(50);
 
+/** Ids of tasks of the same project a task starts after: it is not coded until they all complete. */
+export const blockedBySchema = z.array(z.string().trim().min(1).max(100)).max(50);
+
 /** An integer in the range the settings catalog names (POLICY_RANGES, PROFILE_RANGES). */
 const ranged = ({ min, max }: { min: number; max: number }) => z.number().int().min(min).max(max);
 
@@ -107,6 +110,7 @@ export const createTaskSchema = z.object({
   references: z.array(referenceSchema).max(30).optional(),
   /** Start as a draft that a refiner (or a person) makes ready. */
   draft: z.boolean().optional(),
+  blockedBy: blockedBySchema.optional(),
 });
 
 /**
@@ -133,6 +137,8 @@ export const updateTaskSchema = z
     autonomy: autonomySchema.nullable().optional(),
     nonGoals: listOfLines.optional(),
     references: z.array(referenceSchema).max(30).optional(),
+    /** Replaces the whole list; dependencies that completed since they were added may stay. */
+    blockedBy: blockedBySchema.optional(),
   })
   .strict();
 

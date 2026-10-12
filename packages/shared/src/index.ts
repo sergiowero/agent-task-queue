@@ -117,6 +117,8 @@ export {
   pullRequestClosed,
   recordPullRequest,
   editTask,
+  addDependency,
+  removeDependency,
   hasVerificationCommands,
   raiseRisk,
   reportBlocker,
@@ -307,6 +309,7 @@ export {
 
 export {
   createTaskSchema,
+  blockedBySchema,
   updateTaskSchema,
   transitionTaskSchema,
   createProjectSchema,
