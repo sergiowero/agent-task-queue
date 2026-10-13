@@ -154,6 +154,8 @@ export interface BuildPromptInput {
   claimToken?: string;
   /** The task's worktree, when the job starts in it instead of the project's working directory (reviews and verifications do). */
   worktree?: string;
+  /** The tool was started with its own `--worktree`: it is already inside a new worktree for this task. */
+  toolWorktree?: boolean;
   /** Overrides the skill body read from disk (tests). */
   phaseSkill?: string;
 }
@@ -191,6 +193,9 @@ export function buildPrompt(input: BuildPromptInput): string {
       ? input.worktree
         ? `You are running inside the task's worktree \`${input.worktree}\` (project working directory: \`${project.workingDirectory}\`).`
         : `Project working directory: \`${project.workingDirectory}\` (you are running inside it).`
+      : "",
+    input.toolWorktree
+      ? `${agent.toolName} started you in a NEW git worktree it created for this run (check with \`git rev-parse --show-toplevel\`). Use it as the task's worktree: do NOT run \`git worktree add\` and ignore the path format in the skill. Check out \`${task.recommendedBranch}\` there (\`git switch -c ${task.recommendedBranch}\`, or \`git switch ${task.recommendedBranch}\` if it exists) and pass that worktree path to \`submit_code\`.`
       : "",
     "",
     "## MoonlightQ MCP tools",

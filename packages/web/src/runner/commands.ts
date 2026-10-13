@@ -33,6 +33,11 @@ export interface CommandContext {
   commands?: readonly string[];
   /** Model id as typed on the runner; blank means the tool's own default (no model flag). */
   model: string | null;
+  /**
+   * Start the job in a new worktree the tool manages itself, for tools that have the option
+   * (codex `--worktree`). Set for a coding job that has no task worktree yet; other tools ignore it.
+   */
+  toolWorktree?: boolean;
   /** Reasoning effort; only claude, codex and opencode receive it. */
   effort: string | null;
   permissionMode: RunnerPermissionMode;
@@ -377,6 +382,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       // `--sandbox` rather than `--full-auto`, which current Codex releases no longer accept.
       cmd.push(...(ctx.permissionMode === "full" ? ["--dangerously-bypass-approvals-and-sandbox"] : codexSandboxArgs(ctx.role)));
       cmd.push("-C", ctx.cwd, "--skip-git-repo-check", ...codexMcpOverrides(ctx.mcp));
+      if (ctx.toolWorktree) cmd.push("--worktree");
       if (model) cmd.push("-m", model);
       // `-c` values are parsed as TOML, so the string must be quoted.
       if (ctx.effort) cmd.push("-c", `model_reasoning_effort="${ctx.effort}"`);

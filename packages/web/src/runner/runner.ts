@@ -495,7 +495,9 @@ export class RunnerEngine {
     try {
       mkdirSync(dir, { recursive: true });
       const jobDir = jobCwd(role, task, cwd);
-      const prompt = buildPrompt({ task, project, agent, role, claimToken, worktree: jobDir === cwd ? undefined : jobDir });
+      // Codex can create the coder's worktree itself (`--worktree`); only when the task has none yet.
+      const toolWorktree = runner.tool === "codex" && accessOf(role) === "edit" && !task.worktreePath;
+      const prompt = buildPrompt({ task, project, agent, role, claimToken, worktree: jobDir === cwd ? undefined : jobDir, toolWorktree });
       writeFileSync(promptFile, prompt);
       // Every job gets the MoonlightQ MCP server, bound to this server's database and
       // holding the job's claim (so the agent's submits carry the claim token).
@@ -512,6 +514,7 @@ export class RunnerEngine {
         commands: jobCommands(role, task, project),
         model: runner.model,
         effort: runner.effort,
+        toolWorktree,
         permissionMode: runner.permissionMode,
         extraArgs: runner.extraArgs,
       });

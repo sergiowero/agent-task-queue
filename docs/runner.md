@@ -72,6 +72,26 @@ runs and writes stays out of the main checkout; the runner only does so when tha
 exists and lies inside the project's working directory (the path is the coder's word), and
 the prompt says where the job is.
 
+### Worktrees and tools without a worktree flag
+
+MoonlightQ never relies on a tool's own worktree option (Claude Code's `--worktree`/`-w`).
+The coder creates the task's worktree itself with plain `git worktree add`
+(`{project}/.moonlightq/worktrees/{task.id}`, see the `moonlightq-code` skill), so every
+tool works the same way. `codex`, `opencode` and `gemini` have no such flag (OpenCode's
+`opencode run` has none as of v2.0.22), and none is needed.
+
+For OpenCode this means:
+
+- The job starts in the project's working directory (`--dir <cwd>`); the worktree lies
+  inside it, so the file tools reach it without an external-directory prompt, and `--auto`
+  approves what is not explicitly denied. The agent has to `cd` into the worktree in its
+  shell commands (each command starts in `--dir`) and use absolute worktree paths when
+  editing.
+- Review and verification jobs start directly in the worktree (`--dir <worktree>`).
+- This has not been run end to end with OpenCode on a real coding task. If a coder job
+  edits the main checkout instead of the worktree, or fails to create it, check the job log
+  and run that role with Claude Code or Codex.
+
 ### The MoonlightQ MCP server in every job
 
 Before starting the tool, the runner writes `<jobId>.mcp.json`:
