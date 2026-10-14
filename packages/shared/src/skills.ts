@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { claudeHome, codexHome, opencodeHome, type ToolEnv } from "./tool-paths.js";
+import { claudeHome, codexHome, copilotHome, opencodeHome, type ToolEnv } from "./tool-paths.js";
 
 /** The repo's `skills/` folder: the source of truth for every MoonlightQ skill. */
 export const SKILLS_DIR = resolve(import.meta.dir, "../../../skills");
@@ -18,14 +18,15 @@ export const MIN_COMPATIBLE_SKILLS_VERSION = "7.0.0";
 /**
  * Where each coding tool looks for skills (resolved at call time, so HOME and the
  * tools' own variables apply): Claude Code under `$CLAUDE_CONFIG_DIR`, Codex under
- * `$CODEX_HOME`, OpenCode under `$XDG_CONFIG_HOME`: the folders the MCP
- * registration goes to.
+ * `$CODEX_HOME`, OpenCode under `$XDG_CONFIG_HOME`, Copilot CLI under `$COPILOT_HOME`:
+ * the folders the MCP registration goes to.
  */
 export function toolSkillDirs(env: ToolEnv = process.env, home: string = homedir()): Record<string, string> {
   return {
     claude: join(claudeHome(env, home), "skills"),
     opencode: join(opencodeHome(env, home), "skills"),
     codex: join(codexHome(env, home), "skills"),
+    copilot: join(copilotHome(env, home), "skills"),
     kimi: join(home, ".kimi-code/skills"),
     junie: join(home, ".junie/skills"),
   };

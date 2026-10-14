@@ -15,6 +15,8 @@ import {
   claudeMoonlightqTools,
   claudeSafeProfile,
   codexSandboxArgs,
+  copilotCommandRules,
+  copilotSafeArgs,
   exactBashRules,
   programBashRules,
   type CommandContext,
@@ -336,6 +338,76 @@ describe("codex in safe mode", () => {
     expect(built.cmd.slice(0, 4)).toEqual(["codex", "exec", "--sandbox", "workspace-write"]);
     expect(built.cmd[built.cmd.indexOf("-C") + 1]).toBe("/repo/.moonlightq/worktrees/t1");
     expect(built.cmd.slice(-2)).toEqual(["--json", "PROMPT"]);
+  });
+});
+
+describe("copilot in safe mode", () => {
+  const allowed = (role: string, commands: string[] = COMMANDS) =>
+    copilotSafeArgs(role, commands).filter((a) => a.startsWith("--allow-tool=")).map((a) => a.slice("--allow-tool=".length));
+  const denied = (role: string, commands: string[] = COMMANDS) =>
+    copilotSafeArgs(role, commands).filter((a) => a.startsWith("--deny-tool=")).map((a) => a.slice("--deny-tool=".length));
+  const shell = (rules: string[]) => rules.filter((r) => r.startsWith("shell("));
+
+  it("allows each role its own phase's MoonlightQ tools and no other", () => {
+    for (const role of ROLES) {
+      const mcpRules = allowed(role).filter((r) => r.startsWith("moonlightq("));
+      expect(mcpRules).toEqual(ROLE_MCP_TOOLS[role].map((t) => `moonlightq(${t})`));
+    }
+  });
+
+  it("only the coder may write files; every other role has write denied", () => {
+    for (const role of ROLES) {
+      if (role === "code") {
+        expect(allowed(role)).toContain("write");
+        expect(denied(role)).not.toContain("write");
+      } else {
+        expect(allowed(role)).not.toContain("write");
+        expect(denied(role)).toContain("write");
+      }
+    }
+  });
+
+  it("read roles get the read-only shell and none of the project's commands", () => {
+    for (const role of READ_ROLES) {
+      expect(shell(allowed(role))).toEqual(bashRules(claudeSafeProfile(role).allowed).map((r) => r.replace(/^Bash/, "shell")));
+      expect(shell(allowed(role))).not.toContain("shell(pytest)");
+    }
+  });
+
+  it("run roles re-run the project's commands by program, never a shell or rm", () => {
+    for (const role of RUN_ROLES) {
+      expect(shell(allowed(role))).toEqual(expect.arrayContaining(["shell(git log:*)", "shell(bun)", "shell(pytest)", "shell(make)"]));
+      expect(shell(allowed(role))).not.toContain("shell(git:*)");
+    }
+    expect(copilotCommandRules(["git diff --check", "gh pr view", "CI=1 go test ./...", "rm -rf dist", "bash x.sh", "../evil", "git --no-pager log"])).toEqual([
+      "shell(git diff)",
+      "shell(gh pr)",
+      "shell(go)",
+    ]);
+  });
+
+  it("the pull-request role runs git and gh but never commits or merges", () => {
+    expect(shell(allowed("pr"))).toEqual(expect.arrayContaining(["shell(git:*)", "shell(gh:*)"]));
+    expect(denied("pr")).toEqual(expect.arrayContaining(["write", "shell(git commit:*)", "shell(git merge:*)", "shell(gh pr merge:*)"]));
+  });
+
+  it("the coder keeps the coder's shell plus the programs of the project's commands", () => {
+    expect(shell(allowed("code"))).toEqual(expect.arrayContaining(["shell(git:*)", "shell(bun:*)", "shell(pytest:*)", "shell(make:*)"]));
+    expect(denied("code")).toEqual([]);
+  });
+
+  it("the command line carries the rules as one flag each; full mode allows everything", () => {
+    const built = buildCommand("copilot", { ...ctx, role: "review", commands: ["bun test"] });
+    expect(built.cmd.slice(0, 3)).toEqual(["copilot", "-p", "PROMPT"]);
+    expect(built.cmd).toContain("--allow-tool=moonlightq(submit_review)");
+    expect(built.cmd).toContain("--allow-tool=shell(bun)");
+    expect(built.cmd).toContain("--deny-tool=write");
+    expect(built.cmd).not.toContain("--allow-all");
+    for (const role of ROLES) {
+      const full = buildCommand("copilot", { ...ctx, role, permissionMode: "full" }).cmd;
+      expect(full).toContain("--allow-all");
+      expect(full.some((a) => a.startsWith("--allow-tool") || a.startsWith("--deny-tool"))).toBe(false);
+    }
   });
 });
 

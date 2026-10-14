@@ -291,7 +291,7 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
-export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "custom";
+export type RunnerTool = "claude" | "codex" | "opencode" | "gemini" | "copilot" | "custom";
 export type RunnerPermissionMode = "safe" | "full";
 export type RunnerJobStatus = "running" | "succeeded" | "failed" | "reverted" | "blocked";
 

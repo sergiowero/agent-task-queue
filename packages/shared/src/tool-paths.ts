@@ -20,6 +20,11 @@ export function codexHome(env: ToolEnv = process.env, home: string = homedir()):
   return env.CODEX_HOME || join(home, ".codex");
 }
 
+/** GitHub Copilot CLI's config folder: `$COPILOT_HOME`, else `~/.copilot`. */
+export function copilotHome(env: ToolEnv = process.env, home: string = homedir()): string {
+  return env.COPILOT_HOME || join(home, ".copilot");
+}
+
 /** The XDG config folder: `$XDG_CONFIG_HOME`, else `~/.config`. */
 export function xdgConfigHome(env: ToolEnv = process.env, home: string = homedir()): string {
   return env.XDG_CONFIG_HOME || join(home, ".config");

@@ -48,7 +48,7 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 | **Autonomy you choose** | Four levels per project, from every gate human (L0) to AI-reviewed plans and code with optional auto-merge of green, low-risk PRs (L3). The default, L2, asks you only for risky plans and code, escalations and the merge. Nobody checks their own work. |
 | **Works with the agents you already use** | Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot (CLI and VS Code), or any MCP client. |
 | **One-command setup** | `bun run install:all` registers the MCP server and the workflow skills with every coding tool it finds, on macOS, Linux and Windows. |
-| **Hands-free runners** | The server claims tasks and launches `claude`, `codex`, `opencode` or `gemini` headless in the right repo. No manual prompting. |
+| **Hands-free runners** | The server claims tasks and launches `claude`, `codex`, `opencode`, `gemini` or `copilot` headless in the right repo. No manual prompting. |
 | **Composable roles** | One role per phase (refine, plan, plan_review, code, verify, review, pr); give an agent or runner any mix of them. Mix models per role. |
 | **Context handoff** | Every submission carries notes for the next agent: decisions taken, gotchas, what to check next. No more cold starts. |
 | **Isolated git worktrees** | One worktree and feature branch per task, so parallel agents never step on each other. |
@@ -65,7 +65,7 @@ flowchart LR
     you([You]) -->|write tasks, decide what needs you| ui["Web dashboard<br/>React · SSE"]
     ui <--> server["Web server<br/>Bun · REST · runners"]
     server <--> db[("SQLite<br/>~/.moonlightq/moonlightq.db")]
-    server -->|launches headless| agents["Coding agents<br/>claude · codex · opencode · gemini"]
+    server -->|launches headless| agents["Coding agents<br/>claude · codex · opencode · gemini · copilot"]
     ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|moonlightq-claim skill| mcp
     agents <-->|claim_task · submit_*| mcp["MoonlightQ MCP server<br/>stdio"]
     mcp <--> db
@@ -119,7 +119,7 @@ The API has no login, so it only serves you: the server listens on `127.0.0.1`, 
 1. **Projects → New project.** Give it a name and the absolute path of a local git repository. MoonlightQ reads the repository's test, lint and build commands for its verifier and opens the **Commands** tab to check them (if it finds none, add them there).
 2. **Board → New task.** Describe what you want, add acceptance criteria, and choose whether it needs a plan first.
 3. **Put agents on it.** Pick one of the two modes:
-   - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`), keep the default roles (all but verify), mode `safe`, and start it. It claims the task within seconds. The default level, **L2**, never lets an agent critique or review its own work, so start a second runner the same way to take those steps (the Runners page warns when none may). With only one, the critique and the review wait 20 minutes and then come to you.
+   - **Hands-free:** open **Runners → New runner**, choose tool `claude` (or `codex`, `opencode`, `gemini`, `copilot`), keep the default roles (all but verify), mode `safe`, and start it. It claims the task within seconds. The default level, **L2**, never lets an agent critique or review its own work, so start a second runner the same way to take those steps (the Runners page warns when none may). With only one, the critique and the review wait 20 minutes and then come to you.
    - **Interactive:** open your coding tool in any folder and say:
      > Work the MoonlightQ.
 
@@ -144,12 +144,12 @@ Both go through the same MCP server, the same SQLite database and the same workf
 | Codex | ✅ | ✅ | ✅ `codex` |
 | OpenCode | ✅ | ✅ | ✅ `opencode` |
 | Gemini CLI | ✅ | | ✅ `gemini` |
-| GitHub Copilot CLI | ✅ | | via `custom` |
+| GitHub Copilot CLI | ✅ | ✅ | ✅ `copilot` |
 | GitHub Copilot in VS Code | ✅ | | |
 | Kimi Code, Junie | manual (`bun run mcp`) | ✅ | via `custom` |
 | Any other MCP client | manual (`bun run mcp`) | | via `custom` |
 
-Both installers only touch tools that are on the machine, and use the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` move them). Gemini CLI and Copilot read the skills through the `get_skill` MCP tool instead of a skills folder. Details in [docs/mcp.md](docs/mcp.md#setup).
+Both installers only touch tools that are on the machine, and use the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` and `XDG_CONFIG_HOME` move them). Gemini CLI and Copilot in VS Code read the skills through the `get_skill` MCP tool instead of a skills folder. Details in [docs/mcp.md](docs/mcp.md#setup).
 
 ## The workflow
 
@@ -298,7 +298,7 @@ A runner is a worker inside the web server with a **tool**, one or more **roles*
 
 - **Model and effort**: type any model id the tool accepts, or leave it empty to use the tool's default; pick an effort level for tools that have one.
 - **Live logs**: follow every job's output from the Runners page.
-- **`safe` mode** (default): each role gets only what it needs. Only the coder edits files; planners and critics only read (Codex: read-only sandbox), reviews and verifications also re-run the project's own commands in the task's worktree (any language: the commands come from **Projects → Edit → Commands**), and the `pr` role runs `git` and `gh` but never commits or merges. Every role gets only the MCP tools of its phase. Claude Code and Codex enforce this; OpenCode, Gemini and custom runners have no per-role limits (see [docs/runner.md](docs/runner.md#permission-modes)).
+- **`safe` mode** (default): each role gets only what it needs. Only the coder edits files; planners and critics only read (Codex: read-only sandbox), reviews and verifications also re-run the project's own commands in the task's worktree (any language: the commands come from **Projects → Edit → Commands**), and the `pr` role runs `git` and `gh` but never commits or merges. Every role gets only the MCP tools of its phase. Claude Code, Codex and Copilot CLI enforce this; OpenCode, Gemini and custom runners have no per-role limits (see [docs/runner.md](docs/runner.md#permission-modes)).
 - **`full` mode**: no permission prompts, no sandbox and no per-role limits. Use only on repositories you trust the agent with unattended.
 - **Crash recovery without heartbeats**: the runner is the parent process. If the tool exits without submitting, the task goes back to the queue with a system note containing the last 30 lines of output, and the runner backs off (30 s, doubling up to 30 min) before retrying it.
 - **Bring your own agent**: the `custom` tool runs any argv you give it, with the prompt as the last argument and in `$MOONLIGHTQ_PROMPT`. Custom runners (and `extraArgs` on any tool) run whatever command they are given, so the server accepts them only when started with `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1`.

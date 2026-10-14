@@ -186,7 +186,7 @@ A coding agent that claims and works on tasks. Contains:
 ### Runner
 A worker inside the web server that claims tasks and launches a coding tool headless (see [runner.md](runner.md)). Contains:
 - **Identity**: UUID, name
-- **Tool**: `claude`, `codex`, `opencode`, `gemini` or `custom`, with a model, an effort level and extra arguments (a custom argv only with `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1`)
+- **Tool**: `claude`, `codex`, `opencode`, `gemini`, `copilot` or `custom`, with a model, an effort level and extra arguments (a custom argv only with `MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1`)
 - **Scope**: one or more roles, and optionally one project
 - **Execution**: concurrency, poll interval, permission mode (`safe` or `full`) and whether it is enabled
 

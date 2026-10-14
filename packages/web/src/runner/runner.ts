@@ -795,7 +795,7 @@ export interface ToolInfo {
 }
 
 export async function listTools(): Promise<ToolInfo[]> {
-  const tools: RunnerTool[] = ["claude", "codex", "opencode", "gemini", "custom"];
+  const tools: RunnerTool[] = ["claude", "codex", "opencode", "gemini", "copilot", "custom"];
   return Promise.all(
     tools.map(async (tool) => {
       const bin = toolBinary(tool);

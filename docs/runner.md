@@ -29,7 +29,7 @@ REST:
 | `POST` | `/api/runners/:id/stop` | Stop (SIGTERM, SIGKILL after 10 s), release its tasks, persist `enabled = false` |
 | `GET` | `/api/runners/:id/jobs` | Job history (newest first, last 50) |
 | `GET` | `/api/runners/:id/jobs/:jobId/log?tail=200` | Log tail as `text/plain` |
-| `GET` | `/api/runners/tools` | `[{ tool, installed, version }]` for claude, codex, opencode, gemini, custom |
+| `GET` | `/api/runners/tools` | `[{ tool, installed, version }]` for claude, codex, opencode, gemini, copilot, custom |
 
 Runners persisted as `enabled` are started when the server boots; `SIGINT`/`SIGTERM`
 stops them and releases their tasks before the server exits.
@@ -59,6 +59,7 @@ config to `<jobId>.mcp.json` next to it, and runs:
 | `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.moonlightq.command=… -c mcp_servers.moonlightq.args=… -c mcp_servers.moonlightq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
 | `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
 | `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
+| `copilot` | `copilot -p <prompt> --no-ask-user --no-color --additional-mcp-config @<jobId>.copilot-mcp.json` + permission flags + `[--model <m>] [--reasoning-effort <e>]` + extra args (GitHub Copilot CLI) |
 | `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$MOONLIGHTQ_PROMPT` |
 
 Every child gets `MOONLIGHTQ_TASK_ID`, `MOONLIGHTQ_ROLE`, `MOONLIGHTQ_PROMPT_FILE`,
@@ -77,7 +78,7 @@ the prompt says where the job is.
 MoonlightQ never relies on a tool's own worktree option (Claude Code's `--worktree`/`-w`).
 The coder creates the task's worktree itself with plain `git worktree add`
 (`{project}/.moonlightq/worktrees/{task.id}`, see the `moonlightq-code` skill), so every
-tool works the same way. `codex`, `opencode` and `gemini` have no such flag (OpenCode's
+tool works the same way. `codex`, `opencode`, `gemini` and `copilot` have no such flag (OpenCode's
 `opencode run` has none as of v2.0.22), and none is needed.
 
 For OpenCode this means:
@@ -111,6 +112,7 @@ MoonlightQ from a tool you open yourself):
 | `codex` | `-c mcp_servers.moonlightq.command=…`, `…args=…` and `…env={ "MOONLIGHTQ_DB_PATH" = … }` overrides (TOML values). |
 | `opencode` | `OPENCODE_CONFIG_CONTENT` (inline config, highest precedence) with an `mcp.moonlightq` local server, merged into any content the variable already holds. |
 | `gemini` | Gemini CLI has no per-run MCP flag, so the job writes `<jobId>.gemini-settings.json`: a copy of the system settings file (`$GEMINI_CLI_SYSTEM_SETTINGS_PATH`, else `/etc/gemini-cli/settings.json`, `/Library/Application Support/GeminiCli/settings.json` or `C:\ProgramData\gemini-cli\settings.json`) with `mcpServers.moonlightq` added, and points `GEMINI_CLI_SYSTEM_SETTINGS_PATH` at it. Admin settings are kept. If the system settings file exists but is not valid JSON, the job fails before the tool starts, the task is released and the error names the file to fix. |
+| `copilot` | `--additional-mcp-config @<jobId>.copilot-mcp.json`: the server in Copilot CLI's own format (`type: "local"`), added to `~/.copilot/mcp-config.json` for this run. In safe mode its `tools` list holds only the role's MoonlightQ tools (Copilot runs some MCP tools without asking, so an allow rule alone would not limit them); in full mode `["*"]`. |
 | `custom` | Your argv decides. Read `$MOONLIGHTQ_MCP_CONFIG` (the `mcpServers` document above, usable as-is with `claude --mcp-config`), or start `bun run packages/mcp/src/index.ts` with `MOONLIGHTQ_DB_PATH=$MOONLIGHTQ_DB_PATH`. A custom tool that never submits has its task released when it exits. |
 
 The job log starts with the path of the MCP config the job received.
@@ -118,7 +120,7 @@ The job log starts with the path of the MCP config the job received.
 ### Model & effort
 
 The model is a free-text field: whatever you type is passed to the tool as-is
-(`--model` for `claude`, `-m` for `codex`, `opencode` and `gemini`). Leave it empty and
+(`--model` for `claude` and `copilot`, `-m` for `codex`, `opencode` and `gemini`). Leave it empty and
 no model flag is passed at all, so the tool uses its own default (its config file or
 built-in choice). MoonlightQ does not list or validate models.
 
@@ -130,6 +132,7 @@ nullable) and only handed to tools that understand it:
 | `claude` | `low, medium, high, xhigh, max` | `--effort <e>` |
 | `codex` | `low, medium, high, xhigh, max` | `-c model_reasoning_effort="<e>"` |
 | `opencode` | `minimal, low, medium, high, max` | `--variant <e>` |
+| `copilot` | `minimal, low, medium, high, xhigh, max` | `--reasoning-effort <e>` |
 | `gemini`, `custom` | none (ignored) | |
 
 Empty means the tool's default effort.
@@ -156,6 +159,19 @@ Empty means the tool's default effort.
   MCP servers run outside its sandbox, so the MoonlightQ server can write the database in
   every role. A role this file does not know gets the read-only profile.
 
+  **GitHub Copilot CLI** gets the same profile as Claude Code, as `--allow-tool=<rule>` and
+  `--deny-tool=<rule>` flags: `moonlightq(<tool>)` for the phase's MoonlightQ tools,
+  `shell(...)` for each shell rule (`Bash(git log:*)` becomes `shell(git log:*)`), and
+  `write` (Copilot's file-editing tools) allowed for the coder, denied for every other role.
+  A `-p` run has nobody to approve a tool, so anything without an allow rule is refused, and
+  a deny rule wins over any allow rule. Reading files inside the job's directory needs no
+  rule. One difference: Copilot matches a shell rule on the command's **name**, never its
+  arguments (`git` and `gh` on their first subcommand), so `shell(pytest -q)` would match
+  nothing. A review or verification therefore gets one rule per program of the project's
+  commands (`shell(pytest)`, `shell(make)`, `shell(git diff)`), which lets it run that program
+  with any arguments; shells, `rm` and the like still get none. If that is too wide for a
+  project, run its `review` and `verify` roles with Claude Code.
+
   **What a review or verification may run.** The project's commands (**Projects → Edit →
   Commands**), the approved plan's `regressionCommands` and the commands of its items and
   criteria: the same ones, under the same trust rule, as the built-in verifier (a plan
@@ -173,8 +189,8 @@ Empty means the tool's default effort.
   The server also reads the worktree itself on `submit_code` and `submit_verification`.
   **`opencode`, `gemini` and `custom` runners have no per-role limits**: they run with
   their usual automatic-approval flag whatever the role, and what a role must not do is
-  only in the prompt. Use Claude Code or Codex for the roles that must not edit (`plan`,
-  `plan_review`, `review`, `verify`).
+  only in the prompt. Use Claude Code, Codex or Copilot CLI for the roles that must not
+  edit (`plan`, `plan_review`, `review`, `verify`).
 
   Codex's `workspace-write` sandbox has no network unless
   `sandbox_workspace_write.network_access` is on, which the runner turns on for the
@@ -183,7 +199,8 @@ Empty means the tool's default effort.
   sandbox, give the runner that has the `pr` role mode `full`. The runner passes
   `--sandbox` instead of `--full-auto`, which current Codex releases no longer accept.
 - **full** — no prompts, no sandbox, no per-role limits: Claude gets
-  `--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`.
+  `--dangerously-skip-permissions`, Codex `--dangerously-bypass-approvals-and-sandbox`,
+  Copilot `--allow-all` (all tools, paths and URLs) and every MoonlightQ tool.
   Use only for repositories you trust the agent to operate in unattended.
 
 ### The prompt

@@ -51,11 +51,13 @@ describe("skills bundle", () => {
       claude: join("/h", ".claude", "skills"),
       opencode: join("/h", ".config", "opencode", "skills"),
       codex: join("/h", ".codex", "skills"),
+      copilot: join("/h", ".copilot", "skills"),
       kimi: join("/h", ".kimi-code", "skills"),
       junie: join("/h", ".junie", "skills"),
     });
-    expect(toolSkillDirs({ CODEX_HOME: "/x", CLAUDE_CONFIG_DIR: "/c", XDG_CONFIG_HOME: "/g" }, "/h")).toMatchObject({
+    expect(toolSkillDirs({ CODEX_HOME: "/x", CLAUDE_CONFIG_DIR: "/c", XDG_CONFIG_HOME: "/g", COPILOT_HOME: "/p" }, "/h")).toMatchObject({
       claude: join("/c", "skills"),
+      copilot: join("/p", "skills"),
       codex: join("/x", "skills"),
       opencode: join("/g", "opencode", "skills"),
       kimi: join("/h", ".kimi-code", "skills"),

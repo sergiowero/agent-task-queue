@@ -39,9 +39,10 @@ A tool counts as installed when its binary is on `PATH` (`copilot` for the Copil
 | Claude Code | `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`)                 | yes                       |
 | Codex       | `~/.codex/skills` (or `$CODEX_HOME/skills`)                         | yes                       |
 | OpenCode    | `~/.config/opencode/skills` (or `$XDG_CONFIG_HOME/opencode/skills`) | yes                       |
+| Copilot CLI | `~/.copilot/skills` (or `$COPILOT_HOME/skills`)                     | yes                       |
 | Kimi Code   | `~/.kimi-code/skills`                                               | no: register `bun run mcp` by hand |
 | Junie       | `~/.junie/skills`                                                   | no: register `bun run mcp` by hand |
-| Gemini CLI, Copilot CLI, Copilot in VS Code | none: they read the skills with the `get_skill` tool | yes |
+| Gemini CLI, Copilot in VS Code | none: they read the skills with the `get_skill` tool | yes |
 
 A tool gets a skills folder only when it is on this machine (its binary is on `PATH`, its own folder holds something it wrote, or a skills folder from an earlier install exists, which keeps being refreshed), so the installer never creates folders for tools you do not have. Each `moonlightq-*` skill folder is replaced as a whole, so a file a skill dropped does not linger, and `moonlightq-*` folders the repo no longer ships are removed; other skills are left alone. `/api/meta` and the portal banner read the installed versions from these same folders.
 

@@ -38,7 +38,7 @@ export interface CommandContext {
    * (codex `--worktree`). Set for a coding job that has no task worktree yet; other tools ignore it.
    */
   toolWorktree?: boolean;
-  /** Reasoning effort; only claude, codex and opencode receive it. */
+  /** Reasoning effort; only claude, codex, opencode and copilot receive it. */
   effort: string | null;
   permissionMode: RunnerPermissionMode;
   extraArgs: string[] | null;
@@ -130,8 +130,7 @@ export const ROLE_MCP_TOOLS: Record<Role, readonly RunnerMcpTool[]> = {
 
 /** Claude Code names MCP tools `mcp__<server>__<tool>`. */
 export function claudeMoonlightqTools(role: string): string[] {
-  const tools = Object.hasOwn(ROLE_MCP_TOOLS, role) ? ROLE_MCP_TOOLS[role as Role] : COMMON_MCP_TOOLS;
-  return tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`);
+  return moonlightqTools(role).map((tool) => `mcp__${MCP_SERVER_NAME}__${tool}`);
 }
 
 /** What a job that must not change anything may run: look at the repository. */
@@ -278,6 +277,81 @@ export function codexSandboxArgs(role: string): string[] {
   return ["--sandbox", "workspace-write", ...(network ? ["-c", "sandbox_workspace_write.network_access=true"] : [])];
 }
 
+/** The MoonlightQ tools a job of `role` may call, under their own names. */
+function moonlightqTools(role: string): readonly RunnerMcpTool[] {
+  return Object.hasOwn(ROLE_MCP_TOOLS, role) ? ROLE_MCP_TOOLS[role as Role] : COMMON_MCP_TOOLS;
+}
+
+/**
+ * A Claude Code `Bash(...)` rule as a Copilot CLI `shell(...)` rule: the same command, and
+ * `:*` still matches it with any arguments. Copilot splits a rule list on commas, so a
+ * command with one gets no rule.
+ */
+function copilotShellRule(rule: string): string | null {
+  const command = rule.match(/^Bash\((.*)\)$/)?.[1];
+  return command && !command.includes(",") ? `shell(${command})` : null;
+}
+
+/** Programs Copilot CLI tells apart by their first subcommand (`git push`, `gh pr`). */
+const SUBCOMMAND_PROGRAMS = new Set(["git", "gh"]);
+
+/**
+ * Copilot CLI matches a shell rule on the command's name, never its arguments (`git` and
+ * `gh` on their first subcommand), so `shell(pytest -q)` matches nothing. A review or
+ * verification gets one rule per program of the project's commands instead, so it can
+ * re-run them, with any arguments; shells, `rm` and the like get none.
+ */
+export function copilotCommandRules(commands: readonly string[]): string[] {
+  const rules = new Set<string>();
+  for (const line of commands) {
+    for (const command of simpleCommands(line)) {
+      const words = command.split(" ");
+      while (/^[A-Za-z_]\w*=/.test(words[0] ?? "")) words.shift();
+      const program = words[0];
+      if (!program || !/^[\w.+-]+(?:\/[\w.+-]+)*$/.test(program) || program.includes("..")) continue;
+      if (NEVER_WIDENED.has(program)) continue;
+      const sub = words[1];
+      if (!SUBCOMMAND_PROGRAMS.has(program)) rules.add(`shell(${program})`);
+      else if (sub && /^[\w-]+$/.test(sub) && !sub.startsWith("-")) rules.add(`shell(${program} ${sub})`);
+    }
+  }
+  return [...rules];
+}
+
+/**
+ * The permission flags of a safe-mode Copilot CLI job of `role`, the same profile as Claude
+ * Code's: the role's MoonlightQ tools (`moonlightq(<tool>)`; the job's MCP config exposes
+ * no others, see copilotMcpConfig), its shell rules, and `write` only for the coder. A
+ * command with no allow rule is refused, since nobody can approve it in a `-p` run; deny
+ * rules win over any allow rule.
+ */
+export function copilotSafeArgs(role: string, commands: readonly string[] = []): string[] {
+  const access = accessOf(role);
+  const profile = claudeSafeProfile(role);
+  const allowed = [
+    ...moonlightqTools(role).map((tool) => `${MCP_SERVER_NAME}(${tool})`),
+    ...profile.allowed.map(copilotShellRule),
+    ...(access === "edit" ? programBashRules(commands).map(copilotShellRule) : []),
+    ...(access === "run" ? copilotCommandRules(commands) : []),
+    ...(access === "edit" ? ["write"] : []),
+  ];
+  const denied = [...(access === "edit" ? [] : ["write"]), ...profile.denied.map(copilotShellRule)];
+  const flags = (flag: string, rules: (string | null)[]) =>
+    [...new Set(rules.filter((r): r is string => !!r))].map((r) => `${flag}=${r}`);
+  return [...flags("--allow-tool", allowed), ...flags("--deny-tool", denied)];
+}
+
+/**
+ * The job's `--additional-mcp-config` file: the MoonlightQ server in the Copilot CLI's own
+ * format (`~/.copilot/mcp-config.json`). Copilot runs some MCP tools without asking, so in
+ * safe mode `tools` exposes only the role's own; full mode exposes them all.
+ */
+export function copilotMcpConfig(mcp: McpServerLaunch, role: string, permissionMode: RunnerPermissionMode): string {
+  const tools = permissionMode === "full" ? ["*"] : [...moonlightqTools(role)];
+  const server = { type: "local", command: mcp.command, args: mcp.args, env: mcp.env, tools };
+  return JSON.stringify({ mcpServers: { [MCP_SERVER_NAME]: server } }, null, 2);
+}
+
 /** A TOML basic string or array of them (JSON's escapes are valid TOML). */
 function toml(value: string | string[]): string {
   return Array.isArray(value) ? `[${value.map((v) => JSON.stringify(v)).join(", ")}]` : JSON.stringify(value);
@@ -409,6 +483,21 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
         files: [{ path: settingsFile, content: geminiSettings(ctx.mcp) }],
       };
     }
+    case "copilot": {
+      // `--no-ask-user`: nobody answers a question in a `-p` run, so the agent works it out.
+      const mcpFile = ctx.mcpConfigFile.replace(/(\.mcp)?\.json$/, ".copilot-mcp.json");
+      const cmd = ["copilot", "-p", ctx.prompt, "--no-ask-user", "--no-color", "--additional-mcp-config", `@${mcpFile}`];
+      cmd.push(...(ctx.permissionMode === "full" ? ["--allow-all"] : copilotSafeArgs(ctx.role, ctx.commands)));
+      if (model) cmd.push("--model", model);
+      if (ctx.effort) cmd.push("--reasoning-effort", ctx.effort);
+      cmd.push(...extra);
+      return {
+        cmd,
+        cwd: ctx.cwd,
+        env: childEnv(ctx),
+        files: [{ path: mcpFile, content: copilotMcpConfig(ctx.mcp, ctx.role, ctx.permissionMode) }],
+      };
+    }
     case "custom": {
       if (extra.length === 0) {
         throw new Error("custom runners need extraArgs (the full argv to execute)");
@@ -434,6 +523,7 @@ export function toolBinary(tool: RunnerTool): string | null {
     case "codex":
     case "opencode":
     case "gemini":
+    case "copilot":
       return tool;
     case "custom":
       return null;

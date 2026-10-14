@@ -127,7 +127,7 @@ describe("GET /api/runners/tools", () => {
     const res = await api("/api/runners/tools");
     expect(res.status).toBe(200);
     const tools = (await res.json()) as { tool: string; installed: boolean; version: string | null }[];
-    expect(tools.map((t) => t.tool).sort()).toEqual(["claude", "codex", "custom", "gemini", "opencode"]);
+    expect(tools.map((t) => t.tool).sort()).toEqual(["claude", "codex", "copilot", "custom", "gemini", "opencode"]);
     const custom = tools.find((t) => t.tool === "custom")!;
     expect(custom.installed).toBe(true);
     expect(custom.version).toBeNull();

@@ -419,7 +419,7 @@ export const updateProjectSchema = z.object({
   profile: projectProfileSchema.optional(),
 });
 
-export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "custom"]);
+export const runnerToolSchema = z.enum(["claude", "codex", "opencode", "gemini", "copilot", "custom"]);
 /** One or more roles; stored without duplicates, in catalog order. */
 export const runnerRolesSchema = z.array(z.enum(ROLES)).min(1).transform(normalizeRoles);
 

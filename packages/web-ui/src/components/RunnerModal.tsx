@@ -41,6 +41,7 @@ const TOOL_EFFORTS: Record<RunnerTool, string[] | null> = {
   codex: ["low", "medium", "high", "xhigh", "max"],
   opencode: ["minimal", "low", "medium", "high", "max"],
   gemini: null,
+  copilot: ["minimal", "low", "medium", "high", "xhigh", "max"],
   custom: null,
 };
 
@@ -151,8 +152,8 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
   });
 
   const isCustomTool = effectiveTool === "custom";
-  // Only Claude Code and Codex are started with per-role limits (see docs/runner.md).
-  const limitsPerRole = effectiveTool === "claude" || effectiveTool === "codex";
+  // Only Claude Code, Codex and Copilot CLI are started with per-role limits (see docs/runner.md).
+  const limitsPerRole = effectiveTool === "claude" || effectiveTool === "codex" || effectiveTool === "copilot";
   const customNeedsArgs = isCustomTool && !parseExtraArgs(extraArgs);
   const canSave =
     !!name.trim() && !!effectiveTool && roles.length > 0 && !customNeedsArgs && !mutation.isPending;
@@ -323,7 +324,7 @@ export function RunnerModal({ runner, projects, onClose }: RunnerModalProps) {
               ? "Full skips every permission prompt and sandbox: the tool can run any command in the project directory."
               : limitsPerRole || !effectiveTool
                 ? "Safe limits each role: only the coder edits files, reviews and verifications re-run the project's commands, planners and critics only read."
-                : "This tool has no per-role limits: what plan, review and verify jobs must not do (edit files) is only in the prompt. Prefer Claude Code or Codex for those roles."
+                : "This tool has no per-role limits: what plan, review and verify jobs must not do (edit files) is only in the prompt. Prefer Claude Code, Codex or Copilot CLI for those roles."
           }
         >
           <SegmentedControl

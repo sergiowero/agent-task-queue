@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "path";
 import type { McpServerLaunch } from "@moonlightq/mcp";
 import { MCP_SERVER_NAME } from "@moonlightq/mcp";
-import { claudeHome, codexHome, opencodeHome, xdgConfigHome } from "@moonlightq/shared/tool-paths";
+import { claudeHome, codexHome, copilotHome, opencodeHome, xdgConfigHome } from "@moonlightq/shared/tool-paths";
 
 /**
  * Registers the MoonlightQ MCP server in the user-level config of every installed
@@ -168,7 +168,7 @@ function opencodeDir(e: SetupEnv): string {
 }
 
 function copilotDir(e: SetupEnv): string {
-  return e.env.COPILOT_HOME || join(e.homeDir, ".copilot");
+  return copilotHome(e.env, e.homeDir);
 }
 
 /** VS Code's user profile folder, where its user-level mcp.json lives. */

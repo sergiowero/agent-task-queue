@@ -115,6 +115,7 @@ describe("identities for separation of duties", () => {
   it("spells each tool one way", () => {
     expect(["claude", "Claude Code", "claude-code", " CLAUDE_CODE "].map(toolKey)).toEqual(Array(4).fill("claude"));
     expect(["gemini-cli", "codex-cli", "opencode", "Kimi"].map(toolKey)).toEqual(["gemini", "codex", "opencode", "kimi"]);
+    expect(["copilot", "copilot-cli", "GitHub Copilot CLI"].map(toolKey)).toEqual(Array(3).fill("copilot"));
     expect(toolKey("")).toBe("unknown");
   });
 

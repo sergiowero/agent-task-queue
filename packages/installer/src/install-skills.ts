@@ -2,26 +2,27 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { SKILLS_DIR, SKILL_PREFIX, listSkills, toolSkillDirs } from "@moonlightq/shared/skills";
-import { claudeHome, codexHome, opencodeHome, type ToolEnv } from "@moonlightq/shared/tool-paths";
+import { claudeHome, codexHome, copilotHome, opencodeHome, type ToolEnv } from "@moonlightq/shared/tool-paths";
 import { hasToolData } from "./mcp-setup.js";
 
 /**
  * The tools that load skills from a folder of their own, keyed like `toolSkillDirs`:
  * the binary that says the tool is installed, and the folder it keeps its own data in.
- * Gemini CLI and Copilot have no skills folder here (they read the skills with the
- * `get_skill` MCP tool); Kimi Code and Junie have no MCP registration (see README).
+ * Gemini CLI and Copilot in VS Code have no skills folder here (they read the skills with
+ * the `get_skill` MCP tool); Kimi Code and Junie have no MCP registration (see README).
  */
 export const SKILL_TOOLS: Record<string, { binary: string; home(env: ToolEnv, home: string): string }> = {
   claude: { binary: "claude", home: claudeHome },
   opencode: { binary: "opencode", home: opencodeHome },
   codex: { binary: "codex", home: codexHome },
+  copilot: { binary: "copilot", home: copilotHome },
   kimi: { binary: "kimi", home: (_env, home) => join(home, ".kimi-code") },
   junie: { binary: "junie", home: (_env, home) => join(home, ".junie") },
 };
 
 export interface SkillsEnv {
   homeDir: string;
-  /** CLAUDE_CONFIG_DIR, CODEX_HOME and XDG_CONFIG_HOME move the skills folders. */
+  /** CLAUDE_CONFIG_DIR, CODEX_HOME, COPILOT_HOME and XDG_CONFIG_HOME move the skills folders. */
   env: ToolEnv;
   /** Path of a binary on PATH, or null. */
   which: (bin: string) => string | null;

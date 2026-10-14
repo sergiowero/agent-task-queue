@@ -589,6 +589,8 @@ const TOOL_ALIASES: Record<string, string> = {
   "claude-code": "claude",
   "gemini-cli": "gemini",
   "codex-cli": "codex",
+  "copilot-cli": "copilot",
+  "github-copilot-cli": "copilot",
 };
 
 /** A coding tool's name in one spelling: "Claude Code", "claude-code" and "claude" are one tool. */

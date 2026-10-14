@@ -38,6 +38,7 @@ import {
   moonlightqHome,
   buildCommand,
   claudeMoonlightqTools,
+  copilotMcpConfig,
   geminiSettings,
   opencodeConfigContent,
 } from "./commands.js";
@@ -819,6 +820,21 @@ describe("buildCommand", () => {
     });
   });
 
+  it("copilot: the server comes in through a per-job --additional-mcp-config file", () => {
+    const built = buildCommand("copilot", { ...ctx, permissionMode: "full" });
+    expect(built.cmd).toEqual([
+      "copilot", "-p", "PROMPT", "--no-ask-user", "--no-color", "--additional-mcp-config", "@/runs/t1/job.copilot-mcp.json", "--allow-all",
+    ]);
+    expect(built.cwd).toBe("/repo");
+    expect(built.files).toEqual([{ path: "/runs/t1/job.copilot-mcp.json", content: copilotMcpConfig(mcp, "code", "full") }]);
+    expect(JSON.parse(built.files![0].content)).toEqual({
+      mcpServers: { moonlightq: { type: "local", command: mcp.command, args: mcp.args, env: mcp.env, tools: ["*"] } },
+    });
+    // Safe mode exposes only the role's own MoonlightQ tools.
+    const safe = JSON.parse(buildCommand("copilot", { ...ctx, role: "review" }).files![0].content).mcpServers.moonlightq;
+    expect(safe.tools).toEqual([...ROLE_MCP_TOOLS.review]);
+  });
+
   it("opencode: the server comes in through OPENCODE_CONFIG_CONTENT, keeping existing content", () => {
     const built = buildCommand("opencode", { ...ctx, model: "anthropic/claude" });
     expect(built.cmd).toEqual(["opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "anthropic/claude", "PROMPT"]);
@@ -893,6 +909,10 @@ describe("buildCommand", () => {
       "opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "opencode/big-pickle", "--variant", "max", "PROMPT",
     ]);
 
+    const copilot = buildCommand("copilot", { ...ctx, model: "gpt-5.4", effort: "xhigh", extraArgs: ["--log-level", "debug"] });
+    expect(copilot.cmd.slice(-6)).toEqual(["--model", "gpt-5.4", "--reasoning-effort", "xhigh", "--log-level", "debug"]);
+    expect(buildCommand("copilot", ctx).cmd).not.toContain("--reasoning-effort");
+
     // gemini and custom have no effort flag: the value is ignored.
     const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
     process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `moonlightq-no-gemini-${randomUUID()}.json`);
@@ -918,6 +938,7 @@ describe("buildCommand", () => {
         for (const tool of ["codex", "opencode", "gemini"] as const) {
           expect(buildCommand(tool, { ...ctx, model }).cmd).not.toContain("-m");
         }
+        expect(buildCommand("copilot", { ...ctx, model }).cmd).not.toContain("--model");
       }
     } finally {
       if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
@@ -965,12 +986,17 @@ describe("each tool's MCP config starts a working MoonlightQ server", () => {
       }
       case "gemini":
         return JSON.parse(built.files![0].content).mcpServers.moonlightq;
+      case "copilot": {
+        const file = built.cmd[built.cmd.indexOf("--additional-mcp-config") + 1].slice(1);
+        const server = JSON.parse(built.files!.find((f) => f.path === file)!.content).mcpServers.moonlightq;
+        return { command: server.command, args: server.args, env: server.env };
+      }
       case "custom":
         return JSON.parse(readFileSync(built.env!.MOONLIGHTQ_MCP_CONFIG, "utf8")).mcpServers.moonlightq;
     }
   }
 
-  for (const tool of ["claude", "codex", "opencode", "gemini", "custom"] as const) {
+  for (const tool of ["claude", "codex", "opencode", "gemini", "copilot", "custom"] as const) {
     it(tool, async () => {
       const task = planTask(`mcp config for ${tool}`);
       const mcp = mcpServerLaunch(getDbPath());

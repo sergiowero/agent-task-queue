@@ -88,6 +88,7 @@ export const TOOL_TONE: Record<RunnerTool | string, Tone> = {
   codex: "info",
   opencode: "success",
   gemini: "warning",
+  copilot: "primary",
   custom: "neutral",
 };
 
