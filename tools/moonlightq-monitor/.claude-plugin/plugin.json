@@ -1,0 +1,29 @@
+{
+  "name": "moonlightq-monitor",
+  "version": "0.1.0",
+  "description": "Watches the local MoonlightQ server: PID, health and how many agents are working",
+  "author": {
+    "name": "Sergio Sanchez"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "port": {
+      "type": "number",
+      "title": "MoonlightQ port",
+      "description": "Port the local MoonlightQ server listens on",
+      "default": 3000
+    },
+    "intervalSeconds": {
+      "type": "number",
+      "title": "Health check interval (seconds)",
+      "description": "How often the server is checked",
+      "default": 5
+    },
+    "projectDir": {
+      "type": "string",
+      "title": "MoonlightQ checkout",
+      "description": "Folder Start runs `bun run start` in; empty uses the session's folder",
+      "default": ""
+    }
+  }
+}

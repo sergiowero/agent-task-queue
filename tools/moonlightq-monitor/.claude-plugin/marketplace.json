@@ -1,0 +1,5 @@
+{
+  "name": "moonlightq-tools",
+  "owner": { "name": "Sergio Sanchez" },
+  "plugins": [{ "name": "moonlightq-monitor", "source": "./" }]
+}
