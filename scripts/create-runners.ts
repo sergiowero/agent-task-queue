@@ -3,8 +3,7 @@
  * Creates or updates the token-optimized runner fleet over REST.
  *
  * Assumes the MoonlightQ server is already running and claude, codex, opencode and copilot
- * are installed and logged in. The Copilot runner is a `custom` runner, so the server
- * must have been started with MOONLIGHTQ_ALLOW_CUSTOM_RUNNERS=1 (otherwise it is rejected).
+ * are installed and logged in.
  *
  * Idempotent: runners are matched by name. A missing runner is created; an existing one
  * gets only the fields that differ from the definition below (nothing is sent when it
@@ -37,11 +36,6 @@ const HAIKU = env.HAIKU_MODEL ?? "claude-haiku-5-5";
 const LUNA = env.LUNA_MODEL ?? "gpt-6-luna";
 const MIMO = env.MIMO_MODEL ?? "opencode/mimo-v2.6-flash-free";
 
-// The custom runner appends the prompt as the last argv entry (it becomes $0 for sh -c)
-// and exposes it as $MOONLIGHTQ_PROMPT; the job's MCP config path is in $MOONLIGHTQ_MCP_CONFIG.
-// No --model: Copilot Free does not allow choosing one.
-const copilotCmd = 'copilot -p "$MOONLIGHTQ_PROMPT" --allow-all-tools --additional-mcp-config "@$MOONLIGHTQ_MCP_CONFIG"';
-
 type Desired = Required<Omit<CreateRunnerInput, "enabled">> & { enabled: boolean };
 
 const runners: Desired[] = [
@@ -53,8 +47,9 @@ const runners: Desired[] = [
   // ChatGPT Free: independent critic on a different vendor than the planner/coder.
   { name: "luna-critic", tool: "codex", model: LUNA, effort: "medium", roles: ["plan_review", "review"], concurrency: 1, enabled: true },
 
-  // Copilot Free: second review pool, fallback when Luna is rate-limited. Uses Copilot's default model.
-  { name: "copilot-reviewer", tool: "custom", roles: ["review"], concurrency: 1, extraArgs: ["sh", "-c", copilotCmd], enabled: true },
+  // Copilot Free: second review pool, fallback when Luna is rate-limited.
+  // No model or effort: Copilot Free does not allow choosing them, so the CLI uses its default.
+  { name: "copilot-reviewer", tool: "copilot", roles: ["review"], concurrency: 1, enabled: true },
 
   // OpenCode free model: mechanical, high-volume phases.
   { name: "mimo-worker", tool: "opencode", model: MIMO, effort: "low", roles: ["refine", "verify", "pr"], concurrency: 2, enabled: true },
