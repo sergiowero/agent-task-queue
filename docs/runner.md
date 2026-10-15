@@ -51,16 +51,18 @@ says why). Renaming, stopping or deleting one, or clearing its `extraArgs`, stay
 ## Tools and the commands they run
 
 The runner writes the prompt to `~/.moonlightq/runs/<taskId>/<jobId>.prompt.md`, the job's MCP
-config to `<jobId>.mcp.json` next to it, and runs:
+config to `<jobId>.mcp.json` next to it, and runs the commands below. The built-in tools read the prompt from
+stdin: on Windows a command line longer than 32,767 characters does not start (`ENAMETOOLONG`), and
+prompts with a plan and review history pass that.
 
 | Tool | Command |
 |------|---------|
-| `claude` | `claude -p <prompt> --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
-| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.moonlightq.command=… -c mcp_servers.moonlightq.args=… -c mcp_servers.moonlightq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> <prompt>` (sandbox flags: see [Permission modes](#permission-modes)) |
-| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args> <prompt>` with `OPENCODE_CONFIG_CONTENT` set |
-| `gemini` | `gemini -p <prompt> --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
-| `copilot` | `copilot -p <prompt> --no-ask-user --no-color --additional-mcp-config @<jobId>.copilot-mcp.json` + permission flags + `[--model <m>] [--reasoning-effort <e>]` + extra args (GitHub Copilot CLI) |
-| `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$MOONLIGHTQ_PROMPT` |
+| `claude` | `claude -p --output-format json --mcp-config <jobId>.mcp.json` + permission flags + `--model <m>` + `--effort <e>` + extra args |
+| `codex` | `codex exec <sandbox flags> -C <cwd> --skip-git-repo-check -c mcp_servers.moonlightq.command=… -c mcp_servers.moonlightq.args=… -c mcp_servers.moonlightq.env=… [-m model] [-c model_reasoning_effort="<e>"] <extra args> -` (sandbox flags: see [Permission modes](#permission-modes)) |
+| `opencode` | `opencode run --dir <cwd> --format json --auto [-m provider/model] [--variant <e>] <extra args>` with `OPENCODE_CONFIG_CONTENT` set |
+| `gemini` | `gemini --yolo [-m model] <extra args>` with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` set |
+| `copilot` | `copilot --no-ask-user --no-color --additional-mcp-config @<jobId>.copilot-mcp.json` + permission flags + `[--model <m>] [--reasoning-effort <e>]` + extra args (GitHub Copilot CLI) |
+| `custom` | `extraArgs` **is** the argv; the prompt is appended as the last argument and exposed as `$MOONLIGHTQ_PROMPT` (so on Windows a custom runner still fails to start once the prompt passes 32,767 characters) |
 
 Every child gets `MOONLIGHTQ_TASK_ID`, `MOONLIGHTQ_ROLE`, `MOONLIGHTQ_PROMPT_FILE`,
 `MOONLIGHTQ_MCP_CONFIG` (the job's MCP config file) and `MOONLIGHTQ_DB_PATH` (the web server's
