@@ -222,6 +222,19 @@ async function stopServer($: EngineInterface): Promise<string> {
   return `Stopped PID ${pid} on :${port}.`
 }
 
+/** Opens the web UI in the default browser (macOS `open`). */
+async function openWebUi($: EngineInterface): Promise<string> {
+  const url = `http://localhost:${await currentPort($)}`
+  try {
+    const { exitCode, stderr } = await $.process.run(['open', url], { timeoutMs: TIMEOUT_MS })
+    if (exitCode !== 0) return `Could not open ${url}: ${stderr.trim() || `exit ${exitCode}`}`
+  } catch (err) {
+    return `Could not open ${url}: ${err instanceof Error ? err.message : String(err)}`
+  }
+
+  return `Opened ${url}.`
+}
+
 async function act($: EngineInterface, what: 'start' | 'stop'): Promise<string> {
   await $.state.set(NOTICE, what === 'start' ? 'Starting…' : 'Stopping…')
   const notice = what === 'start' ? await startServer($) : await stopServer($)
@@ -238,7 +251,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'moonlightq',
-      description: 'MoonlightQ server: check | start | stop | port <n> | pane | hide | show',
+      description: 'MoonlightQ server: check | start | stop | open | port <n> | pane | hide | show',
     })
     void $.ui.open({ id: PANE, title: 'MoonlightQ' })
     void tick($)
@@ -260,6 +273,7 @@ export const register: Register = (on, options) => {
       return { text: opened.isPlaced ? 'MoonlightQ pane opened.' : 'This surface has no room for panes here.' }
     }
     if (verb === 'port') return { text: await setPort($, rest.join(' ')) }
+    if (verb === 'open') return { text: await openWebUi($) }
     if (verb === 'start' || verb === 'stop') {
       if (rest[0]) {
         const msg = await setPort($, rest[0])
@@ -288,22 +302,32 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        <Button key="open-pane" plain onPress={() => void $.ui.open({ id: PANE, title: 'MoonlightQ' })}>
-          <Text color={COLOR[s.health]}>{DOT[s.health]} </Text>
-          <Text bold>MoonlightQ </Text>
-          {s.health === 'down' ? (
-            <Text color="red">not running on :{s.port}</Text>
-          ) : s.health === 'unknown' ? (
-            <Text dimColor>checking…</Text>
-          ) : (
-            <Text>
-              {s.health} · PID {s.pid ?? '?'} · :{s.port} · {s.latencyMs}ms · {s.working} agent
-              {s.working === 1 ? '' : 's'} working ({s.online} online, {s.runnersRunning} runner
-              {s.runnersRunning === 1 ? '' : 's'})
-            </Text>
+        <Box>
+          <Button key="open-pane" plain onPress={() => void $.ui.open({ id: PANE, title: 'MoonlightQ' })}>
+            <Text color={COLOR[s.health]}>{DOT[s.health]} </Text>
+            <Text bold>MoonlightQ </Text>
+            {s.health === 'down' ? (
+              <Text color="red">not running on :{s.port}</Text>
+            ) : s.health === 'unknown' ? (
+              <Text dimColor>checking…</Text>
+            ) : (
+              <Text>
+                {s.health} · PID {s.pid ?? '?'} · :{s.port} · {s.latencyMs}ms · {s.working} agent
+                {s.working === 1 ? '' : 's'} working ({s.online} online, {s.runnersRunning} runner
+                {s.runnersRunning === 1 ? '' : 's'})
+              </Text>
+            )}
+            {ago !== null && <Text dimColor> · {ago}s ago</Text>}
+          </Button>
+          {s.health !== 'down' && s.health !== 'unknown' && (
+            <Button
+              key="open-web"
+              label="Open"
+              dimColor
+              onPress={() => void openWebUi($).then(msg => $.ui.toast(msg))}
+            />
           )}
-          {ago !== null && <Text dimColor> · {ago}s ago</Text>}
-        </Button>
+        </Box>
         {s.health !== 'down' &&
           s.problems.slice(0, 3).map(p => (
             <Text color="yellow">
@@ -373,6 +397,13 @@ export const register: Register = (on, options) => {
             <Button key="stop" label="Stop" onPress={() => void act($, 'stop')} />
           ) : (
             <Button key="start" label="Start" variant="primary" onPress={() => void act($, 'start')} />
+          )}
+          {isUp && (
+            <Button
+              key="open-web"
+              label="Open web UI"
+              onPress={() => void openWebUi($).then(msg => $.state.set(NOTICE, msg))}
+            />
           )}
         </Box>
         {notice && <Text dimColor>{notice}</Text>}

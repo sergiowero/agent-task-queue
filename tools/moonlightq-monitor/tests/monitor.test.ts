@@ -11,6 +11,11 @@ function quietUi(on: On) {
 
 function serverUp(on: On) {
   quietUi(on)
+  fetchUp(on)
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '4242\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+}
+
+function fetchUp(on: On) {
   on('http.fetch', async ($, e) => {
     const path = new URL(e.url).pathname
     const body =
@@ -25,7 +30,6 @@ function serverUp(on: On) {
 
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
   })
-  on('process.run', async () => ({ value: { exitCode: 0, stdout: '4242\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
 }
 
 function serverDown(on: On) {
@@ -199,4 +203,35 @@ test('Start launches bun on the chosen port and Stop kills the listener', async 
   const stopped = (await $.command.run(run('stop'))) as { text: string }
   expect(stopped.text).toBe('Stopped PID 777 on :4200.')
   expect(ran.some(r => r.argv[0] === 'kill' && r.argv[1] === '777')).toBe(true)
+})
+
+test('Open web UI opens the browser on the watched port, from the pane and the band', async ($, on) => {
+  mock.clock(on, { now: 1_000 })
+  quietUi(on)
+  fetchUp(on)
+  const opened: string[] = []
+  on('process.run', async (_$, e) => {
+    if (e.argv[0] === 'open') {
+      opened.push(String(e.argv[1]))
+
+      return ok()
+    }
+
+    return ok('4242\n')
+  })
+  await $.command.run(run('port 4300'))
+
+  for (const surface of SURFACES) {
+    opened.length = 0
+    const pane = await $.ui.mount({ plugin: 'moonlightq-monitor', surface, component: 'Pane', requestId: 'moonlightq', props: PANE_PROPS })
+    await pane.press({ key: 'open-web' })
+    const band = await $.ui.mount({
+      plugin: 'moonlightq-monitor',
+      surface,
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns: 100, scroll: { offset: 0, bodyRows: 30 }, view: {} },
+    })
+    await band.press({ key: 'open-web' })
+    expect(opened).toEqual(['http://localhost:4300', 'http://localhost:4300'])
+  }
 })
