@@ -48,6 +48,11 @@ export interface BuiltCommand {
   cmd: string[];
   cwd: string;
   env?: Record<string, string>;
+  /**
+   * Text the engine writes to the tool's standard input (the prompt). A prompt on the
+   * command line fails to spawn on Windows once it passes 32,767 characters (ENAMETOOLONG).
+   */
+  stdin?: string;
   /** Files the engine writes before spawning (e.g. per-job tool settings). */
   files?: { path: string; content: string }[];
 }
@@ -435,9 +440,11 @@ export const CUSTOM_RUNNERS_DISABLED =
 export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltCommand {
   const extra = ctx.extraArgs ?? [];
   const model = ctx.model?.trim();
+  // The built-in tools read the prompt from stdin (see BuiltCommand.stdin).
+  const stdin = ctx.prompt;
   switch (tool) {
     case "claude": {
-      const cmd = ["claude", "-p", ctx.prompt, "--output-format", "json", "--mcp-config", ctx.mcpConfigFile];
+      const cmd = ["claude", "-p", "--output-format", "json", "--mcp-config", ctx.mcpConfigFile];
       if (ctx.permissionMode === "full") {
         cmd.push("--dangerously-skip-permissions");
       } else {
@@ -449,7 +456,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       if (model) cmd.push("--model", model);
       if (ctx.effort) cmd.push("--effort", ctx.effort);
       cmd.push(...extra);
-      return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
+      return { cmd, cwd: ctx.cwd, env: childEnv(ctx), stdin };
     }
     case "codex": {
       const cmd = ["codex", "exec"];
@@ -460,19 +467,21 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
       if (model) cmd.push("-m", model);
       // `-c` values are parsed as TOML, so the string must be quoted.
       if (ctx.effort) cmd.push("-c", `model_reasoning_effort="${ctx.effort}"`);
-      cmd.push(...extra, ctx.prompt);
-      return { cmd, cwd: ctx.cwd, env: childEnv(ctx) };
+      // `-`: the instructions come from stdin.
+      cmd.push(...extra, "-");
+      return { cmd, cwd: ctx.cwd, env: childEnv(ctx), stdin };
     }
     case "opencode": {
       const cmd = ["opencode", "run", "--dir", ctx.cwd, "--format", "json", "--auto"];
       if (model) cmd.push("-m", model);
       if (ctx.effort) cmd.push("--variant", ctx.effort);
-      cmd.push(...extra, ctx.prompt);
+      cmd.push(...extra);
       const content = opencodeConfigContent(ctx.mcp, process.env.OPENCODE_CONFIG_CONTENT);
-      return { cmd, cwd: ctx.cwd, env: childEnv(ctx, { OPENCODE_CONFIG_CONTENT: content }) };
+      return { cmd, cwd: ctx.cwd, env: childEnv(ctx, { OPENCODE_CONFIG_CONTENT: content }), stdin };
     }
     case "gemini": {
-      const cmd = ["gemini", "-p", ctx.prompt, "--yolo"];
+      // Piped stdin runs Gemini CLI non-interactively, like `-p`.
+      const cmd = ["gemini", "--yolo"];
       if (model) cmd.push("-m", model);
       cmd.push(...extra);
       const settingsFile = ctx.mcpConfigFile.replace(/(\.mcp)?\.json$/, ".gemini-settings.json");
@@ -480,13 +489,15 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
         cmd,
         cwd: ctx.cwd,
         env: childEnv(ctx, { GEMINI_CLI_SYSTEM_SETTINGS_PATH: settingsFile }),
+        stdin,
         files: [{ path: settingsFile, content: geminiSettings(ctx.mcp) }],
       };
     }
     case "copilot": {
-      // `--no-ask-user`: nobody answers a question in a `-p` run, so the agent works it out.
+      // Piped stdin runs Copilot CLI non-interactively, like `-p`. `--no-ask-user`: nobody
+      // answers a question in that run, so the agent works it out.
       const mcpFile = ctx.mcpConfigFile.replace(/(\.mcp)?\.json$/, ".copilot-mcp.json");
-      const cmd = ["copilot", "-p", ctx.prompt, "--no-ask-user", "--no-color", "--additional-mcp-config", `@${mcpFile}`];
+      const cmd = ["copilot", "--no-ask-user", "--no-color", "--additional-mcp-config", `@${mcpFile}`];
       cmd.push(...(ctx.permissionMode === "full" ? ["--allow-all"] : copilotSafeArgs(ctx.role, ctx.commands)));
       if (model) cmd.push("--model", model);
       if (ctx.effort) cmd.push("--reasoning-effort", ctx.effort);
@@ -495,6 +506,7 @@ export function buildCommand(tool: RunnerTool, ctx: CommandContext): BuiltComman
         cmd,
         cwd: ctx.cwd,
         env: childEnv(ctx),
+        stdin,
         files: [{ path: mcpFile, content: copilotMcpConfig(ctx.mcp, ctx.role, ctx.permissionMode) }],
       };
     }

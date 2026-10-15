@@ -535,7 +535,7 @@ export class RunnerEngine {
       proc = Bun.spawn(built.cmd, {
         cwd: built.cwd,
         env: built.env,
-        stdin: "ignore",
+        stdin: built.stdin === undefined ? "ignore" : Buffer.from(built.stdin),
         stdout: "pipe",
         stderr: "pipe",
       });

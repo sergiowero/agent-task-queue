@@ -332,12 +332,13 @@ describe("codex in safe mode", () => {
     }
   });
 
-  it("the sandbox flags come before the prompt and the extra args, in the job's directory", () => {
+  it("the sandbox flags come before the extra args and the stdin prompt (`-`), in the job's directory", () => {
     const built = buildCommand("codex", { ...ctx, role: "review", cwd: "/repo/.moonlightq/worktrees/t1", extraArgs: ["--json"] });
     expect(built.cwd).toBe("/repo/.moonlightq/worktrees/t1");
     expect(built.cmd.slice(0, 4)).toEqual(["codex", "exec", "--sandbox", "workspace-write"]);
     expect(built.cmd[built.cmd.indexOf("-C") + 1]).toBe("/repo/.moonlightq/worktrees/t1");
-    expect(built.cmd.slice(-2)).toEqual(["--json", "PROMPT"]);
+    expect(built.cmd.slice(-2)).toEqual(["--json", "-"]);
+    expect(built.stdin).toBe("PROMPT");
   });
 });
 
@@ -398,7 +399,8 @@ describe("copilot in safe mode", () => {
 
   it("the command line carries the rules as one flag each; full mode allows everything", () => {
     const built = buildCommand("copilot", { ...ctx, role: "review", commands: ["bun test"] });
-    expect(built.cmd.slice(0, 3)).toEqual(["copilot", "-p", "PROMPT"]);
+    expect(built.cmd.slice(0, 3)).toEqual(["copilot", "--no-ask-user", "--no-color"]);
+    expect(built.stdin).toBe("PROMPT");
     expect(built.cmd).toContain("--allow-tool=moonlightq(submit_review)");
     expect(built.cmd).toContain("--allow-tool=shell(bun)");
     expect(built.cmd).toContain("--deny-tool=write");

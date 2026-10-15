@@ -776,9 +776,27 @@ describe("buildCommand", () => {
     }
   });
 
+  it("hands the built-in tools the prompt on stdin, never on the command line (Windows caps it at 32,767 chars)", () => {
+    const previous = process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+    process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `moonlightq-no-gemini-${randomUUID()}.json`);
+    try {
+      const prompt = "x".repeat(40_000);
+      for (const tool of ["claude", "codex", "opencode", "gemini", "copilot"] as const) {
+        for (const permissionMode of ["safe", "full"] as const) {
+          const built = buildCommand(tool, { ...ctx, prompt, permissionMode });
+          expect(built.stdin).toBe(prompt);
+          expect(built.cmd.join(" ").length).toBeLessThan(8_000);
+        }
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
+      else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = previous;
+    }
+  });
+
   it("claude: --mcp-config on every run; safe mode allows exactly the runner's MoonlightQ tools", () => {
     const safe = buildCommand("claude", ctx);
-    expect(safe.cmd.slice(0, 7)).toEqual(["claude", "-p", "PROMPT", "--output-format", "json", "--mcp-config", "/runs/t1/job.mcp.json"]);
+    expect(safe.cmd.slice(0, 6)).toEqual(["claude", "-p", "--output-format", "json", "--mcp-config", "/runs/t1/job.mcp.json"]);
     expect(safe.cmd).toContain("--permission-mode");
     const allowed = safe.cmd.slice(safe.cmd.indexOf("--allowedTools") + 1);
     // The coder's own phase: the common tools and submit_code, all of them runner tools.
@@ -801,16 +819,16 @@ describe("buildCommand", () => {
     expect(full.cmd).toContain("--dangerously-skip-permissions");
     expect(full.cmd).not.toContain("--permission-mode");
     expect(full.cmd).not.toContain("--allowedTools");
-    expect(full.cmd.slice(5, 7)).toEqual(["--mcp-config", "/runs/t1/job.mcp.json"]);
+    expect(full.cmd.slice(4, 6)).toEqual(["--mcp-config", "/runs/t1/job.mcp.json"]);
     expect(full.cmd.slice(-3)).toEqual(["--model", "sonnet", "--verbose"]);
   });
 
   it("codex: the server comes in as -c mcp_servers.moonlightq.* overrides", () => {
     expect(buildCommand("codex", ctx).cmd).toEqual([
-      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "PROMPT",
+      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-",
     ]);
     expect(buildCommand("codex", { ...ctx, permissionMode: "full", model: "o3" }).cmd).toEqual([
-      "codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-m", "o3", "PROMPT",
+      "codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-m", "o3", "-",
     ]);
     // Windows paths survive the TOML quoting.
     const win = buildCommand("codex", { ...ctx, mcp: { ...mcp, command: "C:\\bun\\bun.exe" } }).cmd;
@@ -823,7 +841,7 @@ describe("buildCommand", () => {
   it("copilot: the server comes in through a per-job --additional-mcp-config file", () => {
     const built = buildCommand("copilot", { ...ctx, permissionMode: "full" });
     expect(built.cmd).toEqual([
-      "copilot", "-p", "PROMPT", "--no-ask-user", "--no-color", "--additional-mcp-config", "@/runs/t1/job.copilot-mcp.json", "--allow-all",
+      "copilot", "--no-ask-user", "--no-color", "--additional-mcp-config", "@/runs/t1/job.copilot-mcp.json", "--allow-all",
     ]);
     expect(built.cwd).toBe("/repo");
     expect(built.files).toEqual([{ path: "/runs/t1/job.copilot-mcp.json", content: copilotMcpConfig(mcp, "code", "full") }]);
@@ -837,7 +855,7 @@ describe("buildCommand", () => {
 
   it("opencode: the server comes in through OPENCODE_CONFIG_CONTENT, keeping existing content", () => {
     const built = buildCommand("opencode", { ...ctx, model: "anthropic/claude" });
-    expect(built.cmd).toEqual(["opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "anthropic/claude", "PROMPT"]);
+    expect(built.cmd).toEqual(["opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "anthropic/claude"]);
     expect(JSON.parse(built.env!.OPENCODE_CONFIG_CONTENT)).toEqual({
       mcp: {
         moonlightq: {
@@ -863,7 +881,7 @@ describe("buildCommand", () => {
       writeFileSync(system, JSON.stringify({ telemetry: { enabled: false }, mcpServers: { corp: { command: "corp-mcp" } } }));
       process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = system;
       const built = buildCommand("gemini", ctx);
-      expect(built.cmd).toEqual(["gemini", "-p", "PROMPT", "--yolo"]);
+      expect(built.cmd).toEqual(["gemini", "--yolo"]);
       expect(built.env!.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toBe("/runs/t1/job.gemini-settings.json");
       expect(built.files).toHaveLength(1);
       expect(built.files![0].path).toBe("/runs/t1/job.gemini-settings.json");
@@ -899,14 +917,14 @@ describe("buildCommand", () => {
 
     expect(buildCommand("codex", { ...ctx, model: "gpt-5.5", effort: "xhigh", extraArgs: ["--json"] }).cmd).toEqual([
       "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP,
-      "-m", "gpt-5.5", "-c", 'model_reasoning_effort="xhigh"', "--json", "PROMPT",
+      "-m", "gpt-5.5", "-c", 'model_reasoning_effort="xhigh"', "--json", "-",
     ]);
     expect(buildCommand("codex", { ...ctx, effort: "low" }).cmd).toEqual([
-      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-c", 'model_reasoning_effort="low"', "PROMPT",
+      "codex", "exec", ...CODEX_CODE_SANDBOX, "-C", "/repo", "--skip-git-repo-check", ...CODEX_MCP, "-c", 'model_reasoning_effort="low"', "-",
     ]);
 
     expect(buildCommand("opencode", { ...ctx, model: "opencode/big-pickle", effort: "max" }).cmd).toEqual([
-      "opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "opencode/big-pickle", "--variant", "max", "PROMPT",
+      "opencode", "run", "--dir", "/repo", "--format", "json", "--auto", "-m", "opencode/big-pickle", "--variant", "max",
     ]);
 
     const copilot = buildCommand("copilot", { ...ctx, model: "gpt-5.4", effort: "xhigh", extraArgs: ["--log-level", "debug"] });
@@ -918,7 +936,7 @@ describe("buildCommand", () => {
     process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = join(tmpdir(), `moonlightq-no-gemini-${randomUUID()}.json`);
     try {
       expect(buildCommand("gemini", { ...ctx, model: "gemini-2.5-pro", effort: "high" }).cmd).toEqual([
-        "gemini", "-p", "PROMPT", "--yolo", "-m", "gemini-2.5-pro",
+        "gemini", "--yolo", "-m", "gemini-2.5-pro",
       ]);
     } finally {
       if (previous === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH;
