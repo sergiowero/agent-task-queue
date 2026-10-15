@@ -38,7 +38,7 @@ export function normalizeStatus(status: string): TaskStatus {
   return status as TaskStatus;
 }
 
-/** Work phases; each has a skill (`skills/moonlightq-<phase>`) and a submit tool. */
+/** Work phases; each has a skill (`moonlightq-<phase>`, served by the MCP) and a submit tool. */
 export type Phase = "refine" | "plan" | "plan_review" | "code" | "verify" | "review" | "merge";
 
 /**
@@ -277,7 +277,7 @@ export const STATUS_INFO: Record<TaskStatus, StatusInfo> = {
 
 export const ALL_STATUSES = Object.values(TaskStatus) as TaskStatus[];
 
-/** The skill that covers a phase: skills/moonlightq-<phase with dashes>/SKILL.md. */
+/** The skill that covers a phase (moonlightq-<phase with dashes>), as the MCP server ships it. */
 export function skillForPhase(phase: Phase): string {
   if (phase === "merge") return "moonlightq-pr";
   return `moonlightq-${phase.replace(/_/g, "-")}`;

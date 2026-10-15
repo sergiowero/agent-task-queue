@@ -1,12 +1,3 @@
----
-name: moonlightq-review
-description: Reviewing phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `code_review_requested`, now in `reviewing` (the moonlightq-claim router sends you here). Works from an independent brief without the coder's context (no conversation, handoffs, messages or evidence): verifies the previous round's findings by id, inspects the submitted commits read-only in the task worktree against the acceptance criteria and guardrails, and submits a verdict (approve / request_changes / needs_human) with structured findings through the `submit_review` MCP tool. The verdict routes the task. Never edits, commits or pushes.
-allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_review, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Review Skill
 
 Follow this skill when you hold a task claimed from `code_review_requested` (its status is now `reviewing`). The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context handoff, autonomy, guardrails, no tasks available) still apply.

@@ -34,7 +34,6 @@ import {
   completeTask,
   createTaskForProject,
   detectDefaultBranch,
-  installedSkillVersions,
   reportBlocker,
   getFindings,
   getEvidence,
@@ -52,7 +51,6 @@ import {
   requestReplan,
   dependencyDeleted,
   resolveBlocker,
-  skillsBundleVersion,
   submitCode,
   submitPlan,
   submitPlanReview,
@@ -79,6 +77,7 @@ import {
   paginate,
   validateEnv,
 } from "@moonlightq/shared";
+import { PHASES_VERSION } from "@moonlightq/mcp";
 import { getRunnerEngine, listTools } from "./runner/runner.js";
 import { CUSTOM_RUNNERS_DISABLED, customRunnersAllowed, runsCustomArgv } from "./runner/commands.js";
 import { refuseRequest } from "./security.js";
@@ -752,18 +751,11 @@ const handleRunnerById = wrapHandler(async (req, url) => {
   return null;
 });
 
-/** Server facts the portal shows: skills bundle vs. installed skills, and so on. */
+/** Server facts the portal shows: the skills version the MCP serves, the verifier, PR sync. */
 const handleMeta = wrapHandler(async (req, url) => {
   if (url.pathname !== "/api/meta" || req.method !== "GET") throw null;
-  const skillsVersion = skillsBundleVersion();
-  const installed = installedSkillVersions();
-  const outdated = Object.entries(installed)
-    .filter(([, v]) => v !== null && v !== skillsVersion)
-    .map(([tool]) => tool);
   return jsonResponse({
-    skillsVersion,
-    installedSkills: installed,
-    outdatedSkills: outdated,
+    skillsVersion: PHASES_VERSION,
     verifier: { online: verifierOnline(), ...verifyWorker.state() },
     prSync: prSync.state(),
   });

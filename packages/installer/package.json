@@ -5,13 +5,11 @@
   "type": "module",
   "bin": {
     "install:all": "src/install-all.ts",
-    "install:mcp": "src/install-mcp.ts",
-    "install:skills": "src/install-skills.ts"
+    "install:mcp": "src/install-mcp.ts"
   },
   "scripts": {
     "install:all": "bun run src/install-all.ts",
-    "install:mcp": "bun run src/install-mcp.ts",
-    "install:skills": "bun run src/install-skills.ts"
+    "install:mcp": "bun run src/install-mcp.ts"
   },
   "dependencies": {
     "@moonlightq/mcp": "workspace:*",

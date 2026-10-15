@@ -1,17 +1,14 @@
-import { MCP_SERVER_NAME } from "@moonlightq/mcp";
+import { MCP_SERVER_NAME, readPhase } from "@moonlightq/mcp";
 import type { Agent, Phase, Project, Role, Task, TaskStatus } from "@moonlightq/shared";
 import {
   ROLE_INFO,
   STATUS_INFO,
   buildAgentBrief,
   isIndependentPhase,
-  readSkill,
   skillForPhase,
-  stripFrontmatter,
 } from "@moonlightq/shared";
 
 export type { Phase };
-export { stripFrontmatter };
 
 /** Phase for a status the runner claims from or into (queued or active statuses only). */
 export function phaseForStatus(status: TaskStatus): Phase | null {
@@ -139,9 +136,9 @@ export const SUBMIT_TOOL: Record<Phase, (taskId: string) => { tool: string; args
   }),
 };
 
+/** The phase skill's text, as the MCP server ships it (throws for a phase without one). */
 export function readPhaseSkill(phase: Phase): string {
-  const name = skillForPhase(phase);
-  return readSkill(name)?.body ?? `(skill file not found: skills/${name}/SKILL.md)`;
+  return readPhase(skillForPhase(phase)).body;
 }
 
 export interface BuildPromptInput {
@@ -156,7 +153,7 @@ export interface BuildPromptInput {
   worktree?: string;
   /** The tool was started with its own `--worktree`: it is already inside a new worktree for this task. */
   toolWorktree?: boolean;
-  /** Overrides the skill body read from disk (tests). */
+  /** Overrides the phase skill's text (tests). */
   phaseSkill?: string;
 }
 

@@ -266,21 +266,7 @@ export {
   type CommandCheck,
 } from "./profile.js";
 
-export {
-  SKILLS_DIR,
-  SKILL_PREFIX,
-  MIN_COMPATIBLE_SKILLS_VERSION,
-  toolSkillDirs,
-  stripFrontmatter,
-  skillVersion,
-  listSkills,
-  readSkill,
-  skillsManifest,
-  skillsBundleVersion,
-  compareVersions,
-  installedSkillVersions,
-  type SkillDocument,
-} from "./skills.js";
+export { SKILL_PREFIX, toolSkillDirs, compareVersions } from "./skills.js";
 
 export { git, isGitRepo, sameCommit, detectDefaultBranch, detectProjectCommands } from "./git.js";
 export { analyzeDiff, protectedFiles, diffRiskReasons, mergeDiffReasons, type DiffAnalysis } from "./diff.js";

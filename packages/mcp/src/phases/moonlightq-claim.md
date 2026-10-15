@@ -1,15 +1,8 @@
----
-name: moonlightq-claim
-description: Entry point for working as a MoonlightQ agent through the MoonlightQ MCP server. Use when asked to work the MoonlightQ, claim or pick up tasks, act as a MoonlightQ agent for one or more roles (refine, plan, plan_review, code, verify, review, pr), or run the claim → work → submit loop. It claims a task with the `claim_task` MCP tool, then routes you to the phase skill (moonlightq-refine, moonlightq-plan, moonlightq-plan-review, moonlightq-code, moonlightq-verify, moonlightq-review, moonlightq-pr) that matches the task status.
-allowed-tools: mcp__moonlightq__claim_task, mcp__moonlightq__get_task, mcp__moonlightq__get_task_brief, mcp__moonlightq__get_skill, mcp__moonlightq__post_comment, mcp__moonlightq__report_blocker, mcp__moonlightq__heartbeat
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Claim Skill
 
 Router skill: claim a task, then follow the phase skill for its status. Per-phase rules (working directory, worktree, git, message template, submit tool) live in the phase skills.
+
+The MoonlightQ MCP server ships every skill: `claim_task` returns the phase skill's text in `phaseSkill.body`, and `get_skill` (or the `moonlightq://skills/{name}` resource) returns any of them. Nothing is installed in your tool; always follow the text the server gives you.
 
 **MCP conventions**: all queue work goes through the tools of the `moonlightq` MCP server. Your client prefixes their names (in Claude Code `claim_task` is `mcp__moonlightq__claim_task`). Use `claim_task`, the `submit_*` tools and `report_blocker`; `get_task` and `post_comment` are there to re-read or annotate the task you claimed. Every `submit_*` call MUST pass `context` with handoff notes for the next agent (the tools reject a submit without it; only `submit_verification` accepts one without, for the built-in verifier) — see Context Handoff. Every `message` MUST be Markdown (templates are in the phase skills).
 
@@ -39,13 +32,13 @@ Call `claim_task`:
 
 ```json
 { "toolName": "<toolName>", "version": "<version>", "model": "<model>", "roles": ["<role>", "..."], "sessionId": "<sessionId>",
-  "skillsVersion": "7.0.0",
+  "skillsVersion": "8.0.0",
   "host": "<host, optional>", "projectId": "<only claim from this project, optional>", "context": "<notes, optional>" }
 ```
 
-`skillsVersion` is required: the `metadata.version` of this skill. The server refuses a claim without it, or with outdated skills, with `reason: "skills_outdated"`.
+`skillsVersion` is required: the version of the skills you follow, `8.0.0` for the text this server ships (the server instructions and `get_skill` name it). The server refuses a claim without it, or with an older version (skills installed by an earlier MoonlightQ), with `reason: "skills_outdated"`.
 
-**Result (success)**: the task header (without the parts that grow with every round: conversation, history, contexts, findings and evidence), a `brief`, the `phaseSkill` to follow (name and version), the project's `autonomy` level, the `round` (the same as `brief.round`), your `agent` identity and a `claimToken`. Keep `task.id` and `claimToken`: pass both to every `submit_*` and `report_blocker` call for this task (the server rejects submits from anyone else, e.g. a stale session after a person unblocked the task).
+**Result (success)**: the task header (without the parts that grow with every round: conversation, history, contexts, findings and evidence), a `brief`, the `phaseSkill` to follow (name, version and its full text in `body`), the project's `autonomy` level, the `round` (the same as `brief.round`), your `agent` identity and a `claimToken`. Keep `task.id` and `claimToken`: pass both to every `submit_*` and `report_blocker` call for this task (the server rejects submits from anyone else, e.g. a stale session after a person unblocked the task).
 ```json
 { "success": true,
   "task": { "id": "...", "title": "...", "description": "...", "steerDetails": "...", "guardrails": ["..."], "status": "coding",
@@ -59,9 +52,9 @@ Call `claim_task`:
     "humanNotes": [{ "author": "user", "at": "...", "message": "..." }],
     "verification": { "passed": false, "failing": [{ "command": "bun test", "exitCode": 1, "summary": "..." }] } | null,
     "round": { "codeRound": 1, "remainingReviewRounds": 2, "remainingPlanRounds": 2, "remainingVerifyFailures": 1 } },
-  "phaseSkill": { "name": "moonlightq-code", "version": "7.0.0" }, "autonomy": 2, "round": { "...": "same as brief.round" },
+  "phaseSkill": { "name": "moonlightq-code", "version": "8.0.0", "body": "<the phase skill, in Markdown>" }, "autonomy": 2, "round": { "...": "same as brief.round" },
   "agent": { "id": "opencode@1.0|model", "role": "code" },
-  "claimToken": "<secret for this claim>", "skillsVersion": "7.0.0", "skills": { "moonlightq-code": "7.0.0" } }
+  "claimToken": "<secret for this claim>", "skillsVersion": "8.0.0" }
 ```
 
 The conversation, history, contexts, every finding and every piece of evidence are in `get_task`; the brief holds what you need of them.
@@ -74,7 +67,7 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 
 **Result (no tasks):** `{ "success": false, "reason": "no_tasks_available", "message": "No tasks available for your roles." }`
 
-**Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", "skillsVersion": "...", "message": "..." }` — stop and tell the user to run `bun run install:all` in the MoonlightQ checkout (it installs the current skills and the MCP registration for every tool), then restart the tool. That is the only reason to stop: when a claim succeeds but `phaseSkill.version` or the result's `skillsVersion` is newer than your copy of the skills, read the phase skill with `get_skill`, finish the task with it, and then tell the user to run `bun run install:all`.
+**Result (outdated skills):** `{ "success": false, "reason": "skills_outdated", "skillsVersion": "...", "message": "..." }` — you are following an old copy of the skills. Read the current `moonlightq-claim` with `get_skill`, claim again with the `skillsVersion` it names, and follow only the text the server returns. Tell the user to run `bun run install:all` in the MoonlightQ checkout: it removes the old skill copies from every tool.
 
 **Errors** come back as `{ "success": false, "error": "..." }` with the tool call marked as an error.
 
@@ -86,7 +79,7 @@ For a plan critique, a verification or a code review (see Independent Checks), `
 
 1. **Claim** a task with `claim_task`
 2. **Read** the task status from the result
-3. **Determine phase** from the status (see Phase Routing) and read that phase skill
+3. **Determine phase** from the status (see Phase Routing) and read that phase skill (`phaseSkill.body`)
 4. **Work** on the task according to the phase skill
 5. **Submit** with the `submit_*` tool given by the phase skill — or, if something outside your control blocks the phase, call `report_blocker` (see Blocked)
 6. **Repeat** until no tasks available
@@ -109,9 +102,9 @@ The claim moves the task to its in-progress status; route on that status (`task.
 | `code_review_requested` | `reviewing` | `review` | Reviewing | `moonlightq-review` |
 | `approved` | `merging` | `pr` | Pull request | `moonlightq-pr` |
 
-`claim_task` also returns `phaseSkill` with the name to follow.
+`claim_task` also returns `phaseSkill` with the name to follow and its text in `phaseSkill.body`.
 
-After claiming, read the skill for the phase and follow it. Do not read the other phase skills.
+After claiming, read the skill for the phase (`phaseSkill.body`, or `get_skill` with its name) and follow it. Do not read the other phase skills.
 
 ## Context Reading
 
@@ -125,7 +118,7 @@ Start from the **brief** (`brief` in the `claim_task` result, or `get_task_brief
 - `round`: the rounds so far and what is left of the project's limits — `remainingPlanRounds` (plan critiques), `remainingReviewRounds` (code reviews) and `remainingVerifyFailures` (red verifications); 1 means the next rejection goes to a person
 - while no plan is approved: `latestPlan` with its `validationPlan` and `planSubmission` (a planner revising its plan); `task.dorIssues` for a draft
 
-Call `get_task` only when you need the whole conversation or history. If your installed phase skill is older than `phaseSkill.version`, read the current text with `get_skill` (see Result (outdated skills)).
+Call `get_task` only when you need the whole conversation or history.
 
 ### Independent Checks
 

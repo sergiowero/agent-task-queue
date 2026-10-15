@@ -42,7 +42,7 @@ import {
   geminiSettings,
   opencodeConfigContent,
 } from "./commands.js";
-import { buildPrompt, stripFrontmatter } from "./prompt.js";
+import { buildPrompt, readPhaseSkill } from "./prompt.js";
 
 // The engine claims in-process while the agent's MCP server opens the database
 // by path, so this file needs a FILE database. Other test files may already have
@@ -946,11 +946,6 @@ describe("buildCommand", () => {
     }
     expect(buildCommand("codex", { ...ctx, model: "  gpt-5.5 " }).cmd).toContain("gpt-5.5");
   });
-
-  it("strips YAML frontmatter from skills", () => {
-    expect(stripFrontmatter("---\nname: x\n---\n\n# Body\n")).toBe("# Body\n");
-    expect(stripFrontmatter("# Body\n")).toBe("# Body\n");
-  });
 });
 
 describe("each tool's MCP config starts a working MoonlightQ server", () => {
@@ -1176,7 +1171,9 @@ describe("buildPrompt", () => {
       const prompt = buildPrompt({ task, project: null, agent, role: roleOf(statusOf[phase]) });
       expect(prompt).toContain(`## Phase skill: ${skillForPhase(phase)}`);
       expect(prompt).toContain(`submit_${{ refine: "refinement", verify: "verification", plan_review: "plan_review", merge: "pr" }[phase as string] ?? phase}`);
-      expect(prompt).not.toContain("skill file not found");
+      // The text the MCP server ships, the same an interactive agent gets from get_skill.
+      expect(prompt).toContain(readPhaseSkill(phase).trim());
+      expect(prompt).not.toContain("allowed-tools:");
       expect(prompt).not.toMatch(/moonlightq (claim|submit|list|get|create|projects|archive)\b/);
     }
   });

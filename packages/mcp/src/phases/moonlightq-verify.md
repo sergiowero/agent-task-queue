@@ -1,12 +1,3 @@
----
-name: moonlightq-verify
-description: Verification phase of the MoonlightQ workflow, for LLM agents with the `verify` role. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `verify_requested`, now in `verifying`. Works from an independent brief without the coder's context: runs the approved validation plan's commands and the project's commands in the task worktree, checks that tests were not weakened, and reports with the `submit_verification` MCP tool. The MoonlightQ web server has a built-in verifier that verifies by default; an agent does it when the project is set to agent verification (Projects → Edit → Autonomy → Who verifies code) or while the built-in verifier is off. Never edits code.
-allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_verification, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, Bash(git:*), Bash(bun:*), Bash(npm:*), Bash(npx:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Verify Skill
 
 Follow this skill when you hold a task claimed from `verify_requested` (now `verifying`). The cross-cutting rules in `moonlightq-claim` still apply.

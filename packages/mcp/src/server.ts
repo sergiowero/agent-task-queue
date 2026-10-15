@@ -3,7 +3,6 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { IndependentBrief, IndependentPhase, Project, SubmitResult, Task } from "@moonlightq/shared";
 import {
-  MIN_COMPATIBLE_SKILLS_VERSION,
   CLAIM_RULES,
   DEFAULT_ROLES,
   ROLES,
@@ -27,8 +26,6 @@ import {
   buildAgentBrief,
   buildIndependentBrief,
   isIndependentPhase,
-  listSkills,
-  readSkill,
   referenceSchema,
   submitVerification,
   submitPlanReview,
@@ -38,7 +35,6 @@ import {
   riskSchema,
   taskTypeSchema,
   policyFor,
-  skillsBundleVersion,
   sweepQueue,
   touchLease,
   authorSchema,
@@ -51,7 +47,6 @@ import {
   submitRefinementFields,
   submitPrFields,
   reportBlockerFields,
-  skillsManifest,
   submitPlan,
   submitCode,
   submitReview,
@@ -62,17 +57,19 @@ import {
 } from "@moonlightq/shared";
 import { randomUUID } from "crypto";
 import { MCP_SERVER_NAME } from "./launch.js";
+import { MIN_COMPATIBLE_PHASES_VERSION, PHASES_VERSION, listPhases, readPhase } from "./phases/index.js";
 
 export const SERVER_NAME = MCP_SERVER_NAME;
 export const SERVER_VERSION = "0.1.0";
 
-const SKILLS_VERSION = skillsBundleVersion() ?? "unknown";
+const SKILLS_VERSION = PHASES_VERSION;
 
 export const INSTRUCTIONS = `MoonlightQ is a local task queue for coding agents (skills bundle ${SKILLS_VERSION}). Protocol:
-1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: metadata.version of your moonlightq-claim skill; a client without the skills installed reads them with get_skill and passes ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier; a project can hand verification to an agent with the verify role instead). If a MoonlightQ runner started you, the task was already claimed for you: do not call claim_task.
-2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", or your moonlightq-* skills still mention an \`moonlightq\` command-line tool, stop and tell the user to run \`bun run install:all\` in the MoonlightQ repo (it installs the current skills and MCP registration for every tool it finds), then restart the tool. If only phaseSkill.version or the result's skillsVersion is newer than your installed skills, read the phase skill with get_skill, finish the task with it, then tell the user to run \`bun run install:all\`.
+This server ships every MoonlightQ skill: nothing is installed in your tool. Read moonlightq-claim with get_skill (or the moonlightq://skills/{name} resource) before your first claim, and follow only the text this server returns.
+1. Call claim_task with your identity (toolName, version, model, sessionId), your roles and skillsVersion (required: pass ${SKILLS_VERSION}). A role is a phase you work: ${ROLES.join(", ")}. Pass one or more (e.g. ["plan", "review"]), or omit roles for all of them but verify (the server has a built-in verifier; a project can hand verification to an agent with the verify role instead). If a MoonlightQ runner started you, the task was already claimed for you: do not call claim_task.
+2. If the result has success=false and reason="no_tasks_available", stop: there is nothing to do. If reason="skills_outdated", you followed an old installed copy of the skills: claim again with skillsVersion ${SKILLS_VERSION}, ignore any installed moonlightq-* skills, and tell the user to run \`bun run install:all\` in the MoonlightQ repo (it removes the old copies).
 3. claim_task returns a claimToken. Pass it as claimToken on every submit_* and report_blocker call for that task (this server also remembers it for the session).
-4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the moonlightq-* skill to follow:
+4. Read task.status to know what to do, working in task.project.workingDirectory; phaseSkill in the claim_task result names the moonlightq-* skill to follow and carries its text in phaseSkill.body:
    - refining (role refine): make the draft ready (testable criteria, type, risk, non-goals), then call submit_refinement.
    - planning (role plan): write an implementation plan with its validation plan, then call submit_plan.
    - plan_reviewing (role plan_review): critique the plan against the task and the codebase, then call submit_plan_review with a verdict and findings.
@@ -146,12 +143,10 @@ function taskDetails(task: Task) {
   };
 }
 
-/** The skill the claimed status belongs to (e.g. moonlightq-code), with its version. */
+/** The skill the claimed status belongs to (e.g. moonlightq-code), with its version and text. */
 function phaseSkillOf(status: Task["status"]) {
   const phase = STATUS_INFO[status]?.phase;
-  const name = phase ? skillForPhase(phase) : null;
-  const skill = name ? readSkill(name) : null;
-  return skill ? { name: skill.name, version: skill.version } : null;
+  return phase ? readPhase(skillForPhase(phase)) : null;
 }
 
 /**
@@ -297,24 +292,24 @@ export function createMoonlightqMcpServer(opts: MoonlightqMcpServerOptions = {})
           .string()
           .optional()
           .describe(
-            "Required: metadata.version of your moonlightq-claim skill. A claim without it, or with skills older than the server supports, is refused with reason skills_outdated",
+            `Required: ${SKILLS_VERSION}, the version of the skills this server ships. A claim without it, or with an older version (skills installed by an earlier MoonlightQ), is refused with reason skills_outdated`,
           ),
         context: contextSchema,
       },
     },
     (input) =>
       run(() => {
-        // Skills that send no version predate it (or are missing): the server cannot trust them either.
-        if (!input.skillsVersion || compareVersions(input.skillsVersion, MIN_COMPATIBLE_SKILLS_VERSION) < 0) {
+        // An older version (or none) means the agent follows skills installed by an earlier release.
+        if (!input.skillsVersion || compareVersions(input.skillsVersion, MIN_COMPATIBLE_PHASES_VERSION) < 0) {
           return {
             success: false,
             reason: "skills_outdated",
             skillsVersion: SKILLS_VERSION,
             message: `${
               input.skillsVersion
-                ? `Your MoonlightQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_SKILLS_VERSION}.`
-                : "claim_task needs skillsVersion, the metadata.version of your moonlightq-claim skill: your MoonlightQ skills are missing or predate it."
-            } Stop and tell the user to run \`bun run install:all\` in the MoonlightQ repo (it installs the current skills, ${SKILLS_VERSION}, and the MCP registration for every tool it finds), then restart the tool.`,
+                ? `Your MoonlightQ skills (${input.skillsVersion}) are older than ${MIN_COMPATIBLE_PHASES_VERSION}: they are an old installed copy.`
+                : "claim_task needs skillsVersion."
+            } This server ships the skills: read moonlightq-claim with get_skill, ignore any installed moonlightq-* skills, and claim again with skillsVersion ${SKILLS_VERSION}. Tell the user to run \`bun run install:all\` in the MoonlightQ repo: it removes the old skill copies.`,
           };
         }
         sweepQueue();
@@ -351,7 +346,6 @@ export function createMoonlightqMcpServer(opts: MoonlightqMcpServerOptions = {})
           agent: { id: result.agent.id, role: result.role },
           claimToken: result.claimToken,
           skillsVersion: SKILLS_VERSION,
-          skills: skillsManifest(),
         };
       }),
   );
@@ -745,15 +739,16 @@ export function createMoonlightqMcpServer(opts: MoonlightqMcpServerOptions = {})
     {
       title: "Get skill",
       description:
-        "The current text of a MoonlightQ skill (e.g. moonlightq-code) as this server ships it, with its version. Use it when your installed copy is missing or older.",
+        `The text of a MoonlightQ skill (e.g. moonlightq-claim, moonlightq-code), with its version. This server is the only source of the skills: read moonlightq-claim before your first claim. Skills: ${listPhases().join(", ")}.`,
       inputSchema: { name: z.string().min(1).describe("Skill name, e.g. moonlightq-review") },
       annotations: { readOnlyHint: true },
     },
     (input) =>
       run(() => {
-        const skill = readSkill(input.name);
-        if (!skill) throw new WorkflowError(`Unknown skill ${input.name}. Skills: ${listSkills().join(", ")}.`);
-        return { success: true, ...skill };
+        if (!listPhases().includes(input.name)) {
+          throw new WorkflowError(`Unknown skill ${input.name}. Skills: ${listPhases().join(", ")}.`);
+        }
+        return { success: true, ...readPhase(input.name) };
       }),
   );
 
@@ -1012,28 +1007,25 @@ export function createMoonlightqMcpServer(opts: MoonlightqMcpServerOptions = {})
     "skill",
     new ResourceTemplate("moonlightq://skills/{name}", {
       list: () => ({
-        resources: listSkills().map((name) => ({ uri: `moonlightq://skills/${name}`, name, mimeType: "text/markdown" })),
+        resources: listPhases().map((name) => ({ uri: `moonlightq://skills/${name}`, name, mimeType: "text/markdown" })),
       }),
     }),
     {
       title: "MoonlightQ skill",
-      description: "A MoonlightQ skill as this server ships it (markdown, without frontmatter)",
+      description: "A MoonlightQ skill as this server ships it (markdown)",
       mimeType: "text/markdown",
     },
-    (uri, { name }) => {
-      const skill = readSkill(String(name));
-      if (!skill) throw new Error(`Unknown skill ${String(name)}.`);
-      return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: skill.body }] };
-    },
+    (uri, { name }) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: readPhase(String(name)).body }],
+    }),
   );
 
   // The skills as prompts too, for clients that let the user pick one (e.g. a slash command).
-  for (const name of listSkills()) {
-    const skill = readSkill(name);
-    if (!skill) continue;
+  for (const name of listPhases()) {
+    const skill = readPhase(name);
     server.registerPrompt(
       name,
-      { title: name, description: `MoonlightQ skill ${name} (v${skill.version ?? "?"})` },
+      { title: name, description: `MoonlightQ skill ${name} (v${skill.version})` },
       () => ({ messages: [{ role: "user", content: { type: "text", text: skill.body } }] }),
     );
   }

@@ -1,12 +1,3 @@
----
-name: moonlightq-code
-description: Coding phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `ready_for_code` or `changes_requested`, now in `coding` (the moonlightq-claim router sends you here). Works in the task's git worktree, implements the code or fixes review feedback, commits on the feature branch after the initial implementation and after every review round, and submits with the `submit_code` MCP tool and the worktree path. Never pushes, never commits in the main working directory.
-allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_code, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Code Skill
 
 Follow this skill when you hold a task claimed from `ready_for_code` or `changes_requested` (its status is now `coding`). The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context reading, context handoff, autonomy, guardrails, no tasks available) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`): the latest handoffs, open findings and `humanNotes` come first.

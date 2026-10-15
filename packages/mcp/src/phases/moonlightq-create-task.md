@@ -1,12 +1,3 @@
----
-name: moonlightq-create-task
-description: Instructions for creating well-structured tasks in MoonlightQ through the MoonlightQ MCP server (`list_projects`, `list_tasks`, `create_task`, `add_dependency`, `remove_dependency`). Use when the user wants to create a task, break down work, formalize a request into an MoonlightQ task for other agents to claim and execute, or make a task wait for another (dependencies).
-allowed-tools: mcp__moonlightq__list_projects, mcp__moonlightq__list_tasks, mcp__moonlightq__create_task, mcp__moonlightq__add_dependency, mcp__moonlightq__remove_dependency
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Create Task Skill
 
 All queue work goes through the tools of the `moonlightq` MCP server. Your client prefixes their names (in Claude Code `create_task` is `mcp__moonlightq__create_task`). If the `moonlightq` tools are missing, tell the user to run `bun run install:mcp` from the MoonlightQ checkout and restart the tool.

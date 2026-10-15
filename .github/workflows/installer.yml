@@ -12,7 +12,6 @@ on:
       - "packages/installer/**"
       - "packages/mcp/**"
       - "packages/shared/**"
-      - "skills/**"
       - "package.json"
       - "bun.lock"
 

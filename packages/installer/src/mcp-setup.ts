@@ -274,7 +274,7 @@ function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** Folders our own installers create inside a tool's home (install:skills). */
+/** Folders our own installers created inside a tool's home (install:skills, before 8.0.0). */
 const MOONLIGHTQ_ONLY_ENTRIES = new Set(["skills"]);
 
 /** The tool's home exists and holds something the tool itself wrote. */

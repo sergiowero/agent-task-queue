@@ -49,7 +49,7 @@ Kanban-style board with four columns (Pending, In Progress, Needs you, Done), a 
 Stdio MCP server (`packages/mcp`) that operates directly on the local database — no running server required. It is the only agent channel: claiming, submitting, reading, listing, creating and archiving tasks are typed tools with JSON results. `bun run install:mcp` registers it with every installed coding tool, and runner jobs get it automatically.
 
 ### AI Skills
-Pre-built agent skill files that guide coding agents on how to use the MoonlightQ MCP tools and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails.
+Skill documents that guide coding agents on how to use the MoonlightQ MCP tools and interact with the system consistently. Includes workflow protocol, phase intelligence, worktree management, and guardrails. The MCP server ships them (`packages/mcp/src/phases/`); nothing is installed in the tools.
 
 ### Feedback Loops
 Both planning and coding phases support iteration: plans can be revised, code can be reworked after review, and stuck tasks can be unblocked.
@@ -89,13 +89,13 @@ React SPA dashboard for human supervision (`packages/web-ui`). The sidebar has t
 - **Agents view** — Table with the agent (tool and ID), model, role, session and last seen; filterable by role and tool
 - **Activity** — Global timeline of task lifecycle events, newest first and grouped by day (25, 50 or 100 events), under a **Metrics** panel, "How the flow is doing" (`GET /api/metrics`): human decisions per task, tasks that reached the pull request without a person, AI review rounds per pull request, escalations, tasks sent back after an AI approval and runner reverts. The page has no task, agent or date filters
 - **Projects management** — Create, edit and delete projects. A new project's commands are detected from the repository. Editing has four tabs: **General** (name, working directory, default merge branch, archive on merge, Definition-of-Ready mode), **Autonomy** (level L0–L3 and every policy setting, including auto-merge at L3), **Commands** (install, build, test, lint, typecheck, the verify timeout) and **Guardrails** (shared guardrails, protected paths, size limits, verify allowlist). See [policy.md](policy.md#settings)
-- **Tools page** — Install steps for the MCP server and the skills
+- **Tools page** — Install steps for the MCP server
 - **Real-time updates** — SSE connection for live refresh
 - **Light/dark theme** — Persistent via localStorage
 
 ### Web Server
 Pure Bun HTTP server serving on a single port. Responsibilities:
-- REST API for all CRUD and workflow operations on tasks, projects, agents, runners, activity and flow metrics (`/api/metrics`), plus `/api/meta` (skills bundle version, the verifier's state and the PR sync's state)
+- REST API for all CRUD and workflow operations on tasks, projects, agents, runners, activity and flow metrics (`/api/metrics`), plus `/api/meta` (the skills version the MCP server ships, the verifier's state and the PR sync's state)
 - Server-Sent Events endpoint for real-time streaming to connected clients
 - Static file serving for the pre-built web UI
 - Request validation via Zod schemas. The agent submissions (`POST /api/tasks/:id/submit-plan`, `submit-code`, `submit-review`, `submit-plan-review`, `submit-verification`, `submit-refinement`, `submit-pr`, `report-blocker`) take the MCP tools' arguments without `taskId` and parse them with the same schemas (`agentSubmitSchemas` in `@moonlightq/shared`); agents normally use MCP
@@ -111,10 +111,10 @@ Pure Bun HTTP server serving on a single port. Responsibilities:
 
 ### MCP Server
 Stdio [MCP](https://modelcontextprotocol.io) server (`packages/mcp`) for agent-to-system interaction. [mcp.md](mcp.md) has every tool with its inputs, and a test keeps that file in step with the registered tools. In short:
-- **claim_task** — claims the highest-priority task one of the agent's roles works (refine, plan, plan_review, code, verify, review, pr; default all but verify) and returns the brief, the phase skill and a claim token
+- **claim_task** — claims the highest-priority task one of the agent's roles works (refine, plan, plan_review, code, verify, review, pr; default all but verify) and returns the brief, the phase skill's text and a claim token
 - **get_task_brief** — the compact brief to continue a task (an independent one for plan critique, verification and review)
 - **get_task** / **list_tasks** — read a task with its findings, evidence and handoffs, or list task summaries filtered by status and project (archived tasks left out)
-- **get_skill** — the current text and version of a MoonlightQ skill
+- **get_skill** — the text and version of a MoonlightQ skill (the server is their only source)
 - **submit_refinement** — makes a draft ready: criteria, type, risk, scope, open questions
 - **submit_plan** / **create_subtask** — submit a plan with its validation plan, and split the task into held subtasks; the autonomy policy sends the plan to the AI critic or to a person
 - **submit_plan_review** — a plan critique: verdict and findings
@@ -147,12 +147,12 @@ Agent instruction files that define the exact protocol for interacting with Moon
 - **The phase skills**, one per role: **moonlightq-refine** (turns a draft into a ready task), **moonlightq-plan** (writes or revises the plan), **moonlightq-plan-review** (critiques a plan), **moonlightq-code** (implements in the task's worktree), **moonlightq-verify** (runs the verification commands), **moonlightq-review** (reviews the commits) and **moonlightq-pr** (pushes the branch and opens the pull request). The plan-review, verify and review skills work from an independent brief
 - **moonlightq-create-task** — Instructions for creating well-structured tasks through the MCP tools with project discovery, task elaboration, and acceptance criteria generation
 - **moonlightq-archive** — Archives complete tasks with the `archive_task` MCP tool (same as the board's Archive button), finds the PR with `gh` when the conversation lacks it, and writes an overview of what was done
-- Agent skills are installed to multiple AI tool configs (opencode, claude, codex, kimi, junie) via a single install command
+- The skills live in `packages/mcp/src/phases/` and are bundled into the MCP server: every tool reads the same text through `claim_task`, `get_skill`, the `moonlightq://skills/{name}` resource or the MCP prompts
 
 ### Installer
 Scripts for one-click setup:
 - **MCP setup** — `bun run install:mcp` registers the MoonlightQ MCP server with every installed coding tool (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) on macOS, Linux and Windows; safe to run again
-- **Skills installer** — Syncs the `moonlightq-*` skills into every supported agent config directory: copies the repo's skills and removes `moonlightq-*` folders the repo no longer ships
+- **Skill cleanup** — Removes the `moonlightq-*` skill copies earlier releases installed in every supported agent config directory (part of `install:all`)
 
 ---
 

@@ -214,8 +214,7 @@ criteria, open findings, latest handoffs, human notes; not the whole conversatio
 the prompt does not grow round after round; for a plan critique, verification or review
 job, the **independent brief**, without the author's conversation, handoffs, messages
 or evidence, see [policy.md](policy.md#independent-checks)), the
-body of
-`skills/moonlightq-<phase>/SKILL.md` (frontmatter stripped) inline, the exact submit tool and
+phase skill's text, as the MCP server ships it (`packages/mcp/src/phases/moonlightq-<phase>.md`), inline, the exact submit tool and
 arguments to finish with (a Markdown message plus the `context` handoff notes and the
 optional `decisions`, `risks` and `next` lists, with a per-phase hint of what they should
 contain: required everywhere, optional but expected for a verification; and the job's
@@ -223,7 +222,7 @@ contain: required everywhere, optional but expected for a verification; and the 
 `report_blocker` when something outside its control blocks the phase (never submit
 partial work), never to ask for permission, and to stop once the submit succeeds.
 
-Phase by status (each phase has its skill, `skills/moonlightq-<phase>`): `draft` → refine,
+Phase by status (each phase has its skill, `moonlightq-<phase>`): `draft` → refine,
 `plan_requested` / `plan_changes_requested` → plan, `plan_review_requested` →
 plan-review, `ready_for_code` / `changes_requested` → code, `verify_requested` →
 verify, `code_review_requested` → review, `approved` → merge (role `pr`). Runners from

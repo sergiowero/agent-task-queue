@@ -47,7 +47,7 @@ It all runs on your machine: one Bun process, one SQLite file, no accounts, no c
 | **Plan → Code → Review → PR** | A 23-state workflow with feedback loops at every phase. An AI critic checks the plan and an AI reviewer the code, change requests go back with findings tracked by id, and the task ends on a pull request. |
 | **Autonomy you choose** | Four levels per project, from every gate human (L0) to AI-reviewed plans and code with optional auto-merge of green, low-risk PRs (L3). The default, L2, asks you only for risky plans and code, escalations and the merge. Nobody checks their own work. |
 | **Works with the agents you already use** | Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot (CLI and VS Code), or any MCP client. |
-| **One-command setup** | `bun run install:all` registers the MCP server and the workflow skills with every coding tool it finds, on macOS, Linux and Windows. |
+| **One-command setup** | `bun run install:all` registers the MCP server with every coding tool it finds, on macOS, Linux and Windows. The server ships the workflow skills: nothing else is installed. |
 | **Hands-free runners** | The server claims tasks and launches `claude`, `codex`, `opencode`, `gemini` or `copilot` headless in the right repo. No manual prompting. |
 | **Composable roles** | One role per phase (refine, plan, plan_review, code, verify, review, pr); give an agent or runner any mix of them. Mix models per role. |
 | **Context handoff** | Every submission carries notes for the next agent: decisions taken, gotchas, what to check next. No more cold starts. |
@@ -66,7 +66,7 @@ flowchart LR
     ui <--> server["Web server<br/>Bun · REST · runners"]
     server <--> db[("SQLite<br/>~/.moonlightq/moonlightq.db")]
     server -->|launches headless| agents["Coding agents<br/>claude · codex · opencode · gemini · copilot"]
-    ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|moonlightq-claim skill| mcp
+    ide["Your own agent session<br/>Claude Code, Codex, Copilot..."] -->|MCP tools + skills| mcp
     agents <-->|claim_task · submit_*| mcp["MoonlightQ MCP server<br/>stdio"]
     mcp <--> db
     agents -->|worktree · commits · PR| repo[("Your repositories")]
@@ -98,7 +98,7 @@ cd moonlight-task-queue
 bun install
 ```
 
-Connect your coding tools (MCP server + workflow skills). Safe to run again at any time:
+Connect your coding tools to the MCP server (it also removes skill copies earlier releases installed). Safe to run again at any time:
 
 ```bash
 bun run install:all
@@ -123,7 +123,7 @@ The API has no login, so it only serves you: the server listens on `127.0.0.1`, 
    - **Interactive:** open your coding tool in any folder and say:
      > Work the MoonlightQ.
 
-     The `moonlightq-claim` skill claims the task, routes to the right phase skill and keeps going until the queue is empty. Use a second session for the critique and the review.
+     The MCP server's instructions point the agent to the `moonlightq-claim` skill (read with `get_skill`; Claude Code also lists it as the `/mcp__moonlightq__moonlightq-claim` prompt). It claims the task, follows the phase skill the claim returns and keeps going until the queue is empty. Use a second session for the critique and the review.
 4. **Let it run.** At L2 an AI critic reviews the plan and an AI reviewer the code, change requests go back to the coder with findings tracked by id, and the built-in verifier (or an agent with the `verify` role, if you choose one under **Projects → Edit → Autonomy**) runs the project's commands before any review. A task comes to **Needs you** only when a person has to decide: a plan of medium or high risk, the code of a high-risk task, a question an agent escalated (or a limit it hit), and the pull request. The task page puts the AI verdict, the verification, the diff size and the criteria in one panel to decide on. Want to approve every plan and every change yourself? Set the project to **L0** under **Projects → Edit → Autonomy**.
 5. **Merge and finish.** The agent pushes the branch and opens the pull request: review and merge it on GitHub. With `gh` logged in, MoonlightQ sees the merge and completes the task (without `gh`, click **Mark merged**). Then **Archive** the task to save the whole story as Markdown in the repo.
 
@@ -132,24 +132,23 @@ The API has no login, so it only serves you: the server listens on `127.0.0.1`, 
 | Mode | What happens | Best for |
 |---|---|---|
 | **Runners** (hands-free) | The server polls the queue with its roles and launches the coding tool headless in the project directory, with the task and the phase skill as the prompt. Each job gets the MCP server automatically. | Background work, overnight queues, parallel agents |
-| **MCP + skills** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and invoke the `moonlightq-claim` skill. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
+| **MCP** (interactive) | You open Claude Code, Codex, OpenCode, Gemini CLI or Copilot yourself and ask it to work the MoonlightQ. The MCP server hands it every skill it needs. You can watch and steer the session. | Pairing with an agent, trying new models, debugging tasks |
 
 Both go through the same MCP server, the same SQLite database and the same workflow rules in `packages/shared`.
 
 ### Supported tools
 
-| Tool | MCP server registered by `install:mcp` | Skills installed by `install:skills` | Runner |
-|---|:---:|:---:|:---:|
-| Claude Code | ✅ | ✅ | ✅ `claude` |
-| Codex | ✅ | ✅ | ✅ `codex` |
-| OpenCode | ✅ | ✅ | ✅ `opencode` |
-| Gemini CLI | ✅ | | ✅ `gemini` |
-| GitHub Copilot CLI | ✅ | ✅ | ✅ `copilot` |
-| GitHub Copilot in VS Code | ✅ | | |
-| Kimi Code, Junie | manual (`bun run mcp`) | ✅ | via `custom` |
-| Any other MCP client | manual (`bun run mcp`) | | via `custom` |
+| Tool | MCP server registered by `install:mcp` | Runner |
+|---|:---:|:---:|
+| Claude Code | ✅ | ✅ `claude` |
+| Codex | ✅ | ✅ `codex` |
+| OpenCode | ✅ | ✅ `opencode` |
+| Gemini CLI | ✅ | ✅ `gemini` |
+| GitHub Copilot CLI | ✅ | ✅ `copilot` |
+| GitHub Copilot in VS Code | ✅ | |
+| Kimi Code, Junie, any other MCP client | manual (`bun run mcp`) | via `custom` |
 
-Both installers only touch tools that are on the machine, and use the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` and `XDG_CONFIG_HOME` move them). Gemini CLI and Copilot in VS Code read the skills through the `get_skill` MCP tool instead of a skills folder. Details in [docs/mcp.md](docs/mcp.md#setup).
+The installer only touches tools that are on the machine, and uses the folders the tools themselves use (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` and `XDG_CONFIG_HOME` move them). Every tool reads the skills from the MCP server (`get_skill`, and `phaseSkill.body` in each claim). Details in [docs/mcp.md](docs/mcp.md#setup).
 
 ## The workflow
 
@@ -334,7 +333,7 @@ Every `submit_*` call takes a `context` (required on all but `submit_verificatio
 
 ## Skills
 
-Skills are the playbooks agents follow in each phase. `bun run install:skills` copies them into your tools' skill folders. Run `bun run install:all` (skills and MCP registration) again, and restart your tools, after updating MoonlightQ: the server refuses skills older than the bundle it supports, and any claim without `skillsVersion` (6.0.0 replaced the single `role` with a `roles` list named after the phases). Copies in folders the installer does not manage, such as `~/.agents/skills`, are not updated: delete them.
+Skills are the playbooks agents follow in each phase. The MCP server ships them (`packages/mcp/src/phases/`): `claim_task` returns the phase skill's text in `phaseSkill.body`, `get_skill` and the `moonlightq://skills/{name}` resource return any of them, and each is also an MCP prompt. Nothing is installed in your tools, so updating MoonlightQ updates every agent once its tool restarts the server. Since 8.0.0 the server refuses claims with an older `skillsVersion` (the copies earlier releases installed); `bun run install:all` removes those copies from the tools' skill folders. Copies in folders the installer does not manage, such as `~/.agents/skills`, are yours to delete.
 
 | Skill | What it does |
 |---|---|
@@ -376,8 +375,7 @@ moonlight-task-queue/
 │   ├── mcp/         # MCP server (stdio): the agent protocol as typed tools
 │   ├── web/         # Bun HTTP server: REST API, SSE, static UI, runner engine, verifier, PR sync
 │   ├── web-ui/      # React dashboard
-│   └── installer/   # install:mcp and install:skills for every supported tool
-├── skills/          # moonlightq-claim, the phase skills (-refine, -plan, -plan-review, -code, -verify, -review, -pr), -create-task, -archive
+│   └── installer/   # install:mcp for every supported tool, and removal of old skill copies
 ├── design-system/   # Tokens, components and logos used by the dashboard
 └── docs/            # Architecture, autonomy and routing, MCP, runners
 ```

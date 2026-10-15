@@ -7,13 +7,8 @@ const INSTALL_STEPS = [
   {
     title: "Register the MCP Server",
     description:
-      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) to the MoonlightQ MCP server. Safe to run again.",
-    command: "bun run install:mcp",
-  },
-  {
-    title: "Install Workflow Skills",
-    description: "Copy the MoonlightQ workflow skill to all detected coding-agent tool directories.",
-    command: "bun run install:skills",
+      "Connect every coding tool installed on this machine (Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, GitHub Copilot in VS Code) to the MoonlightQ MCP server, and remove the skill copies earlier releases installed. The server ships the workflow skills itself. Safe to run again.",
+    command: "bun run install:all",
   },
 ];
 

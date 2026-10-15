@@ -14,7 +14,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerLaunch } from "@moonlightq/mcp";
-import { skillVersion, skillsBundleVersion } from "@moonlightq/shared/skills";
 
 // Runs the real `install:all` on the OS the tests run on (CI: Linux, macOS, Windows)
 // against a throwaway home folder: the user's own tool configs are never touched.
@@ -135,7 +134,7 @@ afterAll(() => {
 });
 
 describe(`install:all on ${process.platform}`, () => {
-  it("registers the MCP server with every tool and installs the skills", () => {
+  it("registers the MCP server with every tool and installs no skills", () => {
     const { exitCode, stdout } = runInstallAll();
     expect(exitCode).toBe(0);
     for (const label of [
@@ -157,8 +156,9 @@ describe(`install:all on ${process.platform}`, () => {
       expect(existsSync(launch.args[1])).toBe(true);
     }
 
+    // The server ships the skills: nothing is copied into the tools.
     for (const dir of [".claude/skills", ".codex/skills", ".config/opencode/skills"]) {
-      expect(existsSync(join(home, dir, "moonlightq-claim", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(home, dir, "moonlightq-claim"))).toBe(false);
     }
   }, 60_000);
 
@@ -170,18 +170,19 @@ describe(`install:all on ${process.platform}`, () => {
     expect(snapshot()).toEqual(before);
   }, 60_000);
 
-  it("removes MoonlightQ skills the repo no longer ships and leaves other skills alone", () => {
+  it("removes the MoonlightQ skills earlier releases installed and leaves other skills alone", () => {
     const skills = join(home, ".claude", "skills");
-    mkdirSync(join(skills, "moonlightq-retired"), { recursive: true });
-    writeFileSync(join(skills, "moonlightq-retired", "SKILL.md"), "old");
+    for (const name of ["moonlightq-claim", "moonlightq-pr"]) {
+      mkdirSync(join(skills, name), { recursive: true });
+      writeFileSync(join(skills, name, "SKILL.md"), "old");
+    }
     mkdirSync(join(skills, "someone-elses-skill"), { recursive: true });
     writeFileSync(join(skills, "someone-elses-skill", "SKILL.md"), "keep me");
 
     expect(runInstallAll().exitCode).toBe(0);
-    expect(existsSync(join(skills, "moonlightq-retired"))).toBe(false);
-    expect(existsSync(join(skills, "moonlightq-pr", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(skills, "someone-elses-skill", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(skills, "moonlightq-claim", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skills, "moonlightq-claim"))).toBe(false);
+    expect(existsSync(join(skills, "moonlightq-pr"))).toBe(false);
+    expect(readFileSync(join(skills, "someone-elses-skill", "SKILL.md"), "utf8")).toBe("keep me");
     rmSync(join(skills, "someone-elses-skill"), { recursive: true, force: true });
   }, 60_000);
 
@@ -219,22 +220,10 @@ describe(`install:all on ${process.platform}`, () => {
     expect(dbPath).toBe(join(home, "other", "moonlightq.db"));
   }, 60_000);
 
-  it("replaces an installed skill folder as a whole, so a file the skill dropped is gone", () => {
-    const skill = join(home, ".claude", "skills", "moonlightq-code");
-    writeFileSync(join(skill, "stale.md"), "from an older bundle");
-    mkdirSync(join(skill, "references"), { recursive: true });
-    writeFileSync(join(skill, "references", "old.md"), "from an older bundle");
-    writeFileSync(join(skill, "SKILL.md"), "edited by hand");
-
-    expect(runInstallAll().exitCode).toBe(0);
-    expect(existsSync(join(skill, "stale.md"))).toBe(false);
-    expect(existsSync(join(skill, "references"))).toBe(false);
-    expect(readFileSync(join(skill, "SKILL.md"), "utf8")).toContain("name: moonlightq-code");
-  }, 60_000);
 });
 
 describe("install:all follows the folders the tools themselves use", () => {
-  it("puts the MCP entry and the skills in $CLAUDE_CONFIG_DIR, $CODEX_HOME and $XDG_CONFIG_HOME", () => {
+  it("puts the MCP entry in $CLAUDE_CONFIG_DIR, $CODEX_HOME and $XDG_CONFIG_HOME, and cleans the skills there", () => {
     const moved = join(sandbox, "moved");
     const at = join(moved, "home");
     const [claude, codex, xdg] = ["claude-config", "codex-home", "xdg-config"].map((d) => join(moved, d));
@@ -247,6 +236,11 @@ describe("install:all follows the folders the tools themselves use", () => {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, "{}");
     }
+    const skillDirs = [join(claude, "skills"), join(codex, "skills"), join(xdg, "opencode", "skills")];
+    for (const skills of skillDirs) {
+      mkdirSync(join(skills, "moonlightq-claim"), { recursive: true });
+      writeFileSync(join(skills, "moonlightq-claim", "SKILL.md"), "old");
+    }
     mkdirSync(at, { recursive: true });
 
     const env = { CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, XDG_CONFIG_HOME: xdg };
@@ -257,16 +251,14 @@ describe("install:all follows the folders the tools themselves use", () => {
       mcp_servers: { moonlightq: { command: string } };
     };
     expect(config.mcp_servers.moonlightq.command).toBeTruthy();
-    for (const skills of [join(claude, "skills"), join(codex, "skills"), join(xdg, "opencode", "skills")]) {
-      expect(existsSync(join(skills, "moonlightq-claim", "SKILL.md"))).toBe(true);
-    }
+    for (const skills of skillDirs) expect(existsSync(join(skills, "moonlightq-claim"))).toBe(false);
     // Nothing goes where the tools do not look.
     for (const dir of [".claude", ".claude.json", ".codex", ".config"]) {
       expect(existsSync(join(at, dir))).toBe(false);
     }
   }, 60_000);
 
-  it("leaves tools that are not installed alone and refreshes the copies a tool already holds", () => {
+  it("leaves tools that are not installed alone and removes the copies a tool still holds", () => {
     const at = join(sandbox, "partial-home");
     mkdirSync(join(at, ".claude"), { recursive: true });
     writeFileSync(join(at, ".claude", "settings.json"), "{}");
@@ -278,10 +270,10 @@ describe("install:all follows the folders the tools themselves use", () => {
     const { exitCode, stdout } = runInstallAll([], { at, noTools: true });
     expect(exitCode).toBe(0);
 
-    expect(existsSync(join(at, ".claude", "skills", "moonlightq-claim", "SKILL.md"))).toBe(true);
-    expect(skillVersion(readFileSync(join(old, "SKILL.md"), "utf8"))).toBe(skillsBundleVersion());
+    expect(existsSync(join(at, ".claude", "skills"))).toBe(false);
+    expect(existsSync(old)).toBe(false);
     // Kimi Code, Codex and OpenCode are not here: no folder is made for them.
     for (const dir of [".kimi-code", ".codex", ".config"]) expect(existsSync(join(at, dir))).toBe(false);
-    expect(stdout).toContain("Skills not installed in kimi");
+    expect(stdout).toContain("old MoonlightQ skills removed from junie");
   }, 60_000);
 });

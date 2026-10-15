@@ -1,5 +1,13 @@
 import { resolve } from "path";
 
+export {
+  MIN_COMPATIBLE_PHASES_VERSION,
+  PHASES_VERSION,
+  listPhases,
+  readPhase,
+  type PhaseDocument,
+} from "./phases/index.js";
+
 /** Name the MoonlightQ MCP server is registered under in every coding tool. */
 export const MCP_SERVER_NAME = "moonlightq";
 

@@ -180,7 +180,7 @@ describe("registerAll", () => {
     // Installed without being on PATH: the tool wrote its own files.
     mkdirSync(join(home, ".gemini"));
     writeFileSync(join(home, ".gemini", "oauth_creds.json"), "{}");
-    // Only what install:skills created: not installed.
+    // Only what an earlier install:skills created: not installed.
     mkdirSync(join(home, ".codex", "skills"), { recursive: true });
     mkdirSync(join(home, ".config", "opencode", "skills"), { recursive: true });
     mkdirSync(join(home, ".copilot", "skills"), { recursive: true });

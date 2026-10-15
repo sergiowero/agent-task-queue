@@ -1,12 +1,3 @@
----
-name: moonlightq-refine
-description: Refinement phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `draft`, now in `refining` (the moonlightq-claim router sends you here). Turns a rough draft into a ready task — clear description, testable acceptance criteria with how each is verified, type, risk, non-goals, whether it needs a plan — and submits it with the `submit_refinement` MCP tool. Never writes code.
-allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_refinement, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Refine Skill
 
 Follow this skill when you hold a task claimed from `draft` (now `refining`). The cross-cutting rules in `moonlightq-claim` still apply. Read the draft through its **brief**; `brief.task.dorIssues` lists what makes it not ready yet.

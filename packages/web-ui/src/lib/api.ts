@@ -216,9 +216,8 @@ export interface TaskDetails {
 
 /** Response of `GET /meta`. */
 export interface Meta {
-  skillsVersion: string | null;
-  installedSkills: Record<string, string | null>;
-  outdatedSkills: string[];
+  /** Version of the skills the MCP server ships (agents pass it as skillsVersion on claim_task). */
+  skillsVersion: string;
   verifier?: { online: boolean; running: boolean; busy: boolean; currentTaskId: string | null; lastRunAt: string | null };
   /**
    * GitHub sync of open PRs: `available` is the `gh` CLI, `enabled` the periodic sync running (off with

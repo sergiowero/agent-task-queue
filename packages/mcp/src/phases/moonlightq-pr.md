@@ -1,12 +1,3 @@
----
-name: moonlightq-pr
-description: Pull-request phase of the MoonlightQ workflow. Use right after the MoonlightQ `claim_task` MCP tool (or a MoonlightQ runner) handed you a task claimed from `approved`, now in `merging` (the moonlightq-claim router sends you here). Verifies the task worktree is clean, pushes the feature branch, opens a pull request into `task.mergeBranch` with `gh pr create` using the body MoonlightQ wrote (`brief.pr.body`), and records it with the `submit_pr` MCP tool. Never merges and never force-pushes; the task waits in `pr_open` until a person merges the PR. On push or PR failure it calls `report_blocker`.
-allowed-tools: mcp__moonlightq__get_task_brief, mcp__moonlightq__submit_pr, mcp__moonlightq__report_blocker, mcp__moonlightq__get_task, mcp__moonlightq__post_comment, Bash(git:*), Bash(gh:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Pull Request Skill
 
 Follow this skill when you hold a task claimed from `approved` (the review passed; the claim moved it to `merging`). This is the **`pr`** role. The cross-cutting rules in `moonlightq-claim` (identity, MCP conventions, context reading, handoff, autonomy, guardrails) still apply. Read the task through its **brief** (`brief` in the claim result, or `get_task_brief`).

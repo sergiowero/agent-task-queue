@@ -13,10 +13,10 @@ import {
   markServerOffline,
   rollbackTransaction,
   serverOnline,
-  skillsBundleVersion,
   updateFinding,
 } from "@moonlightq/shared";
 import { forceStatus } from "@moonlightq/shared/testing";
+import { PHASES_VERSION } from "@moonlightq/mcp";
 import { startServer, sweep } from "./index.js";
 
 // Set test DB before the first DB call. The shared package resolves
@@ -1254,13 +1254,12 @@ describe("autonomy, risk and findings", () => {
 });
 
 describe("GET /api/meta", () => {
-  it("reports the skills bundle version", async () => {
+  it("reports the skills version the MCP server ships", async () => {
     const res = await api("/api/meta");
     expect(res.status).toBe(200);
     const meta = await res.json();
-    expect(meta.skillsVersion).toBe(skillsBundleVersion());
-    expect(typeof meta.installedSkills).toBe("object");
-    expect(Array.isArray(meta.outdatedSkills)).toBe(true);
+    expect(meta.skillsVersion).toBe(PHASES_VERSION);
+    expect(meta.installedSkills).toBeUndefined();
     expect(typeof meta.prSync.available).toBe("boolean");
     // The periodic sync is started by the server's main(), not by the servers these tests start.
     expect(meta.prSync).toMatchObject({ enabled: false, lastRunAt: null, errors: [] });

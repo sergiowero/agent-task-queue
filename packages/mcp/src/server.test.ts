@@ -18,12 +18,10 @@ import {
   updateTask,
   ROLES,
   TaskStatus,
-  listSkills,
-  readSkill,
-  skillsBundleVersion,
 } from "@moonlightq/shared";
 import { forceStatus } from "@moonlightq/shared/testing";
 import { createMoonlightqMcpServer, INSTRUCTIONS, SERVER_NAME } from "./server.js";
+import { PHASES_VERSION, listPhases, readPhase } from "./phases/index.js";
 import {
   MCP_ENTRY,
   MCP_SERVER_NAME,
@@ -66,7 +64,7 @@ const defaultAgent = {
   version: "1.0",
   model: "test-model",
   sessionId: "session-mcp",
-  skillsVersion: skillsBundleVersion()!,
+  skillsVersion: PHASES_VERSION,
 };
 
 function parse(result: CallToolResult): any {
@@ -220,8 +218,8 @@ describe("MoonlightQ MCP server", () => {
     // The token comes back once, to the claimer; the task itself never shows it.
     expect(claimed.claimToken).toBe(getTaskById(taskId)!.claimToken!);
     expect(claimed.task.claimToken).toBeUndefined();
-    expect(claimed.skillsVersion).toBe(skillsBundleVersion()!);
-    expect(claimed.skills["moonlightq-claim"]).toBe(skillsBundleVersion()!);
+    expect(claimed.skillsVersion).toBe(PHASES_VERSION);
+    expect(claimed.skills).toBeUndefined();
     // The claim's task leaves out the notes that grow with every round: the brief carries the latest handoffs.
     expect(claimed.task.contexts).toBeUndefined();
     expect(claimed.task.acceptanceCriteria).toEqual([
@@ -543,7 +541,7 @@ describe("MoonlightQ MCP server", () => {
 describe("MoonlightQ MCP agent workflow", () => {
   // Same scenarios agents go through: every role, every claim and submit transition.
   const projectId = "mcp-workflow-" + Date.now();
-  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model", skillsVersion: skillsBundleVersion()! };
+  const agent = { toolName: "Test Agent", version: "1.0.0", model: "test-model", skillsVersion: PHASES_VERSION };
   let client: Client;
   let primaryClient: Client | null = null;
   let planTaskId: string;
@@ -968,7 +966,7 @@ describe("MoonlightQ MCP create, list and archive", () => {
 
 describe("MoonlightQ MCP claims and blockers", () => {
   const projectId = "mcp-claims-" + Date.now();
-  const agent = { toolName: "Claimer", version: "1.0", model: "m", skillsVersion: skillsBundleVersion()! };
+  const agent = { toolName: "Claimer", version: "1.0", model: "m", skillsVersion: PHASES_VERSION };
   const clients: Client[] = [];
 
   async function connect(opts?: Parameters<typeof createMoonlightqMcpServer>[0]): Promise<Client> {
@@ -1450,7 +1448,8 @@ describe("MoonlightQ MCP claims and blockers", () => {
     expect(claimed.task.conversation).toBeUndefined();
     expect(claimed.task.history).toBeUndefined();
     expect(claimed.brief.criteria[0]).toMatchObject({ id: "AC1" });
-    expect(claimed.phaseSkill).toMatchObject({ name: "moonlightq-code" });
+    // The phase skill's whole text comes with the claim: nothing has to be installed.
+    expect(claimed.phaseSkill).toEqual(readPhase("moonlightq-code"));
     const again = parse(await call(client, "get_task_brief", { taskId: created.id }));
     expect(again.brief.task.id).toBe(created.id);
     const submitted = parse(
@@ -1471,14 +1470,14 @@ describe("MoonlightQ MCP claims and blockers", () => {
   it("serves the skills: get_skill, moonlightq://skills/{name} and prompts, with versions", async () => {
     const client = await connect();
     const skill = parse(await call(client, "get_skill", { name: "moonlightq-review" }));
-    expect(skill).toMatchObject({ success: true, name: "moonlightq-review", version: skillsBundleVersion() });
+    expect(skill).toMatchObject({ success: true, name: "moonlightq-review", version: PHASES_VERSION });
     expect(skill.body).toContain("Severity Rubric");
     expect(parse(await call(client, "get_skill", { name: "nope" })).error).toContain("Unknown skill");
     const resource = await client.readResource({ uri: "moonlightq://skills/moonlightq-claim" });
     expect(resourceText(resource.contents[0])).toContain("claim_task");
     const { prompts } = await client.listPrompts();
     const claim = prompts.find((p) => p.name === "moonlightq-claim")!;
-    expect(claim.description).toContain(`v${skillsBundleVersion()}`);
+    expect(claim.description).toContain(`v${PHASES_VERSION}`);
     const got = await client.getPrompt({ name: "moonlightq-plan" });
     expect((got.messages[0].content as { text: string }).text).toContain("validationPlan");
   });
@@ -1488,8 +1487,20 @@ describe("MoonlightQ MCP claims and blockers", () => {
     const out = parse(
       await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "s4", projectId, skillsVersion: "5.0.0" }),
     );
-    expect(out).toMatchObject({ success: false, reason: "skills_outdated", skillsVersion: skillsBundleVersion() });
-    expect(out.message).toContain("bun run install:all");
+    expect(out).toMatchObject({ success: false, reason: "skills_outdated", skillsVersion: PHASES_VERSION });
+    expect(out.message).toContain("get_skill");
+    expect(out.message).toContain(PHASES_VERSION);
+    // 7.0.0 is what earlier releases installed: those copies are refused too.
+    const installed = parse(
+      await call(client, "claim_task", { ...agent, roles: ["plan"], sessionId: "s5", projectId, skillsVersion: "7.0.0" }),
+    );
+    expect(installed).toMatchObject({ success: false, reason: "skills_outdated" });
+  });
+
+  it("tells agents the server is the only source of the skills", () => {
+    expect(INSTRUCTIONS).toContain("nothing is installed in your tool");
+    expect(INSTRUCTIONS).toContain(`skillsVersion (required: pass ${PHASES_VERSION})`);
+    expect(INSTRUCTIONS).not.toContain("metadata.version");
   });
 
   it("refuses a claim without skillsVersion, e.g. from skills that still send the old single role", async () => {
@@ -1548,8 +1559,8 @@ describe("MoonlightQ MCP contracts", () => {
     const names = tools.map((t) => t.name);
     const toolMention = new RegExp(`\`(${names.join("|")})\``, "g");
     let checked = 0;
-    for (const skill of listSkills()) {
-      const body = readSkill(skill)!.body;
+    for (const skill of listPhases()) {
+      const body = readPhase(skill).body;
       for (const block of body.matchAll(/```json\n([\s\S]*?)```/g)) {
         const keys = topLevelKeys(block[1]);
         // Tool calls, not results.

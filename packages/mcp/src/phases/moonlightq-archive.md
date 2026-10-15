@@ -1,12 +1,3 @@
----
-name: moonlightq-archive
-description: Archives finished MoonlightQ tasks into their project's repository, the same as the board's "Archive" button. Use when the user asks to archive a task, archive the complete/completed/done tasks, clean up the Done column, or save a task's history (description, conversation, PR, branch, agents) as Markdown. For each task, the `archive_task` MCP tool writes `archive/<name>.summary.md` and `archive/<name>.detailed.md` in the project and takes the task off the board. The skill also finds the pull request with `gh` when the conversation does not mention it, and writes an overview of what was done.
-allowed-tools: mcp__moonlightq__list_projects, mcp__moonlightq__list_tasks, mcp__moonlightq__get_task, mcp__moonlightq__archive_task, Bash(gh:*), Bash(git:*)
-metadata:
-  version: "7.0.0"
-  author: "Sergo Sanchez<sergioj.sanchezr@gmail.com>"
----
-
 # MoonlightQ Archive Skill
 
 Archive saves a finished task in its project repository as two Markdown files, then takes the task off the board. The board's **Archive** button on complete cards runs the same code. This skill can also do two things the button can't: find the pull request with `gh`, and write an overview of what was done.
